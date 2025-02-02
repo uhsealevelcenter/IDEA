@@ -1,0 +1,597 @@
+/* styles.css */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f5f5f5;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 1400px;
+    height: 90vh;
+    background-color: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+
+.chat-display {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    background-color: #e5ddd5;
+    min-height: 0; /* This ensures proper flex behavior */
+}
+
+.chat-footer {
+    display: flex;
+    padding: 10px 20px;
+    background-color: #f1f1f1;
+    display: flex;
+    gap: 10px;
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+    align-items: flex-start;
+}
+
+#sendButton, #stopButton {
+    flex-shrink: 0; /* Prevents buttons from shrinking */
+}
+
+.header-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;  /* Space between buttons */
+    position: absolute;
+    top: 20px;   /* Adjust this value to move buttons down */
+    right: 20px;  /* Adjust this value to move buttons in from the right */
+    z-index: 10;  /* Ensure buttons appear above other elements */
+}
+
+#downloadButton {
+    /* Remove margin-right if it exists */
+    width: auto;  /* Let buttons size to their content */
+    min-width: 120px;  /* Ensure minimum width */
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: center;
+    margin: 0;  /* Reset any default margins */
+    white-space: normal; /* Allow text to wrap */
+    line-height: 1.2; /* Improve readability of wrapped text */
+    height: auto; /* Allow height to adjust to content */
+}
+
+#newMessagesButton {
+    width: auto;  /* Let buttons size to their content */
+    min-width: 120px;  /* Ensure minimum width */
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: center;
+    margin: 0;  /* Reset any default margins */
+}
+
+#newMessagesButton:hover {
+    background-color: #f0f0f0;
+}
+
+
+#downloadButton {
+    background-color: #4CAF50;
+    color: white;
+    margin-right: 20px;
+}
+
+#downloadButton:hover {
+    background-color: #45a049;
+}
+
+/* .chat-footer input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #cccccc;
+    border-radius: 5px;
+    font-size: 16px;
+} */
+
+#messageInput {
+    flex: 1;
+    resize: none;
+    min-height: 38px;
+    max-height: 200px;
+    overflow-y: auto;
+    line-height: 1.5;
+    padding: 8px;
+    padding-left: 36px;
+    font-family: inherit;
+    transition: height 0.2s ease;
+}
+
+.chat-footer button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    background-color: #4a76a8;
+    color: #ffffff;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.chat-footer button:disabled {
+    background-color: #a0a0a0;
+    cursor: not-allowed;
+}
+
+.chat-footer button:hover:not(:disabled) {
+    background-color: #3b5d8a;
+}
+
+.message {
+    margin-bottom: 15px;
+    display: flex;
+    flex-direction: column;
+}
+
+.message.user {
+    align-items: flex-end;
+}
+
+.message.assistant {
+    align-items: flex-start;
+}
+
+.message.system {
+    align-items: center;
+}
+
+.message .content {
+    max-width: 70%;
+    padding: 10px 15px;
+    border-radius: 15px;
+    position: relative;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.message.user .content {
+    background-color: #dcf8c6;
+}
+
+.message.assistant .content {
+    background-color: #ffffff;
+    border: 1px solid #dddddd;
+}
+
+.message.computer .content {
+    background-color: #ffffff;
+    border: 1px solid #dddddd;
+}
+
+.message.system .content {
+    background-color: #ffeeba;
+    border: 1px solid #ffeeba;
+    text-align: center;
+}
+
+.message .content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 5px;
+}
+
+.message .content pre {
+    background-color: #000000;
+    padding: 10px;
+    border-radius: 5px;
+    overflow-x: auto;
+}
+
+.message .content code {
+    font-family: 'Courier New', Courier, monospace;
+}
+
+.message .content a {
+    color: #4a76a8;
+    text-decoration: none;
+}
+
+.message .content a:hover {
+    text-decoration: underline;
+}
+
+.message .content ul,
+.message .content ol {
+    margin-left: 20px;
+    padding-left: 0;
+}
+
+.active-line {
+    background-color: #fffae6;
+    padding: 2px 4px;
+    border-radius: 3px;
+    margin-top: 2px;
+}
+
+@media (max-width: 600px) {
+    .chat-container {
+        height: 88vh;
+        border-radius: 0;
+    }
+
+    .message .content {
+        max-width: 90%;
+    }
+
+    #messageInput{
+        padding: 0px;
+        padding-left: 36px;
+    }
+
+    .chat-footer {
+        display: flex;
+        padding: 10px 5px;
+        background-color: #f1f1f1;
+        display: flex;
+        gap: 5x;
+        border-bottom-left-radius: 10px;
+        border-bottom-right-radius: 10px;
+        align-items: flex-start;
+    }
+
+    .select2 {
+        width: 80% !important;    
+    }
+}
+
+/* Add styles for the New Messages button */
+.chat-header {
+    flex-shrink: 0; /* Prevents header from shrinking */
+    background-color: #4a76a8;
+    color: #ffffff;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    padding: 10px 20px;
+}
+
+.header-title-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.header-title-section h1 {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0; /* Remove any default margins */
+    font-size: 30px; /* Default size for large screens */
+    white-space: nowrap;
+}
+/* 
+#newMessagesButton {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    padding: 8px 16px;
+    background-color: #ffffff;
+    color: #4a76a8;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s, color 0.3s;
+} */
+
+#newMessagesButton:hover {
+    background-color: #f0f0f0;
+}
+
+/* Style for the copy button */
+.copy-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    background-color: #f5f5f5;
+    border: none;
+    border-radius: 4px;
+    opacity: 0.6;
+    transition: opacity 0.3s;
+}
+
+.copy-button:hover {
+    opacity: 1;
+}
+
+/* Ensure the <pre> elements are positioned relatively to contain the absolute button */
+pre {
+    position: relative;
+}
+
+.disclaimer-text {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    padding: 10px;
+    background-color: #ffffff;
+    border-top: 1px solid #e0e0e0;
+    z-index: 1000;
+    display: flex;
+    justify-content: center;
+    gap: 5px; /* Adds a small space between the text and link */
+    color: #000000; /* Sets the default text color to black */
+}
+
+.disclaimer-text a {
+    color: #4a76a8;
+    text-decoration: none;
+}
+
+.disclaimer-text a:hover {
+    text-decoration: underline;
+}
+
+#myselect2{
+    margin-top: 5px;
+    max-width: 100%;
+  }
+
+  #promptIdeasContainer {
+    width: 100%;
+    /* padding: 20px; */
+    background-color: #ffffff;
+}
+
+.prompt-ideas {
+    padding: 5px;
+    margin: 5px 5px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.prompt-title {
+    color: #666;
+    margin-bottom: 15px;
+    font-weight: 500;
+    width: 100%; /* Ensures the title takes full width */
+}
+
+.prompt-button {
+    display: inline-block;
+    padding: 8px 15px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    background-color: white;
+    color: #2c3e50;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+    white-space: nowrap;
+    margin: 0 5px;
+    flex: 0 1 auto; /* Don't grow, can shrink, auto basis */
+}
+
+.prompt-button:hover {
+    background-color: #e9ecef;
+    border-color: #adb5bd;
+    transform: translateY(-1px);
+}
+
+.active-line {
+    background-color: rgba(255, 255, 0, 0.2);
+}
+
+/* Optional: different styling for previous lines */
+.code-line.active-line:not(:last-of-type) {
+    background-color: rgba(255, 255, 0, 0.1);
+}
+
+.code-spinner {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    width: 50px;
+    height: 50px;
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.file-upload-section {
+    margin: 10px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.input-container {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    min-height: 38px;
+}
+
+#uploadButton {
+    position: absolute;
+    left: 4px;
+    background: none;
+    border: none;
+    padding: 8px;
+    color: #666;
+    cursor: pointer;
+    z-index: 2;
+    transition: color 0.3s;
+}
+
+#uploadButton:hover {
+    color: #4a76a8;
+}
+
+#uploadButton svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* Add tooltip styles */
+#uploadButton::after {
+    content: "Max file size: 10MB";
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+#uploadButton:hover::after {
+    visibility: visible;
+    opacity: 1;
+}
+
+.uploaded-files-list {
+    margin-top: 5px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.uploaded-file {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background: #000000;
+    margin: 2px 0;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.delete-file {
+    background: none;
+    border: none;
+    color: #dc3545;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0 5px;
+    transition: color 0.2s;
+}
+
+.delete-file:hover {
+    color: #c82333;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 4px;
+    background: #e9ecef;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-bar .progress {
+    width: 0%;
+    height: 100%;
+    background: #28a745;
+    transition: width 0.3s ease;
+}
+
+.myselect {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 10px 0;
+}
+
+.myselect label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    max-width: 600px; /* Adjust this value as needed */
+}
+
+#myselect2 {
+    margin-top: 5px;
+    flex: 1; /* This will allow the select to take remaining space */
+    max-width: 100%;
+}
+
+
+@media (max-width: 768px) {
+    .header-title-section h1 {
+        font-size: 20px;
+    }
+    #downloadButton,
+    #newMessagesButton {
+        min-width: 80px;
+        padding: 6px 8px;
+        font-size: 12px;
+        max-width: 100px; /* Limit width to force wrapping */
+    }
+}
+
+/* Small screens */
+@media (max-width: 600px) {
+    .header-title-section h1 {
+        font-size: 15px;
+    }
+    
+    #downloadButton,
+    #newMessagesButton {
+        font-size: 11px; /* Slightly smaller font for better fit */
+        padding: 4px 6px;
+        min-width: 60px;
+        max-width: 70px; /* Even smaller width for mobile */
+    }
+}
+
+/* Very small screens */
+@media (max-width: 360px) {
+    .header-title-section h1 {
+        font-size: 14px;
+    }
+    
+    #downloadButton,
+    #newMessagesButton {
+        font-size: 10px; /* Slightly smaller font for better fit */
+        padding: 2px 3px;
+        min-width: 60px;
+        max-width: 50px; /* Even smaller width for mobile */
+    }
+}

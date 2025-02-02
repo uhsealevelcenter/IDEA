@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDEA Chat Interface</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Highlight.js CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
+    <link href="prism.css" rel="stylesheet" />  
+</head>
+<body>
+    <div class="chat-container">
+        <header class="chat-header">
+            <div class="header-title-section">
+                <button id="downloadButton">Download conversation</button>
+                <h1>IDEA</h1>
+                <button id="newMessagesButton">Start over</button>
+            </div>
+             <div class="file-upload-section">
+                <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xlsx" style="display: none">
+                <div id="uploadProgress" class="progress-bar" style="display: none">
+                    <div class="progress"></div>
+                </div>
+                <div id="uploadedFiles" class="uploaded-files-list"></div>
+            </div>
+        </header>
+        <div id="chatDisplay" class="chat-display"></div>
+        <footer class="chat-footer">
+            <div class="input-container">
+                <button id="uploadButton" title="Max file size: 10MB">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M21.44 11.05l-9.19 9.19a6.003 6.003 0 01-8.49-8.49l9.19-9.19a4.002 4.002 0 015.66 5.66l-9.2 9.19a2.001 2.001 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+                <textarea id="messageInput" placeholder="Type your message here or attach a file..." autocomplete="off" rows="1"></textarea>
+            </div>
+            <button id="sendButton">Send</button>
+            <button id="stopButton" disabled>Stop</button>
+            <input type="file" id="fileUpload" multiple style="display: none">
+        </footer>
+
+        <div id="promptIdeasContainer"></div>
+    </div>
+    <div class="disclaimer-text">
+        <span>IDEA can make mistakes. Check important results.</span>
+    </div>
+    </div>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <!-- DOMPurify for sanitizing HTML -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" integrity="sha512-jB0TkTBeQC9ZSkBqDhdmfTv1qdfbWpGE72yJ/01Srq6hEzZIz2xkz1e57p9ai7IeHMwEG7HpzG6NdptChif5Pg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="prism.js"></script>
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        },
+            svg: {
+                fontCache: 'global'
+            }
+        };
+            </script>
+
+  <script id="MathJax-script" async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+  <script src="prism.js"></script>
+    <script src="config.js"></script>
+    <script src="assistant.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</body>
+</html>
+
+
