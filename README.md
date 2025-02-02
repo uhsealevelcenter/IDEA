@@ -5,6 +5,9 @@
 This is a stripped down version of the [Station Explorer Assistant (SEA) project](https://github.com/uhsealevelcenter/slassi).
 The core of it is OpenAI's GPT-4o model that runs a local code interpreter using [OpenInterpreter](https://github.com/OpenInterpreter/open-interpreter). It is essentially a web interface to the OpenInterpreter code interpreter.
 
+![IDEA](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExdDlpeXUzcTNuZjN0eTZjaGd2YmFwYXVhejBiZGhjZ25sbnJsbGk5NSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/ZqE51jnzWAFBCZBRUM/giphy.gif)
+![IDEA2](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHhscGFraWFpbzExcnN1NG01bG0zNGMxendnMjFrbWU4YWM1MWx4OCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/tuv0NGNP9mhsmhsTad/giphy.gif)
+
 ## What this project is NOT
 This is not a full-fledged chat assistant. Ther is no notion of users, authenticaton or authorization. The conversation history is not stored. In it is current form, 
 it is primarily a tool to be used as a personal assistant, served locally on a personal computer. There are no guardrails
