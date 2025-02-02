@@ -64,10 +64,30 @@ function createPromptIdeas() {
     promptsContainer.id = 'promptIdeas';
     console.log("Creating prompt ideas");
     const prompts = [
-        {title: "Explain data", prompt: "Explain data to me. I am new to researching sea level and tidal information. Share information about the data available at UHSLC and within this app. Discuss ways to interact with the data, such as requesting to see samples, perform analyses, or download files. Ask me what I would like to explore next."},
-        {title: "Analyze data", prompt: "Analyze data for me. I am new to researching sea level and tidal information. Briefly explain what data is available. Jump into an example, such as using the Fast Delivery daily data to calculate monthly means and then calculating the trend (remember there could be data gaps that should be ignored when calculating trends). Ensure that trend calculations are clearly specified as per year. When calculating trends, always verify the time unit and convert to an annual rate, if necessary, before presenting results. Show your code and plot the results. Offer to calculate monthly anomalies by subtracting the annual cycle climatology. Ask me what I would like to explore next."},
-        {title: "Convey information", prompt: "Convey information to me. I am especially interested in understanding tidal datum information. Teach me about the tidal datums, especially about how they relate to coastal impacts and how to convert data between different reference datums. Jump into an example by loading the tidal datums for the selected station and plotting them as both relative to Station Zero and MHHW datums. Show your equations, code, and plots. Ask me what I would like to explore next."},
-        {title: "Propose research", prompt: "Propose research ideas to me. I am looking for creative new ideas to research using the sea level and tidal data at UHSLC. Briefly explain what data is available. Outline several neat research questions to explore. Pick one question and help me get started with the analysis. Show your code and plot the preliminary results. Ask me if there is a research topic that I would like to further explore."},
+        {
+            title: "Explore Popular Datasets",
+            prompt: "Explore a popular dataset for me, such as global population, climate data, or economic indicators. Load the data, clean it, and provide summaries or visualizations like interactive maps, time-series plots, or bar charts to help me understand the data better."
+        },
+        {
+            title: "Perform Data Analysis",
+            prompt: "Analyze a dataset for me. Calculate trends, perform statistical analysis, or apply machine learning models. Show me the code, results, and visualizations step-by-step."
+        },
+        {
+            title: "Create Interactive Maps",
+            prompt: "Create an interactive map for me using geospatial data. For example, map population density, weather patterns, or transportation networks. Fetch the data, process it, and generate a map I can interact with."
+        },
+        {
+            title: "Generate Insights from Files",
+            prompt: "Process and analyze a file I upload, such as a CSV, Excel, or JSON file. Clean the data, extract insights, and create visualizations or reports for me."
+        },
+        {
+            title: "Brainstorm Research Ideas",
+            prompt: "Help me brainstorm research ideas using publicly available datasets. Suggest interesting questions, guide me through the initial analysis, and create visualizations to support the findings. If I don’t have a specific topic in mind, suggest one for me."
+        },
+        {
+            title: "Interact with APIs",
+            prompt: "Fetch data from an API or scrape data from a website (ethically and within legal boundaries). For example, retrieve weather data, stock prices, or other real-time information and analyze it for me."
+        }
     ];
 
     const promptTitle = document.createElement('p');
