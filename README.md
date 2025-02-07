@@ -1,5 +1,9 @@
 # Intelligent Data Exploring Assistant (IDEA)
 
+## Disclaimer
+
+**Warning:** This project allows an LLM to execute code and perform actions on the host machine, which can be potentially destructive and dangerous. Use this software at your own risk. The authors and contributors of this project are not responsible for any damage or data loss that may occur from using this software. It is strongly recommended to run this software in a controlled environment, such as a virtual machine or a container, to mitigate potential risks.
+
 ## Overview
 
 This is a stripped down version of the [Station Explorer Assistant (SEA) project](https://github.com/uhsealevelcenter/slassi).
