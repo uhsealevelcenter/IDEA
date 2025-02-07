@@ -6,12 +6,16 @@ const config = {
         local: {
             chat: 'http://localhost/api/chat',
             history: 'http://localhost/api/history',
-            clear: 'http://localhost/api/clear'
+            clear: 'http://localhost/api/clear',
+            upload: 'http://localhost/api/upload',
+            files: 'http://localhost/api/files',
         },
         production: {
-            chat: 'https://nemo-dev1.uhslc.org/chat',
-            history: 'https://nemo-dev1.uhslc.org/history',
-            clear: 'https://nemo-dev1.uhslc.org/clear'
+            chat: 'https://<your-domain>/chat',
+            history: 'https://<your-domain>/history',
+            clear: 'https://<your-domain>/clear',
+            upload: 'https://<your-domain>/upload',
+            files: 'https://<your-domain>/files',
         }
     },
 
