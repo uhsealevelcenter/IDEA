@@ -62,7 +62,7 @@ host = (
     else "https://uhslc.soest.hawaii.edu/sea"
 )
 
-app = FastAPI(root_path="/sea-api")
+app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static")
@@ -73,6 +73,7 @@ origins = [
     "http://localhost:8001",
     "http://127.0.0.1:8001",
     "http://localhost",
+    "*"
 ]
 
 # TODO:
