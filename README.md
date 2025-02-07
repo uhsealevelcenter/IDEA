@@ -12,11 +12,20 @@ The core of it is OpenAI's GPT-4o model that runs a local code interpreter using
 ![IDEA](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExdDlpeXUzcTNuZjN0eTZjaGd2YmFwYXVhejBiZGhjZ25sbnJsbGk5NSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/ZqE51jnzWAFBCZBRUM/giphy.gif)
 ![IDEA2](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHhscGFraWFpbzExcnN1NG01bG0zNGMxendnMjFrbWU4YWM1MWx4OCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/tuv0NGNP9mhsmhsTad/giphy.gif)
 
-## What this project is NOT
-This is not a full-fledged chat assistant. Ther is no notion of users, authenticaton or authorization. The conversation history is not stored. In it is current form, 
-it is primarily a tool to be used as a personal assistant, served locally on a personal computer. There are no guardrails
-to prevent malicious use (you should not run this on a public server). But it is a good starting point for building your own chat assistant 
-and it runs in a docker container which prevents you from messing up your system.
+## Important Note About Usage
+
+This is a single-user development tool, not a production-ready chat application. It is designed to run locally as a personal assistant and lacks features typically found in production systems such as:
+
+- Multi-user support
+- Authentication/Authorization
+- Conversation history persistence
+- Security guardrails
+- Production-level error handling
+- Enterprise support
+
+**Security Warning:** This tool is intended for local development use only. Running it on a public server is strongly discouraged as it lacks the necessary security features. While the Docker container provides some isolation, it should not be considered a complete security solution.
+
+This project serves as a starting point for developers looking to build their own AI-powered tools, but it requires significant additional development to be production-ready.
 
 ## Features
 
@@ -74,7 +83,7 @@ Note: The first time you run this, it will take a while because it has to downlo
 #### **Local Services Breakdown:**
 
 - **Backend (web):** Runs the API with hot-reload enabled (`uvicorn app:app --reload`).
-- **Frontend:** A static server (using Python’s `http.server`) running on port **8000**. Useful for direct access and testing. http://localhost
+- **Frontend:** A static server (using Python's `http.server`) running on port **8000**. Useful for direct access and testing. http://localhost
 - **NGINX:** Reverse-proxy and static file server available on port **80**.
 - **Redis:** In-memory store for caching, running on port **6379**.
 
