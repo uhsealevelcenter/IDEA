@@ -23,6 +23,7 @@ import redis
 # import magic
 
 from utils.system_prompt import sys_prompt
+# from utils.system_prompt_InSight import sys_prompt # System prompt for analyzing data from NASA's InSight mission to Mars
 from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter 
 from slowapi.errors import RateLimitExceeded
@@ -39,7 +40,7 @@ CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
 STATIC_DIR = Path("static")
 UPLOAD_DIR = Path("uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.tif'}
+ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.tif', '.png', '.jpg'}
 
 # Rate limiting
 UPLOAD_RATE_LIMIT = "5/minute"
@@ -181,6 +182,7 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         # Create new interpreter instance with default settings
         interpreter = OpenInterpreter()
         interpreter.system_message += sys_prompt
+        interpreter.llm.supports_vision = True # Enable vision
         interpreter.llm.model = "gpt-4o-2024-11-20"
         interpreter.llm.temperature = 0.2
         # Setting to maximim for gpt-4o as per documentation
@@ -307,14 +309,23 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks):
         # Get or create interpreter instance
         interpreter = get_or_create_interpreter(session_id)
 
-        interpreter.custom_instructions = f"""
-            Today's date is {today}.
-            The host is {host}.
-            The session_id is {session_id}.
-            The uploaded files are available in {STATIC_DIR}/{session_id}/{UPLOAD_DIR} folder. Use the file path to access the files when asked to analyze uploaded files
-        """
-
-        
+        #interpreter.custom_instructions = f"""
+        #    Today's date is {today}.
+        #    The host is {host}.
+        #    The session_id is {session_id}.
+        #    The uploaded files are available in {STATIC_DIR}/{session_id}/{UPLOAD_DIR} folder. Use the file path to access the files when asked to analyze uploaded files
+       # """
+        # Get custom instructions 
+        station_id = '000' # Placeholder
+        interpreter.custom_instructions =  get_custom_instructions(
+            today=today,
+            host=host,
+            session_id=session_id,
+            static_dir=STATIC_DIR,
+            upload_dir=UPLOAD_DIR,
+            station_id=station_id
+        )
+   
         # Update last active time
         redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_id}", str(time()))
 
