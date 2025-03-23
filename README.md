@@ -120,12 +120,28 @@ The `production_start.sh` script will:
 
 system_prompt.py is the system prompt for the LLM. It is used to set the behavior of the LLM. It is probably the most important file in the project. You can alter the behavior of the LLM by editing this file and adjust it to your own needs.
 
+
+## PaperQA2
+
+- **Data Directory:** Contains subdirectories for benchmarks, metadata, altimetry, and papers. papers is the directory containing the peer reviewed papers that are indexed by PaperQA2. 
+When develping locally, you can simply add new publications to the `data/papers` directory and newly added PDFs will be automatically indexed upon first relevant question that invokes the use of the `pqa` command (e.g. asking the AI to perform literature review).
+- **Note**: In production, you cannot simply copy the data to `data/papers` on your local machine because that directory is not mounted in the container in production. You would have to copy the data to the production server and then copy the data directly to the container at the same location (e.g. `/app/data/papers`).
+
+The settings for PaperQA2 indexing are in `data/.pqa/settings/my_fast.json` and `data/.pqa/settings/pqa_settings.py`. These files define the model and parameters used to index the papers. You can change the settings to use a different model or different parameters. And then in `custom_instructions.py`, you can change the system prompt to use the new settings (e.g. `my_fast` or `pqa_settings`).
+
+To replicate our results for the Mars InSight mission from our paper named Building an intelligent data exploring assistant for geoscientists, you must use the `system_prompt_InSight.py` file as your system prompt. To do that, you need to change the import in `app.py` from `from utils.system_prompt import sys_prompt` to `from utils.system_prompt_InSight import sys_prompt`.
+
 ## Environment Variables
 
 The project behavior is controlled by several environment variables in the `.env` file:
 
+This one is a secret and it should live in your .env file (not checked to the repo)
 - `OPENAI_API_KEY`: Your API key provided by OpenAI.
+
+These are not secrets but simply settings. You can define these in your docker-compose file
 - `LOCAL_DEV`: Set to `1` for local development mode; set to `0` for production.
+- `PQA_HOME`: Path to store Paper-QA settings, typically `/app/data`.
+- `PAPER_DIRECTORY`: Path to the papers directory, typically `/app/data/papers`.
 
 ## Docker & Container Details
 
