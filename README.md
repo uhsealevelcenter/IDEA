@@ -129,6 +129,8 @@ When develping locally, you can simply add new publications to the `data/papers`
 
 The settings for PaperQA2 indexing are in `data/.pqa/settings/my_fast.json` and `data/.pqa/settings/pqa_settings.py`. These files define the model and parameters used to index the papers. You can change the settings to use a different model or different parameters. And then in `custom_instructions.py`, you can change the system prompt to use the new settings (e.g. `my_fast` or `pqa_settings`).
 
+## Note about the System Prompt
+
 To replicate our results for the Mars InSight mission from our paper named Building an intelligent data exploring assistant for geoscientists, you must use the `system_prompt_InSight.py` file as your system prompt. To do that, you need to change the import in `app.py` from `from utils.system_prompt import sys_prompt` to `from utils.system_prompt_InSight import sys_prompt`.
 
 ## Environment Variables
