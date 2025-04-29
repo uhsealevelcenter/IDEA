@@ -1,6 +1,6 @@
 {
-    "llm": "gpt-4o",
-    "summary_llm": "gpt-4o",
+    "llm": "gpt-4.1-2025-04-14",
+    "summary_llm": "gpt-4.1-2025-04-14",
     "answer": {
       "evidence_k": 5,
       "evidence_summary_length": "about 100 words",
