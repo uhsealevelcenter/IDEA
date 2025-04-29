@@ -29,7 +29,7 @@ def fetch_and_process():
         "features": matched_features
     }
 
-    output_dir = "/tmp"
+    output_dir = "./data/metadata"
     output_file = f"{output_dir}/fd_metadata.geojson"
 
 
