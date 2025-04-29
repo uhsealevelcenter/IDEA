@@ -1,0 +1,24 @@
+{
+    "llm": "gpt-4o",
+    "summary_llm": "gpt-4o",
+    "answer": {
+      "evidence_k": 5,
+      "evidence_summary_length": "about 100 words",
+      "answer_max_sources": 3,
+      "answer_length": "about 200 words, but can be longer",
+      "max_concurrent_requests": 5
+    },
+    "parsing": {
+      "use_doc_details": false
+    },
+    "prompts": {
+      "use_json": false,
+      "context_inner": "{name}: {text}"
+    },
+    "agent": {
+      "agent_type": "fake",
+      "index":{
+        "paper_directory": "/app/data/papers"
+      }
+    }
+  }

@@ -1,18 +1,31 @@
 # Intelligent Data Exploring Assistant (IDEA)
 
+## Disclaimer
+
+**Warning:** This project allows an LLM to execute code and perform actions on the host machine, which can be potentially destructive and dangerous. Use this software at your own risk. The authors and contributors of this project are not responsible for any damage or data loss that may occur from using this software. It is strongly recommended to run this software in a controlled environment, such as a virtual machine or a container, to mitigate potential risks.
+
 ## Overview
 
 This is a stripped down version of the [Station Explorer Assistant (SEA) project](https://github.com/uhsealevelcenter/slassi).
-The core of it is OpenAI's GPT-4o model that runs a local code interpreter using [OpenInterpreter](https://github.com/OpenInterpreter/open-interpreter). It is essentially a web interface to the OpenInterpreter code interpreter.
+The core of it is OpenAI's GPT-4.1 model that runs a local code interpreter using [OpenInterpreter](https://github.com/OpenInterpreter/open-interpreter). It is essentially a web interface to the OpenInterpreter code interpreter.
 
 ![IDEA](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExdDlpeXUzcTNuZjN0eTZjaGd2YmFwYXVhejBiZGhjZ25sbnJsbGk5NSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/ZqE51jnzWAFBCZBRUM/giphy.gif)
 ![IDEA2](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHhscGFraWFpbzExcnN1NG01bG0zNGMxendnMjFrbWU4YWM1MWx4OCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/tuv0NGNP9mhsmhsTad/giphy.gif)
 
-## What this project is NOT
-This is not a full-fledged chat assistant. Ther is no notion of users, authenticaton or authorization. The conversation history is not stored. In it is current form, 
-it is primarily a tool to be used as a personal assistant, served locally on a personal computer. There are no guardrails
-to prevent malicious use (you should not run this on a public server). But it is a good starting point for building your own chat assistant 
-and it runs in a docker container which prevents you from messing up your system.
+## Important Note About Usage
+
+This is a single-user development tool, not a production-ready chat application. It is designed to run locally as a personal assistant and lacks features typically found in production systems such as:
+
+- Multi-user support
+- Authentication/Authorization
+- Conversation history persistence
+- Security guardrails
+- Production-level error handling
+- Enterprise support
+
+**Security Warning:** This tool is intended for local development use only. Running it on a public server is strongly discouraged as it lacks the necessary security features. While the Docker container provides some isolation, it should not be considered a complete security solution.
+
+This project serves as a starting point for developers looking to build their own AI-powered tools, but it requires significant additional development to be production-ready.
 
 ## Features
 
@@ -21,6 +34,14 @@ and it runs in a docker container which prevents you from messing up your system
 - **Data Download:** Export data in any format for further study.
 - **Data Analysis:** Automatically run analysis routines to generate and validate results.
 - **Data Upload:** Upload data files for analysis.
+
+## More information 
+
+- **Live example:** [Station Explorer Assistant (SEA) project](https://uhslc.soest.hawaii.edu/research/SEAinfo/)
+- **Publication preprint:** [Building an Intelligent Data Exploring Assistant (IDEA) for Geoscientists](https://essopenarchive.org/users/889694/articles/1271066-building-an-intelligent-data-exploring-assistant-for-geoscientists)
+<p align="center">
+  <img src="https://uhslc.soest.hawaii.edu/research/SEAinfo/EngineeringSchematic_details.png" alt="IDEAschematic_details" width="600" />
+</p>
 
 ## Prerequisites
 
@@ -70,7 +91,7 @@ Note: The first time you run this, it will take a while because it has to downlo
 #### **Local Services Breakdown:**
 
 - **Backend (web):** Runs the API with hot-reload enabled (`uvicorn app:app --reload`).
-- **Frontend:** A static server (using Python’s `http.server`) running on port **8000**. Useful for direct access and testing. http://localhost
+- **Frontend:** A static server (using Python's `http.server`) running on port **8000**. Useful for direct access and testing. http://localhost
 - **NGINX:** Reverse-proxy and static file server available on port **80**.
 - **Redis:** In-memory store for caching, running on port **6379**.
 
@@ -107,12 +128,30 @@ The `production_start.sh` script will:
 
 system_prompt.py is the system prompt for the LLM. It is used to set the behavior of the LLM. It is probably the most important file in the project. You can alter the behavior of the LLM by editing this file and adjust it to your own needs.
 
+
+## PaperQA2
+
+- **Data Directory:** Contains subdirectories for benchmarks, metadata, altimetry, and papers. papers is the directory containing the peer reviewed papers that are indexed by PaperQA2. 
+When develping locally, you can simply add new publications to the `data/papers` directory and newly added PDFs will be automatically indexed upon first relevant question that invokes the use of the `pqa` command (e.g. asking the AI to perform literature review).
+- **Note**: In production, you cannot simply copy the data to `data/papers` on your local machine because that directory is not mounted in the container in production. You would have to copy the data to the production server and then copy the data directly to the container at the same location (e.g. `/app/data/papers`).
+
+The settings for PaperQA2 indexing are in `data/.pqa/settings/my_fast.json` and `data/.pqa/settings/pqa_settings.py`. These files define the model and parameters used to index the papers. You can change the settings to use a different model or different parameters. And then in `custom_instructions.py`, you can change the system prompt to use the new settings (e.g. `my_fast` or `pqa_settings`).
+
+## Note about the System Prompt
+
+To replicate our results for the Mars InSight mission from our paper named Building an intelligent data exploring assistant for geoscientists, you must use the `system_prompt_InSight.py` file as your system prompt. To do that, you need to change the import in `app.py` from `from utils.system_prompt import sys_prompt` to `from utils.system_prompt_InSight import sys_prompt`.
+
 ## Environment Variables
 
 The project behavior is controlled by several environment variables in the `.env` file:
 
+This one is a secret and it should live in your .env file (not checked to the repo)
 - `OPENAI_API_KEY`: Your API key provided by OpenAI.
+
+These are not secrets but simply settings. You can define these in your docker-compose file
 - `LOCAL_DEV`: Set to `1` for local development mode; set to `0` for production.
+- `PQA_HOME`: Path to store Paper-QA settings, typically `/app/data`.
+- `PAPER_DIRECTORY`: Path to the papers directory, typically `/app/data/papers`.
 
 ## Docker & Container Details
 
