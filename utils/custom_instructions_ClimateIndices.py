@@ -26,7 +26,7 @@ def get_custom_instructions(today, host, session_id, static_dir, upload_dir, sta
             and look up the person-name class which will be nested within a person-desc class and looking for person-content class
 
             2. You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
-            pqa -s my_fast ask "<query>"
+            pqa -s pqa_settings ask "<query>"
             Use it when:
                 1. Asked to perform literature review
                 2.The query involves specific scientific methods, findings, or technical details.
