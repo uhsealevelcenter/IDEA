@@ -162,10 +162,18 @@ cython_debug/
 *.png
 
 /static/
-# Ignore indexes created by paper-qa
-data/.pqa/indexes/
-data/papers/
-# But allow settings files
+
+# Ignore everything under data/
+data/**
+
+# But allow settings JSON files
+!data/.pqa/settings/
 !data/.pqa/settings/*.json
 
 /frontend/config.js
+
+# Node.js dependencies
+node_modules/
+
+# Example Output
+Example_Output/
