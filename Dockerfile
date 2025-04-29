@@ -35,7 +35,8 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-# # Install runtime dependencies
+
+# Install runtime dependencies (original version)
 RUN apt-get update && apt-get install -y \
     wget \
     libexpat1-dev \
@@ -45,6 +46,41 @@ RUN apt-get update && apt-get install -y \
 #     clamav-daemon \
 #     clamav-freshclam \
 #     clamav-unofficial-sigs
+
+# ## Install runtime dependencies (For puppeteer pdf generation, under development)
+# RUN apt-get update && apt-get install -y \
+#     wget \
+#     curl \
+#     libnss3 \
+#     libx11-xcb1 \
+#     libxcomposite1 \
+#     libxcursor1 \
+#     libxdamage1 \
+#     libxi6 \
+#     libxtst6 \
+#     libglib2.0-0 \
+#     libxrandr2 \
+#     libasound2 \
+#     libpangocairo-1.0-0 \
+#     fonts-liberation \
+#     libatk-bridge2.0-0 \
+#     libatk1.0-0 \
+#     libcups2 \
+#     libdrm2 \
+#     libdbus-1-3 \
+#     libxss1 \
+#     libgtk-3-0 \
+#     ca-certificates \
+#     gnupg \
+#     lsb-release \
+#     && rm -rf /var/lib/apt/lists/*
+## 
+
+## Install runtime dependencies (For puppeteer pdf generation, under development)
+# # Install Node.js
+# RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+#     apt-get install -y nodejs
+##
 
 # create directories for data
 # # Initialize ClamAV
@@ -57,6 +93,14 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy application files
 COPY . .
+
+## Install runtime dependencies (For puppeteer pdf generation, under development)
+# # npm install (after copying the app files)
+# #RUN npm init -y && npm install puppeteer get-stdin
+# # Install Chromium manually
+# RUN apt-get update && apt-get install -y chromium chromium-driver
+# RUN npm install puppeteer
+##
 
 # Create required directories
 RUN echo '#!/bin/bash\n\
@@ -72,7 +116,6 @@ chmod +x /entrypoint.sh
 
 # Setup paper-qa settings
 # RUN pqa -s default_setting --llm gpt-4o-mini --summary-llm gpt-4o-mini save
-
 
 EXPOSE 8001
 ENTRYPOINT ["/entrypoint.sh"]
