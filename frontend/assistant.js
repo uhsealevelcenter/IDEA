@@ -748,8 +748,7 @@ async function waitForSelect2(timeout = 5000) {
     });
 }
 
-// Add these functions to your existing assistant.js
-
+// File upload functionality
 function initializeFileUpload() {
     const uploadButton = document.getElementById('uploadButton');
     const fileInput = document.getElementById('fileUpload');
@@ -885,7 +884,8 @@ function downloadConversation() {
     // Apply some PDF-specific styling
     const pdfContainer = document.createElement('div');
     pdfContainer.innerHTML = `
-        <h1 style="text-align: center; margin-bottom: 20px;">Chat Conversation</h1>
+        <h1 style="text-align: center; margin-bottom: 20px;">IDEA Conversation</h1>
+        <h2 style="text-align: center; margin-bottom: 10px;"><a href="https://github.com/uhsealevelcenter/IDEA" target="_blank">Intelligent Data Exploring Assistant</a></h2>
         <p style="text-align: center; margin-bottom: 30px;">
             Generated on ${new Date().toLocaleString()}
         </p>
@@ -895,7 +895,7 @@ function downloadConversation() {
     // Configure PDF options
     const opt = {
         margin: [10, 10],
-        filename: 'chat-conversation.pdf',
+        filename: 'IDEA-conversation.pdf',
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { 
             scale: 2,
@@ -916,6 +916,39 @@ function downloadConversation() {
         });
 }
 
+// // Alternative download function using fetch (Puppeteer backend)
+// async function downloadConversation_alt() {
+//     try {
+//         const chatHtml = chatDisplay.outerHTML;
+//         const response = await fetch('/sea-api/downloadConversation', {
+//             method: 'POST',
+//             headers: { 'Content-Type': 'application/json' },
+//             body: JSON.stringify({
+//                 html: chatHtml,
+//                 generatedTime: new Date().toLocaleString()
+//             }),
+//         });
+
+//         if (!response.ok) {
+//             throw new Error('Failed to generate PDF');
+//         }
+
+//         const blob = await response.blob();
+//         const url = URL.createObjectURL(blob);
+
+//         const a = document.createElement('a');
+//         a.href = url;
+//         a.download = 'chat-conversation.pdf';
+//         a.click();
+//         URL.revokeObjectURL(url);
+
+//         appendSystemMessage('Conversation downloaded successfully!');
+//     } catch (error) {
+//         console.error('PDF download failed:', error);
+//         appendSystemMessage('Failed to download conversation.');
+//     }
+// }
+
 document.addEventListener('DOMContentLoaded', () => {
     initializeFileUpload();
     
@@ -923,6 +956,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadButton = document.getElementById('downloadButton');
     if (downloadButton) {
         downloadButton.addEventListener('click', downloadConversation);
+        // downloadButton.addEventListener('click', downloadConversation_alt); // Alternative method (under development)
     }
 });
 

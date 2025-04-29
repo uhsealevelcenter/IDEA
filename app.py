@@ -18,14 +18,23 @@ from slowapi.errors import RateLimitExceeded
 from pathlib import Path
 from fastapi import UploadFile, File
 from utils.custom_functions import custom_tool
-from utils.custom_instructions import get_custom_instructions
 import redis
-# import magic
-
-from utils.system_prompt import sys_prompt
 from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter 
 from slowapi.errors import RateLimitExceeded
+# import magic
+# import subprocess # For download_conversation (Puppeteer version, under development)
+
+## Specify the system prompt to use (instructions to LLM)
+#from utils.system_prompt import sys_prompt # Generic IDEA example
+from utils.system_prompt_SEA import sys_prompt # Station Explorer Assistant
+#from utils.system_prompt_InSight import sys_prompt # NASA's InSight Mission
+#from utils.system_prompt_HCDP import sys_prompt # Hawaii Climate Data Portal (under development)
+#from utils.system_prompt_APIcommunicator import sys_prompt # API Communicator (under development)
+
+## Specify the custom instructions to use (instructions to LLM and OpenInterpreter)
+#from utils.custom_instructions import get_custom_instructions # Generic IDEA example
+from utils.custom_instructions_ClimateIndices import get_custom_instructions # Climate Assistant
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,7 +48,7 @@ CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
 STATIC_DIR = Path("static")
 UPLOAD_DIR = Path("uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.tif'}
+ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.mat', '.tif', '.png', '.jpg'} # Added PNG, JPG. & MAT
 
 # Rate limiting
 UPLOAD_RATE_LIMIT = "5/minute"
@@ -180,10 +189,27 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         # Create new interpreter instance with default settings
         interpreter = OpenInterpreter()
         interpreter.system_message += sys_prompt
-        interpreter.llm.model = "gpt-4o-2024-11-20"
+
+        # Enable vision
+        interpreter.llm.supports_vision = True 
+        
+        # OpenAI Models
+        interpreter.llm.model = "gpt-4.1-2025-04-14"
+        #interpreter.llm.model = "gpt-4o-2024-11-20"
+        #interpreter.llm.model = "gpt-4o"
+        interpreter.llm.supports_functions = True 
+
+        # # Jetstream2 Models (https://docs.jetstream-cloud.org/inference-service/api/)
+        # interpreter.llm.api_key = os.getenv("JETSTREAM2_API_KEY") # api key to send your model 
+        # interpreter.llm.api_base = "https://llm.jetstream-cloud.org/api" # add api base for OpenAI compatible provider
+        # interpreter.llm.model = "openai/DeepSeek-R1" # add openai/ prefix to route as OpenAI provider
+        # interpreter.llm.model = "openai/llama-4-scout" # add openai/ prefix to route as OpenAI provider    
+        # interpreter.llm.model = "openai/Llama-3.3-70B-Instruct" # add openai/ prefix to route as OpenAI provider    
+        # interpreter.llm.supports_functions = False  # Set to True if your model supports functions (optional)
+
+        # General settings
         interpreter.llm.temperature = 0.2
-        # Setting to maximim for gpt-4o as per documentation
-        # https://platform.openai.com/docs/models#gpt-4o
+        # Setting to maximum for gpt-4o as per documentation (https://platform.openai.com/docs/models#gpt-4o)
         interpreter.llm.context_window = 128000
         interpreter.llm.max_tokens = 16383
         interpreter.max_output = 16383
@@ -191,9 +217,8 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         interpreter.llm.max_budget = 0.03
         interpreter.computer.import_computer_api = False
         interpreter.computer.run("python", custom_tool)
-        interpreter.llm.supports_functions = True
         interpreter.auto_run = True
-        
+
         # Store the instance
         interpreter_instances[session_id] = interpreter
         logger.info(f"Created new interpreter for session {session_id}")
@@ -207,7 +232,6 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         logger.error(f"Error in get_or_create_interpreter: {str(e)}")
         raise InterpreterError(f"Failed to create/retrieve interpreter: {str(e)}")
     
-
 async def periodic_cleanup():
     """Background task for periodic cleanup of idle sessions"""
     while True:
@@ -306,25 +330,29 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks):
         # Get or create interpreter instance
         interpreter = get_or_create_interpreter(session_id)
 
-        interpreter.custom_instructions = f"""
-            Today's date is {today}.
-            The host is {host}.
-            The session_id is {session_id}.
-            The uploaded files are available in {STATIC_DIR}/{session_id}/{UPLOAD_DIR} folder. Use the file path to access the files when asked to analyze uploaded files
-        """
-
-        
+        # Add custom instructions (matches SEA design)
+        station_id = '000' # Placeholder
+        interpreter.custom_instructions =  get_custom_instructions(
+            today=today,
+            host=host,
+            session_id=session_id,
+            static_dir=STATIC_DIR,
+            upload_dir=UPLOAD_DIR,
+            station_id=station_id
+        )
+    
         # Update last active time
         redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_id}", str(time()))
 
         def event_stream():
             try:
+                # logger.info(f"Messages sent to interpreter: {messages}") # Debugging
                 for result in interpreter.chat(messages[-1], stream=True):
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
-                error_message = {"error": e}
+                error_message = {"error": str(e)}  # <-- fix: use str(e)
                 yield f"data: {json.dumps(error_message)}\n\n"
             finally:
                 redis_client.set(
@@ -367,7 +395,6 @@ def clear_endpoint(request: Request):
         logger.error(f"Unexpected error in clear_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
     
-
 async def has_executable_header(file_path: Path) -> bool:
         """Check for executable file headers"""
         with open(file_path, "rb") as f:
@@ -541,3 +568,75 @@ async def delete_all_files(request: Request):
     except Exception as e:
         logger.error(f"Delete all files error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+## Alternative download_conversation function using Puppeteer (under development)
+# @app.post("/downloadConversation")
+# async def download_conversation(request: Request):
+#     try:
+#         body = await request.json()
+#         print("Received /downloadConversation POST body:", body)
+
+#         html_content = body.get("html")
+#         generated_time = body.get("generatedTime", "Unknown time")
+
+#         if not html_content:
+#             print("No HTML content provided in request")
+#             raise HTTPException(status_code=400, detail="No HTML content provided")
+
+#         print("HTML Content length:", len(html_content))
+#         print("Generated time:", generated_time)
+
+#         # Build the full HTML structure in memory
+#         full_html = f"""
+#         <!DOCTYPE html>
+#         <html lang="en">
+#         <head>
+#             <meta charset="UTF-8">
+#             <title>Chat Conversation</title>
+#             <style>
+#                 body {{ font-family: Arial, sans-serif; margin: 40px; background: white; }}
+#                 h1, p {{ text-align: center; }}
+#                 .message {{ margin-bottom: 20px; padding: 10px; border-radius: 8px; background-color: #f5f5f5; }}
+#                 .message.user {{ background-color: #e1f5fe; }}
+#                 .message.assistant {{ background-color: #fff9c4; }}
+#                 .message.system {{ background-color: #eeeeee; font-style: italic; }}
+#                 pre, code {{ background: #f0f0f0; padding: 5px; border-radius: 5px; overflow-x: auto; }}
+#                 img {{ max-width: 100%; }}
+#                 a {{ color: #0645AD; }}
+#             </style>
+#         </head>
+#         <body>
+#             <h1>Chat Conversation</h1>
+#             <p>Generated on {generated_time}</p>
+#             {html_content}
+#         </body>
+#         </html>
+#         """
+
+#         # Call Puppeteer via subprocess and pipe stdin/stdout
+#         try:
+#             process = subprocess.Popen(
+#                 ['node', 'generate_pdf_stream.js'],
+#                 stdin=subprocess.PIPE,
+#                 stdout=subprocess.PIPE,
+#                 stderr=subprocess.PIPE
+#             )
+#             stdout_data, stderr_data = process.communicate(input=full_html.encode('utf-8'))
+
+#             if process.returncode != 0:
+#                 logger.error(f"Puppeteer failed: {stderr_data.decode('utf-8')}")
+#                 raise HTTPException(status_code=500, detail="Failed to generate PDF")
+
+#             return Response(
+#                 content=stdout_data,
+#                 media_type="application/pdf",
+#                 headers={
+#                     "Content-Disposition": "attachment; filename=chat-conversation.pdf"
+#                 }
+#             )
+#         except Exception as e:
+#             logger.error(f"Error during Puppeteer PDF generation: {str(e)}")
+#             raise HTTPException(status_code=500, detail="Internal server error")
+#     except Exception as e:
+#         print(f"Error in downloadConversation: {str(e)}")
+#         raise
