@@ -26,5 +26,5 @@ def get_custom_instructions(today, host, session_id, static_dir, upload_dir, sta
                 3. The answer requires citation from a primary source.
                 4. General knowledge may not provide a complete or accurate response.
                 If unsure, call the function to retrieve papers and then summarize the results for the user.
-
+        
         """
