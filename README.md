@@ -7,7 +7,7 @@
 ## Overview
 
 This is a stripped down version of the [Station Explorer Assistant (SEA) project](https://github.com/uhsealevelcenter/slassi).
-The core of it is OpenAI's GPT-4o model that runs a local code interpreter using [OpenInterpreter](https://github.com/OpenInterpreter/open-interpreter). It is essentially a web interface to the OpenInterpreter code interpreter.
+The core of it is OpenAI's GPT-4.1 model that runs a local code interpreter using [OpenInterpreter](https://github.com/OpenInterpreter/open-interpreter). It is essentially a web interface to the OpenInterpreter code interpreter.
 
 ![IDEA](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExdDlpeXUzcTNuZjN0eTZjaGd2YmFwYXVhejBiZGhjZ25sbnJsbGk5NSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/ZqE51jnzWAFBCZBRUM/giphy.gif)
 ![IDEA2](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHhscGFraWFpbzExcnN1NG01bG0zNGMxendnMjFrbWU4YWM1MWx4OCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/tuv0NGNP9mhsmhsTad/giphy.gif)
@@ -34,6 +34,14 @@ This project serves as a starting point for developers looking to build their ow
 - **Data Download:** Export data in any format for further study.
 - **Data Analysis:** Automatically run analysis routines to generate and validate results.
 - **Data Upload:** Upload data files for analysis.
+
+## More information 
+
+- **Live example:** [Station Explorer Assistant (SEA) project](https://uhslc.soest.hawaii.edu/research/SEAinfo/)
+- **Publication preprint:** [Building an Intelligent Data Exploring Assistant (IDEA) for Geoscientists](https://essopenarchive.org/users/889694/articles/1271066-building-an-intelligent-data-exploring-assistant-for-geoscientists)
+<p align="center">
+  <img src="https://uhslc.soest.hawaii.edu/research/SEAinfo/EngineeringSchematic_details.png" alt="IDEAschematic_details" width="600" />
+</p>
 
 ## Prerequisites
 
