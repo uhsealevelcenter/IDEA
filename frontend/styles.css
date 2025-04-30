@@ -109,6 +109,7 @@ body {
     font-size: 16px;
 } */
 
+/* 
 #messageInput {
     flex: 1;
     resize: none;
@@ -120,6 +121,19 @@ body {
     padding-left: 36px;
     font-family: inherit;
     transition: height 0.2s ease;
+} */
+
+#messageInput {
+    width: 100%;
+    min-height: 38px;
+    max-height: 200px;
+    resize: none;
+    padding: 8px;
+    padding-left: 36px;
+    font-family: inherit;
+    line-height: 1.5;
+    z-index: 1;
+    position: relative;
 }
 
 .chat-footer button {
@@ -267,6 +281,8 @@ body {
     border-top-left-radius: 10px;
     border-top-right-radius: 10px;
     padding: 10px 20px;
+    z-index: 1000;
+    position: relative;
 }
 
 .header-title-section {
@@ -433,13 +449,13 @@ pre {
     gap: 10px;
 }
 
-.input-container {
+/* .input-container {
     position: relative;
     flex: 1;
     display: flex;
     align-items: flex-start;
     min-height: 38px;
-}
+} */
 
 #uploadButton {
     position: absolute;
@@ -594,4 +610,39 @@ pre {
         min-width: 60px;
         max-width: 50px; /* Even smaller width for mobile */
     }
+}
+
+/* Add styles for the Upload Files Dropzone */
+.input-container {
+    position: relative;
+    display: flex;
+    flex-direction: column; /* You can switch this to 'row' if needed */
+    align-items: flex-start;
+    width: 100%;
+    flex: 1;
+    min-height: 60px; /* Keep the larger of the two unless 38px is preferred */
+    overflow: hidden;
+}
+
+.drop-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 100%;
+    background: rgba(240, 240, 240, 0.95);
+    border: 2px dashed #888;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 0.95em;
+    color: #555;
+    border-radius: 4px;
+    pointer-events: none; /* KEY: allows typing underneath */
+    z-index: 999;
+}
+
+.drop-overlay.show {
+    display: flex;
 }
