@@ -18,16 +18,16 @@
                 <h1>IDEA</h1>
                 <button id="newMessagesButton">Start over</button>
             </div>
-             <div class="file-upload-section">
+        </header>
+        <div id="chatDisplay" class="chat-display"></div>
+        <footer class="chat-footer">
+            <div class="file-upload-section">
                 <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xlsx, .jpg, .png, .pdf" style="display: none">
                 <div id="uploadProgress" class="progress-bar" style="display: none">
                     <div class="progress"></div>
                 </div>
                 <div id="uploadedFiles" class="uploaded-files-list"></div>
             </div>
-        </header>
-        <div id="chatDisplay" class="chat-display"></div>
-        <footer class="chat-footer">
             <div class="input-container">
                 <button id="uploadButton" title="Max file size: 10MB">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -35,6 +35,11 @@
                     </svg>
                 </button>
                 <textarea id="messageInput" placeholder="Type your message here or attach a file..." autocomplete="off" rows="1"></textarea>
+            
+                <!-- Drop overlay -->
+                <div id="dropOverlay" class="drop-overlay">
+                    <p>Drop files or screenshots here</p>
+                </div>
             </div>
             <button id="sendButton">Send</button>
             <button id="stopButton" disabled>Stop</button>

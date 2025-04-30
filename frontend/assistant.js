@@ -1,5 +1,8 @@
 // script.js
 
+// PREVENT DEFAULT BROWSER BEHAVIOR (drag and drop)
+document.addEventListener('drop', (e) => e.preventDefault());
+
 // Constants and State Management
 const INITIAL_TEXTAREA_HEIGHT = '38px';
 const MESSAGE_TYPES = {
@@ -55,6 +58,46 @@ marked.setOptions({
 //         fontCache: 'global'
 //     }
 // };
+
+const progressBar = document.getElementById('uploadProgress');
+const progressElement = progressBar.querySelector('.progress');
+
+async function handleFiles(files) {
+    if (!files || files.length === 0) return;
+
+    hidePromptIdeas(); 
+    progressBar.style.display = 'block';
+    for (const file of files) {
+        try {
+            const response = await uploadFile(file, progressElement);
+            const imagePath = response.path || `/uploads/${response.name}`;
+
+            if (file.type.startsWith('image')) {
+                // Show the image inline
+                const imageMessage = {
+                    id: generateId('msg'),
+                    role: 'user',
+                    type: 'image',
+                    format: 'path',
+                    content: imagePath,
+                    isComplete: true
+                };
+                // Append image visually and store in conversation
+                //appendMessage(imageMessage); // Commenting this out to avoid double messages
+                messages.push(imageMessage);
+                scrollToBottom();
+
+                // Send clean user message about the upload
+                await sendRequest(`Please describe this image that I uploaded (${file.name})`);
+            } else {
+                sendRequest(`I uploaded ${file.name}`);
+            }
+        } catch (error) {
+            appendSystemMessage(`Error uploading ${file.name}: ${error.message}`);
+        }
+    }
+    progressBar.style.display = 'none';
+}
 
 function createPromptIdeas() {
     const container = document.getElementById('promptIdeasContainer');
@@ -433,7 +476,6 @@ function updateMessageContent(id, content) {
             return;
         }
 
-
         if (contentDiv.getAttribute('data-type') === 'console') {
             // contentDiv.parentElement.remove();
             contentDiv.parentElement.style.display = 'none';
@@ -748,36 +790,94 @@ async function waitForSelect2(timeout = 5000) {
     });
 }
 
-// File upload functionality
+// // File upload functionality
+// function initializeFileUpload() {
+//     const uploadButton = document.getElementById('uploadButton');
+//     const fileInput = document.getElementById('fileUpload');
+//     const uploadedFiles = document.getElementById('uploadedFiles');
+//     const progressBar = document.getElementById('uploadProgress');
+//     const progressElement = progressBar.querySelector('.progress');
+
+//     uploadButton.addEventListener('click', () => {
+//         fileInput.click();
+//     });
+
+//     fileInput.addEventListener('change', async () => {
+//         const files = fileInput.files;
+//         if (files.length === 0) return;
+
+//         for (const file of files) {
+//             try {
+//                 progressBar.style.display = 'block';
+//                 await uploadFile(file, progressElement);
+//                 await updateFilesList();
+//             } catch (error) {
+//                 appendSystemMessage(`Error uploading ${file.name}: ${error.message}`);
+//             }
+//         }
+//         progressBar.style.display = 'none';
+//         fileInput.value = ''; // Reset file input
+//     });
+
+//     // Initial file list load
+//     updateFilesList();
+// }
+
+// File upload functionality (drag and drop, paste, etc.)
 function initializeFileUpload() {
     const uploadButton = document.getElementById('uploadButton');
     const fileInput = document.getElementById('fileUpload');
     const uploadedFiles = document.getElementById('uploadedFiles');
-    const progressBar = document.getElementById('uploadProgress');
-    const progressElement = progressBar.querySelector('.progress');
 
-    uploadButton.addEventListener('click', () => {
-        fileInput.click();
-    });
+    uploadButton.addEventListener('click', () => fileInput.click());
 
     fileInput.addEventListener('change', async () => {
-        const files = fileInput.files;
-        if (files.length === 0) return;
-
-        for (const file of files) {
-            try {
-                progressBar.style.display = 'block';
-                await uploadFile(file, progressElement);
-                await updateFilesList();
-            } catch (error) {
-                appendSystemMessage(`Error uploading ${file.name}: ${error.message}`);
-            }
-        }
-        progressBar.style.display = 'none';
-        fileInput.value = ''; // Reset file input
+        await handleFiles(fileInput.files);
+        fileInput.value = '';
     });
 
-    // Initial file list load
+    // Paste handler for screenshots
+    document.addEventListener('paste', async (event) => {
+        const items = event.clipboardData?.items;
+        if (!items) return;
+
+        for (const item of items) {
+            if (item.type.startsWith('image')) {
+                const originalFile = item.getAsFile();
+                if (originalFile) {
+                    const extension = originalFile.type.split('/')[1] || 'png';
+                    const uniqueName = `pasted-${Date.now()}-${Math.floor(Math.random() * 1000)}.${extension}`;
+                    const renamedFile = new File([originalFile], uniqueName, { type: originalFile.type });
+
+                    progressBar.style.display = 'block';
+                    try {
+                        const response = await uploadFile(renamedFile, progressElement);
+                        const imagePath = response.path || `/uploads/${response.name}`;
+
+                        // Show the image inline
+                        const imageMessage = {
+                            id: generateId('msg'),
+                            role: 'user',
+                            type: 'image',
+                            format: 'path',
+                            content: imagePath,
+                            isComplete: true
+                        };
+                        //appendMessage(imageMessage); // Commenting this out to avoid double messages
+                        messages.push(imageMessage);
+                        scrollToBottom();
+
+                        await sendRequest(`Please describe this screenshot that I uploaded (${renamedFile.name})`);
+                    } catch (error) {
+                        appendSystemMessage(`Error uploading pasted image: ${error.message}`);
+                    } finally {
+                        progressBar.style.display = 'none';
+                    }
+                }
+            }
+        }
+    });
+
     updateFilesList();
 }
 
@@ -806,7 +906,7 @@ async function uploadFile(file, progressElement) {
 
         const data = await response.json();
         appendSystemMessage(`Successfully uploaded ${file.name}`);
-        sendRequest(`I uploaded ${file.name}`);
+        //sendRequest(`I uploaded ${file.name}`); // Commenting this out to avoid double messages
         return data;
 
     } catch (error) {
@@ -951,7 +1051,38 @@ function downloadConversation() {
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeFileUpload();
-    
+
+    // ✅ Drag overlay logic
+    const dropOverlay = document.getElementById('dropOverlay');
+    if (!dropOverlay) {
+        console.warn('⚠️ dropOverlay element not found in DOM.');
+        return;
+    }
+
+    let dragTimer;
+
+    document.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropOverlay.classList.add('show');
+        clearTimeout(dragTimer);
+        dragTimer = setTimeout(() => {
+            dropOverlay.classList.remove('show');
+        }, 150);
+    });
+
+    document.addEventListener('dragleave', () => {
+        dropOverlay.classList.remove('show');
+    });
+
+    document.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        dropOverlay.classList.remove('show');
+
+        if (e.dataTransfer?.files?.length > 0) {
+            await handleFiles(e.dataTransfer.files);
+        }
+    });
+
     // Add download button event listener
     const downloadButton = document.getElementById('downloadButton');
     if (downloadButton) {
