@@ -884,7 +884,7 @@ function downloadConversation() {
     // Apply some PDF-specific styling
     const pdfContainer = document.createElement('div');
     pdfContainer.innerHTML = `
-        <h1 style="text-align: center; margin-bottom: 20px;">IDEA Conversation</h1>
+        <h1 style="text-align: center; margin-bottom: 20px;">IDEA conversation</h1>
         <h2 style="text-align: center; margin-bottom: 10px;"><a href="https://github.com/uhsealevelcenter/IDEA" target="_blank">Intelligent Data Exploring Assistant</a></h2>
         <p style="text-align: center; margin-bottom: 30px;">
             Generated on ${new Date().toLocaleString()}
