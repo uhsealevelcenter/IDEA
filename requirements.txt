@@ -180,3 +180,5 @@ plotly
 nbformat
 erddapy
 openpyxl
+copernicusmarine
+tabulate
