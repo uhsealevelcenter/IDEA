@@ -26,12 +26,12 @@ from slowapi.errors import RateLimitExceeded
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
 ## Specify the system prompt to use (instructions to LLM)
-#from utils.system_prompt import sys_prompt # Generic IDEA example
+from utils.system_prompt import sys_prompt # Generic IDEA example
 #from utils.system_prompt_SEA import sys_prompt # Station Explorer Assistant
 #from utils.system_prompt_InSight import sys_prompt # NASA's InSight Mission
 #from utils.system_prompt_HCDP import sys_prompt # Hawaii Climate Data Portal (under development)
 #from utils.system_prompt_APIcommunicator import sys_prompt # API Communicator (under development)
-from utils.system_prompt_CMEMS import sys_prompt # Copernicus Marine Intelligent Data Exploring Assistant (CM-IDEA)
+#from utils.system_prompt_CMEMS import sys_prompt # Copernicus Marine Intelligent Data Exploring Assistant (CM-IDEA)
 
 ## Specify the custom instructions to use (instructions to LLM and OpenInterpreter)
 #from utils.custom_instructions import get_custom_instructions # Generic IDEA example
