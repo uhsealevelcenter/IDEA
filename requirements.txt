@@ -31,7 +31,8 @@ folium==0.17.0
 fonttools==4.53.1
 frozendict==2.4.4
 frozenlist==1.4.1
-fsspec==2024.9.0
+#fsspec==2024.9.0
+fsspec==2024.12.0
 geopandas==1.0.1
 git-python==1.0.3
 gitdb==4.0.11
@@ -182,3 +183,14 @@ erddapy
 openpyxl
 copernicusmarine
 tabulate
+cmocean
+# AWS S3/Zarr compatibility (needed for reading CORA data from AWS)
+zarr==2.18.0
+numcodecs==0.14.1
+s3fs==2024.12.0
+intake==2.0.7
+intake-xarray==0.7.0
+aiobotocore==2.19.0
+botocore==1.36.3
+aioitertools==0.7.1
+# End of AWS S3/Zarr compatibility

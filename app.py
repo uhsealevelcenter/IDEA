@@ -32,6 +32,7 @@ from utils.system_prompt import sys_prompt # Generic IDEA example
 #from utils.system_prompt_HCDP import sys_prompt # Hawaii Climate Data Portal (under development)
 #from utils.system_prompt_APIcommunicator import sys_prompt # API Communicator (under development)
 #from utils.system_prompt_CMEMS import sys_prompt # Copernicus Marine Intelligent Data Exploring Assistant (CM-IDEA)
+#from utils.system_prompt_CORA import sys_prompt # NOAA's CORA Intelligent Data Exploring Assistant (CORA-IDEA)
 
 ## Specify the custom instructions to use (instructions to LLM and OpenInterpreter)
 #from utils.custom_instructions import get_custom_instructions # Generic IDEA example
