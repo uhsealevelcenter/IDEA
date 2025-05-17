@@ -2,12 +2,13 @@
 
 ## Disclaimer
 
-**Warning:** This project allows an LLM to execute code and perform actions on the host machine, which can be potentially destructive and dangerous. Use this software at your own risk. The authors and contributors of this project are not responsible for any damage or data loss that may occur from using this software. It is strongly recommended to run this software in a controlled environment, such as a virtual machine or a container, to mitigate potential risks.
+**Warning:** This project allows a Large Language Model (LLM) to execute code and perform actions on the host machine, which can be potentially destructive and dangerous. Use this software at your own risk. The authors and contributors of this project are not responsible for any damage or data loss that may occur from using this software. It is strongly recommended to run this software in a controlled environment, such as a virtual machine or a container, to mitigate potential risks.
 
 ## Overview
 
-This is a stripped down version of the [Station Explorer Assistant (SEA) project](https://github.com/uhsealevelcenter/slassi).
-The core of it is OpenAI's GPT-4.1 model that runs a local code interpreter using [OpenInterpreter](https://github.com/OpenInterpreter/open-interpreter). It is essentially a web interface to the OpenInterpreter code interpreter.
+This is a generic version of the [Station Explorer Assistant (SEA) project](https://github.com/uhsealevelcenter/slassi).
+The core of it is OpenAI's GPT-4.1 model that runs a local code interpreter using [OpenInterpreter](https://github.com/OpenInterpreter/open-interpreter). It is essentially a web interface to the OpenInterpreter code interpreter. 
+Comments about options for using alternative LLM inference endpoints are provided in the app.py script. 
 
 ![IDEA](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExdDlpeXUzcTNuZjN0eTZjaGd2YmFwYXVhejBiZGhjZ25sbnJsbGk5NSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/ZqE51jnzWAFBCZBRUM/giphy.gif)
 ![IDEA2](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHhscGFraWFpbzExcnN1NG01bG0zNGMxendnMjFrbWU4YWM1MWx4OCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/tuv0NGNP9mhsmhsTad/giphy.gif)
@@ -46,7 +47,7 @@ This project serves as a starting point for developers looking to build their ow
 ## Prerequisites
 
 - **Docker & Docker Compose:** Ensure Docker is installed on your system.
-- **OpenAI API Key:** You need an API key from OpenAI.
+- **API Key for LLM Inference:** You need an API key from OpenAI or another LLM service provider.
 
 ## Getting Started Locally
 
