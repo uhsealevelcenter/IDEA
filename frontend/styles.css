@@ -43,7 +43,8 @@ body {
     gap: 10px;
     border-bottom-left-radius: 10px;
     border-bottom-right-radius: 10px;
-    align-items: flex-start;
+    /*align-items: flex-start; */
+    align-items: center; /* vertically center everything */
 }
 
 #sendButton, #stopButton {
@@ -128,12 +129,13 @@ body {
     min-height: 38px;
     max-height: 200px;
     resize: none;
-    padding: 8px;
-    padding-left: 36px;
+    padding: 8px 36px 8px 36px; /* left = space for upload icon, right = mic */
     font-family: inherit;
     line-height: 1.5;
     z-index: 1;
     position: relative;
+    border: 1px solid #ccc;
+    border-radius: 4px;
 }
 
 .chat-footer button {
@@ -616,8 +618,8 @@ pre {
 .input-container {
     position: relative;
     display: flex;
-    flex-direction: column; /* You can switch this to 'row' if needed */
-    align-items: flex-start;
+    flex-direction: row; /* changed from column to row */
+    align-items: center; /* vertical centering */
     width: 100%;
     flex: 1;
     min-height: 60px; /* Keep the larger of the two unless 38px is preferred */
@@ -645,4 +647,35 @@ pre {
 
 .drop-overlay.show {
     display: flex;
+}
+
+#micButton {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 6px;
+  margin: 0;
+  font-size: 16px;
+  color: #666;
+  cursor: pointer;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.3s;
+}
+
+#micButton i.material-icons {
+  font-size: 20px;
+}
+
+#micButton:hover {
+  color: #4a76a8;
+}
+
+#micButton.recording {
+  color: red;
 }
