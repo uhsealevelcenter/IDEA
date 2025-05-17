@@ -9,6 +9,7 @@ const config = {
             clear: 'http://localhost/api/clear',
             upload: 'http://localhost/api/upload',
             files: 'http://localhost/api/files',
+            transcribe: 'http://localhost/api/transcribe'
         },
         production: {
             chat: 'https://<your-domain>/chat',
@@ -16,6 +17,7 @@ const config = {
             clear: 'https://<your-domain>/clear',
             upload: 'https://<your-domain>/upload',
             files: 'https://<your-domain>/files',
+            transcribe: 'https://<your-domain>/transcribe' 
         }
     },
 
