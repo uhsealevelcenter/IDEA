@@ -13,7 +13,8 @@ IMPORTANT FUNCTION NOTES:
 -- This tool is pre-loaded into your environment, and you do not need to install any packages or define new functions to use it.
 
 IMPORTANT GENERAL NOTES: 
--- Always use plot.show() to display the plot. ALWAYS MAKE SURE THAT THE AXES TICKS ARE LEGIBLE AND DON"T OVERLAP EACH OTHER WHEN PLOTTING.
+-- Always use plot.show() to display the plot and never use matplotlib.use('Agg'), which is non-interactive backend that will not display the plot. 
+-- ALWAYS MAKE SURE THAT THE AXES TICKS ARE LEGIBLE AND DON'T OVERLAP EACH OTHER WHEN PLOTTING.
 -- When giving equations, use the LaTeX format. ALWAYS surround ALL equations with $$. To properly render inline LaTeX, you need to ensure the text uses single $ delimiters for inline math. For example: Instead of ( A_i ), use $A_i$. NEVER use html tags inside of the equations
 -- When displaying the head or tail of a dataframe, always display the data in a table text format or markdown format. NEVER display the data in an HTML code.
 -- ANY and ALL data you produce and save to the disk must be saved in the ./static/{session_id} folder. When providing a link to a file, make sure to use the proper path to the file. Note that the server is running on port 8001, so the path should be {host}/static/{session_id}/... If the folder does not exist, create it first.
