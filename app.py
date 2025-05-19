@@ -25,6 +25,11 @@ from slowapi.errors import RateLimitExceeded
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
+## Required for audio transcription 
+#from openai import OpenAI # Uncomment if using OpenAI Whisper API instead of LiteLLM
+# LiteLLM for audio transcription
+from litellm import transcription
+
 ## Specify the system prompt to use (instructions to LLM)
 from utils.system_prompt import sys_prompt # Generic IDEA example
 #from utils.system_prompt_SEA import sys_prompt # Station Explorer Assistant
@@ -314,6 +319,41 @@ async def validation_exception_handler(request, exc):
         status_code=400,
         content={"detail": str(exc)}
     )
+
+
+@app.post("/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    try:
+        # Save uploaded audio to a temp file
+        contents = await file.read()
+        temp_path = f"/tmp/{file.filename}"
+        with open(temp_path, "wb") as f:
+            f.write(contents)
+
+        # # Call OpenAI Whisper API (gpt-4o)
+        # client = OpenAI()
+        # with open(temp_path, "rb") as audio_file:
+        #     transcription_response = client.audio.transcriptions.create(
+        #         #model="gpt-4o-transcribe",
+        #         model="gpt-4o-mini-transcribe",
+        #         file=audio_file
+        #     )
+
+        # LiteLLM alternative
+        with open(temp_path, "rb") as audio_file:
+            transcription_response = transcription(        
+                #model="gpt-4o-transcribe",
+                model="gpt-4o-mini-transcribe",
+                file=audio_file
+            )
+
+        os.remove(temp_path)
+        return {"text": transcription_response.text}
+
+    except Exception as e:
+        logger.error(f"Transcription error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Transcription failed")
+
 
 @app.post("/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
