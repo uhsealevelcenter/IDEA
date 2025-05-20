@@ -27,8 +27,10 @@ from slowapi.errors import RateLimitExceeded
 
 ## Required for audio transcription 
 #from openai import OpenAI # Uncomment if using OpenAI Whisper API instead of LiteLLM
-# LiteLLM for audio transcription
-from litellm import transcription
+from litellm import transcription # LiteLLM for audio transcription
+from utils.transcription_prompt import transcription_prompt # Transcription prompt for Generic IDEA example (abbreviations, etc.)
+#from utils.transcription_prompt_SEA import transcription_prompt # Transcription prompt for SEA-IDEA (abbreviations, etc.)
+#from utils.transcription_prompt_CORA import transcription_prompt # Transcription prompt for CORA-IDEA (abbreviations, etc.)
 
 ## Specify the system prompt to use (instructions to LLM)
 from utils.system_prompt import sys_prompt # Generic IDEA example
@@ -344,7 +346,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
             transcription_response = transcription(        
                 #model="gpt-4o-transcribe",
                 model="gpt-4o-mini-transcribe",
-                file=audio_file
+                file=audio_file,
+                prompt=transcription_prompt # Optional prompt for transcription guidance (e.g., common abbreviations)
             )
 
         os.remove(temp_path)
