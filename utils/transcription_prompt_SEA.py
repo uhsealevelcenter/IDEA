@@ -1,3 +1,3 @@
 transcription_prompt = """
--- SEA is UHSLC's Station Explorer Assistant.
+UHSLC created the Station Explorer Assistant called SEA, which is a type of IDEA.
 """
