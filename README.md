@@ -164,6 +164,12 @@ These are not secrets but simply settings. You can define these in your docker-c
 
 Contributions, issue reports, and feature requests are welcome! Please open an issue or a pull request with your changes.
 
+## Release
+
+![image](https://github.com/user-attachments/assets/4fe5d3e7-5c1a-4fcd-9274-998e841fb860)
+
+Prototype (v0.1.0) https://doi.org/10.5281/zenodo.15605301
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
