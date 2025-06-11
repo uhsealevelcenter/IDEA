@@ -170,7 +170,7 @@ yfinance==0.2.43
 zipp==3.20.2
 xarray==2024.11.0
 netCDF4==1.7.2
-rasterio==1.4.3
+# rasterio==1.4.3  # Install separately in Dockerfile due to GDAL dependencies
 clamd==1.0.2
 slowapi==0.1.9
 python-magic==0.4.27
