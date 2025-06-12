@@ -263,22 +263,34 @@ newMessagesButton.addEventListener('click', () => {
     resetTextareaHeight();
 });
 
-// Logout button event listener
+// Logout button event listeners (both desktop and mobile)
+function handleLogout() {
+    return async () => {
+        try {
+            await fetch(config.getEndpoints().logout, {
+                method: 'POST',
+                headers: {
+                    ...getAuthHeaders()
+                }
+            });
+        } catch (error) {
+            console.error('Logout error:', error);
+        } finally {
+            logout();
+        }
+    };
+}
+
 const logoutButton = document.getElementById('logoutButton');
-logoutButton.addEventListener('click', async () => {
-    try {
-        await fetch(config.getEndpoints().logout, {
-            method: 'POST',
-            headers: {
-                ...getAuthHeaders()
-            }
-        });
-    } catch (error) {
-        console.error('Logout error:', error);
-    } finally {
-        logout();
-    }
-});
+const logoutButtonMobile = document.getElementById('logoutButtonMobile');
+
+if (logoutButton) {
+    logoutButton.addEventListener('click', handleLogout());
+}
+
+if (logoutButtonMobile) {
+    logoutButtonMobile.addEventListener('click', handleLogout());
+}
 
 // Error handling utility
 function handleError(error, customMessage = 'An error occurred') {
@@ -966,6 +978,77 @@ function initializeFileUpload() {
     updateFilesList();
 }
 
+// Mobile navigation functionality
+function initializeMobileNavigation() {
+    const navbarToggle = document.getElementById('navbarToggle');
+    const navbarMobileMenu = document.getElementById('navbarMobileMenu');
+    const mobileOverlay = document.getElementById('mobileOverlay');
+    
+    // Mobile menu buttons
+    const downloadButtonMobile = document.getElementById('downloadButtonMobile');
+    const newMessagesButtonMobile = document.getElementById('newMessagesButtonMobile');
+
+    function toggleMobileMenu() {
+        navbarToggle.classList.toggle('active');
+        navbarMobileMenu.classList.toggle('active');
+        mobileOverlay.classList.toggle('active');
+        
+        // Prevent body scroll when menu is open
+        if (navbarMobileMenu.classList.contains('active')) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+    }
+
+    function closeMobileMenu() {
+        navbarToggle.classList.remove('active');
+        navbarMobileMenu.classList.remove('active');
+        mobileOverlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // Toggle menu on hamburger click
+    if (navbarToggle) {
+        navbarToggle.addEventListener('click', toggleMobileMenu);
+    }
+
+    // Close menu on overlay click
+    if (mobileOverlay) {
+        mobileOverlay.addEventListener('click', closeMobileMenu);
+    }
+
+    // Handle mobile button clicks
+    if (downloadButtonMobile) {
+        downloadButtonMobile.addEventListener('click', () => {
+            downloadConversation();
+            closeMobileMenu();
+        });
+    }
+
+    if (newMessagesButtonMobile) {
+        newMessagesButtonMobile.addEventListener('click', () => {
+            clearChatHistory();
+            resetTextareaHeight();
+            closeMobileMenu();
+        });
+    }
+
+    // Close menu on window resize if it gets too wide
+    window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+            closeMobileMenu();
+        }
+    });
+
+    // Close menu on escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && navbarMobileMenu.classList.contains('active')) {
+            closeMobileMenu();
+        }
+    });
+}
+
 // File upload error handling improvements
 async function uploadFile(file, progressElement) {
     try {
@@ -1139,6 +1222,7 @@ function downloadConversation() {
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeFileUpload();
+    initializeMobileNavigation();
 
     // Microphone Dictation Button Logic
     const micButton = document.getElementById('micButton');
