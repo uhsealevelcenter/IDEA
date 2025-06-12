@@ -5,7 +5,7 @@ import os
 from datetime import date, datetime, timedelta
 from time import time
 import logging
-from typing import Dict
+from typing import Dict, List
 import hashlib
 import secrets
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
@@ -24,7 +24,7 @@ import redis
 from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter 
 from slowapi.errors import RateLimitExceeded
-from pydantic import BaseModel
+from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, PromptListResponse, SetActivePromptRequest
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
@@ -35,34 +35,28 @@ from utils.transcription_prompt import transcription_prompt # Transcription prom
 #from utils.transcription_prompt_SEA import transcription_prompt # Transcription prompt for SEA-IDEA (abbreviations, etc.)
 #from utils.transcription_prompt_CORA import transcription_prompt # Transcription prompt for CORA-IDEA (abbreviations, etc.)
 
-## Specify the system prompt to use (instructions to LLM)
-from utils.system_prompt import sys_prompt # Generic IDEA example
-#from utils.system_prompt_SEA import sys_prompt # Station Explorer Assistant
-#from utils.system_prompt_InSight import sys_prompt # NASA's InSight Mission
-#from utils.system_prompt_HCDP import sys_prompt # Hawaii Climate Data Portal (under development)
-#from utils.system_prompt_APIcommunicator import sys_prompt # API Communicator (under development)
-#from utils.system_prompt_CMEMS import sys_prompt # Copernicus Marine Intelligent Data Exploring Assistant (CM-IDEA)
-#from utils.system_prompt_CORA import sys_prompt # NOAA's CORA Intelligent Data Exploring Assistant (CORA-IDEA)
+## Note: System prompts are now managed through the prompt manager instead of direct imports
+## The following imports are kept for reference and initialization of default prompts:
+# from utils.system_prompt import sys_prompt # Generic IDEA example
+# from utils.system_prompt_SEA import sys_prompt # Station Explorer Assistant
+# from utils.system_prompt_InSight import sys_prompt # NASA's InSight Mission
+# from utils.system_prompt_HCDP import sys_prompt # Hawaii Climate Data Portal (under development)
+# from utils.system_prompt_APIcommunicator import sys_prompt # API Communicator (under development)
+# from utils.system_prompt_CMEMS import sys_prompt # Copernicus Marine Intelligent Data Exploring Assistant (CM-IDEA)
+# from utils.system_prompt_CORA import sys_prompt # NOAA's CORA Intelligent Data Exploring Assistant (CORA-IDEA)
 
 ## Specify the custom instructions to use (instructions to LLM and OpenInterpreter)
 #from utils.custom_instructions import get_custom_instructions # Generic IDEA example
 from utils.custom_instructions_ClimateIndices import get_custom_instructions # Climate Assistant
+
+# Import prompt manager
+from utils.prompt_manager import init_prompt_manager, get_prompt_manager
 
 # Authentication configuration
 AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")  # Default username
 AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "password123")  # Default password
 AUTH_PASSWORD_HASH = hashlib.sha256(AUTH_PASSWORD.encode()).hexdigest()
 SESSION_TIMEOUT = 24 * 60 * 60  # 24 hours in seconds
-
-# Pydantic models for authentication
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-class LoginResponse(BaseModel):
-    success: bool
-    token: str = None
-    message: str = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -103,6 +97,9 @@ app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static")
+
+# Initialize prompt manager
+init_prompt_manager(STATIC_DIR)
 
 origins = [
     "http://localhost:8000",
@@ -274,6 +271,96 @@ async def verify_auth(token: str = Depends(get_auth_token)):
     """Verify if current authentication token is valid"""
     return {"authenticated": True, "message": "Token is valid"}
 
+# Prompt Management Endpoints
+@app.get("/prompts", response_model=List[PromptListResponse])
+async def list_prompts(token: str = Depends(get_auth_token)):
+    """List all available prompts"""
+    try:
+        prompts = get_prompt_manager().list_prompts()
+        return prompts
+    except Exception as e:
+        logger.error(f"Error listing prompts: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list prompts")
+
+@app.get("/prompts/{prompt_id}", response_model=PromptResponse)
+async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
+    """Get a specific prompt by ID"""
+    try:
+        prompt = get_prompt_manager().get_prompt(prompt_id)
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        return prompt
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting prompt {prompt_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get prompt")
+
+@app.post("/prompts", response_model=PromptResponse)
+async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token)):
+    """Create a new prompt"""
+    try:
+        new_prompt = get_prompt_manager().create_prompt(
+            name=prompt_data.name,
+            description=prompt_data.description,
+            content=prompt_data.content
+        )
+        return new_prompt
+    except Exception as e:
+        logger.error(f"Error creating prompt: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to create prompt")
+
+@app.put("/prompts/{prompt_id}", response_model=PromptResponse)
+async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token)):
+    """Update an existing prompt"""
+    try:
+        updated_prompt = get_prompt_manager().update_prompt(
+            prompt_id=prompt_id,
+            name=prompt_data.name,
+            description=prompt_data.description,
+            content=prompt_data.content
+        )
+        if not updated_prompt:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        return updated_prompt
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating prompt {prompt_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update prompt")
+
+@app.delete("/prompts/{prompt_id}")
+async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
+    """Delete a prompt"""
+    try:
+        success = get_prompt_manager().delete_prompt(prompt_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        return {"message": "Prompt deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting prompt {prompt_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete prompt")
+
+@app.post("/prompts/set-active")
+async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token)):
+    """Set a prompt as the active one"""
+    try:
+        success = get_prompt_manager().set_active_prompt(request.prompt_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        
+        # Clear all existing interpreter instances so they get recreated with the new system message
+        clear_all_interpreter_instances()
+        
+        return {"message": "Active prompt set successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting active prompt {request.prompt_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to set active prompt")
+
 def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
     """Get existing interpreter or create new one"""
     try:
@@ -284,7 +371,10 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         
         # Create new interpreter instance with default settings
         interpreter = OpenInterpreter()
-        interpreter.system_message += sys_prompt
+        
+        # Get active system prompt from prompt manager
+        active_prompt = get_prompt_manager().get_active_prompt()
+        interpreter.system_message += active_prompt
 
         # Enable vision
         interpreter.llm.supports_vision = True 
@@ -368,6 +458,24 @@ def clear_session(session_id: str):
         logger.info(f"Cleared session {session_id}")
     except Exception as e:
         logger.error(f"Error clearing session {session_id}: {str(e)}")
+        raise
+
+def clear_all_interpreter_instances():
+    """Clear all interpreter instances to force recreation with new system message"""
+    try:
+        # Reset and clear all interpreter instances
+        for session_id, interpreter in list(interpreter_instances.items()):
+            try:
+                interpreter.reset()
+                logger.info(f"Reset interpreter for session {session_id}")
+            except Exception as e:
+                logger.error(f"Error resetting interpreter for session {session_id}: {str(e)}")
+        
+        # Clear the instances dictionary
+        interpreter_instances.clear()
+        logger.info("Cleared all interpreter instances due to system prompt change")
+    except Exception as e:
+        logger.error(f"Error clearing all interpreter instances: {str(e)}")
         raise
 
 async def cleanup_idle_sessions():
