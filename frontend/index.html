@@ -11,16 +11,60 @@
     <link href="prism.css" rel="stylesheet" />  
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"> <!-- Mic icon -->
 </head>
-<body>
-    <div class="chat-container">
-        <header class="chat-header">
-            <div class="header-title-section">
-                <button id="downloadButton">Download conversation</button>
+<body class="main-app">
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="navbar-brand">
                 <h1>IDEA</h1>
-                <button id="newMessagesButton">Start over</button>
-                <button id="logoutButton">Logout</button>
+                <span class="navbar-subtitle">Intelligent Data Exploring Assistant</span>
             </div>
-        </header>
+            
+            <!-- Desktop Navigation -->
+            <div class="navbar-menu">
+                <button id="downloadButton" class="nav-btn">
+                    <span class="material-icons">download</span>
+                    Download
+                </button>
+                <button id="newMessagesButton" class="nav-btn">
+                    <span class="material-icons">refresh</span>
+                    Start Over
+                </button>
+                <button id="logoutButton" class="nav-btn logout-btn">
+                    <span class="material-icons">logout</span>
+                    Logout
+                </button>
+            </div>
+            
+            <!-- Mobile Menu Toggle -->
+            <button class="navbar-toggle" id="navbarToggle">
+                <span class="hamburger-line"></span>
+                <span class="hamburger-line"></span>
+                <span class="hamburger-line"></span>
+            </button>
+        </div>
+        
+        <!-- Mobile Navigation Menu -->
+        <div class="navbar-mobile-menu" id="navbarMobileMenu">
+            <button id="downloadButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">download</span>
+                Download conversation
+            </button>
+            <button id="newMessagesButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">refresh</span>
+                Start over
+            </button>
+            <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
+                <span class="material-icons">logout</span>
+                Logout
+            </button>
+        </div>
+    </nav>
+
+    <!-- Mobile overlay -->
+    <div class="mobile-overlay" id="mobileOverlay"></div>
+
+    <div class="chat-container">
         <div id="chatDisplay" class="chat-display"></div>
         <footer class="chat-footer">
             <div class="file-upload-section">
