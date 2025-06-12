@@ -32,6 +32,52 @@ let controller = null;
 let promptIdeasVisible = false;
 let currentMessageId = null;
 
+// Authentication state
+let authToken = localStorage.getItem('authToken');
+
+// Authentication functions
+async function checkAuthentication() {
+    if (!authToken) {
+        redirectToLogin();
+        return false;
+    }
+
+    try {
+        const response = await fetch(config.getEndpoints().verify, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (!response.ok) {
+            localStorage.removeItem('authToken');
+            redirectToLogin();
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Auth verification error:', error);
+        localStorage.removeItem('authToken');
+        redirectToLogin();
+        return false;
+    }
+}
+
+function redirectToLogin() {
+    window.location.href = 'login.html';
+}
+
+function getAuthHeaders() {
+    return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+}
+
+function logout() {
+    localStorage.removeItem('authToken');
+    authToken = null;
+    redirectToLogin();
+}
+
 // Session Management
 let sessionId = generateId('session');
 let threadId = localStorage.getItem('threadId') || (() => {
@@ -217,6 +263,23 @@ newMessagesButton.addEventListener('click', () => {
     resetTextareaHeight();
 });
 
+// Logout button event listener
+const logoutButton = document.getElementById('logoutButton');
+logoutButton.addEventListener('click', async () => {
+    try {
+        await fetch(config.getEndpoints().logout, {
+            method: 'POST',
+            headers: {
+                ...getAuthHeaders()
+            }
+        });
+    } catch (error) {
+        console.error('Logout error:', error);
+    } finally {
+        logout();
+    }
+});
+
 // Error handling utility
 function handleError(error, customMessage = 'An error occurred') {
     console.error(error);
@@ -268,7 +331,8 @@ async function sendRequest(msgOverride=null) {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "X-Session-Id": sessionId
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
             },
             body: JSON.stringify(params),
             signal,
@@ -610,7 +674,8 @@ async function clearChatHistory() {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "X-Session-Id": sessionId
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
             },
         });
 
@@ -622,7 +687,8 @@ async function clearChatHistory() {
         const fileResponse = await fetch(config.getEndpoints().files, {
             method: "DELETE",
             headers: {
-                "X-Session-Id": sessionId
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
             },
         });
 
@@ -715,13 +781,20 @@ function addCopyButtons() {
 
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
+    // Check authentication before doing anything else
+    const isAuthenticated = await checkAuthentication();
+    if (!isAuthenticated) {
+        return; // Will redirect to login
+    }
+
     if (!micStream) await warmUpMicrophone(); // Ensure microphone is warmed up (sppeds up first use)
 
     try {
         const response = await fetch(config.getEndpoints().history, {
             method: "GET",
             headers: {
-                "X-Session-Id": sessionId
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
             }
         });
         if (response.ok) {
@@ -906,7 +979,8 @@ async function uploadFile(file, progressElement) {
         const response = await fetch(config.getEndpoints().upload, {
             method: 'POST',
             headers: {
-                'X-Session-Id': sessionId
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
             },
             body: formData
         });
@@ -931,7 +1005,8 @@ async function updateFilesList() {
     try {
         const response = await fetch(config.getEndpoints().files, {
             headers: {
-                'X-Session-Id': sessionId
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
             }
         });
 
@@ -959,7 +1034,8 @@ async function updateFilesList() {
                     const response = await fetch(`${config.getEndpoints().files}/${encodeURIComponent(filename)}`, {
                         method: 'DELETE',
                         headers: {
-                            'X-Session-Id': sessionId
+                            'X-Session-Id': sessionId,
+                            ...getAuthHeaders()
                         }
                     });
 
