@@ -2,11 +2,13 @@ import asyncio
 import json
 from math import ceil
 import os
-from datetime import date
+from datetime import date, datetime, timedelta
 from time import time
 import logging
 from typing import Dict
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+import hashlib
+import secrets
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +24,7 @@ import redis
 from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter 
 from slowapi.errors import RateLimitExceeded
+from pydantic import BaseModel
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
@@ -44,6 +47,22 @@ from utils.system_prompt import sys_prompt # Generic IDEA example
 ## Specify the custom instructions to use (instructions to LLM and OpenInterpreter)
 #from utils.custom_instructions import get_custom_instructions # Generic IDEA example
 from utils.custom_instructions_ClimateIndices import get_custom_instructions # Climate Assistant
+
+# Authentication configuration
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")  # Default username
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "password123")  # Default password
+AUTH_PASSWORD_HASH = hashlib.sha256(AUTH_PASSWORD.encode()).hexdigest()
+SESSION_TIMEOUT = 24 * 60 * 60  # 24 hours in seconds
+
+# Pydantic models for authentication
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class LoginResponse(BaseModel):
+    success: bool
+    token: str = None
+    message: str = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -142,7 +161,6 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         }
     )
 
-
 async def scan_file(file_path: Path) -> tuple[bool, str]:
     """Scan a file for viruses using ClamAV"""
     # TODO: Not implemented yet
@@ -187,6 +205,74 @@ redis_client = redis.Redis(host="redis", port=6379, db=0)
 # Global dictionary to store interpreter instances
 # Not thread safe, but should be ok for proof of concept
 interpreter_instances: Dict[str, OpenInterpreter] = {}
+
+# Authentication session storage (in production, use Redis or database)
+auth_sessions: Dict[str, datetime] = {}
+
+def generate_auth_token() -> str:
+    """Generate a secure random token for authentication"""
+    return secrets.token_urlsafe(32)
+
+def verify_password(username: str, password: str) -> bool:
+    """Verify username and password"""
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    return username == AUTH_USERNAME and password_hash == AUTH_PASSWORD_HASH
+
+def is_authenticated(token: str) -> bool:
+    """Check if authentication token is valid and not expired"""
+    if token not in auth_sessions:
+        return False
+    
+    # Check if token has expired
+    if datetime.now() > auth_sessions[token]:
+        del auth_sessions[token]
+        return False
+    
+    return True
+
+def get_auth_token(authorization: str = Header(None)) -> str:
+    """Dependency to extract and validate auth token from headers"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = authorization.replace("Bearer ", "")
+    if not is_authenticated(token):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    return token
+
+# Authentication endpoints
+@app.post("/login", response_model=LoginResponse)
+async def login(login_request: LoginRequest):
+    """Login endpoint to authenticate users"""
+    if verify_password(login_request.username, login_request.password):
+        token = generate_auth_token()
+        expiry_time = datetime.now() + timedelta(seconds=SESSION_TIMEOUT)
+        auth_sessions[token] = expiry_time
+        
+        return LoginResponse(
+            success=True,
+            token=token,
+            message="Login successful"
+        )
+    else:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+@app.post("/logout")
+async def logout(token: str = Depends(get_auth_token)):
+    """Logout endpoint to invalidate authentication token"""
+    if token in auth_sessions:
+        del auth_sessions[token]
+    
+    return {"message": "Logged out successfully"}
+
+@app.get("/auth/verify")
+async def verify_auth(token: str = Depends(get_auth_token)):
+    """Verify if current authentication token is valid"""
+    return {"authenticated": True, "message": "Token is valid"}
 
 def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
     """Get existing interpreter or create new one"""
@@ -360,7 +446,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 @app.post("/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
-async def chat_endpoint(request: Request, background_tasks: BackgroundTasks):
+async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token)):
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -413,7 +499,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks):
 
 
 @app.get("/history")
-def history_endpoint(request: Request):
+def history_endpoint(request: Request, token: str = Depends(get_auth_token)):
     session_id = request.headers.get("x-session-id")
     if not session_id:
         return {"error": "x-session-id header is required"}
@@ -425,7 +511,7 @@ def history_endpoint(request: Request):
 
 
 @app.post("/clear")
-def clear_endpoint(request: Request):
+def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -458,7 +544,8 @@ async def has_executable_header(file_path: Path) -> bool:
 @limiter.limit(UPLOAD_RATE_LIMIT)
 async def upload_file(
     file: UploadFile = File(...),
-    request: Request = None
+    request: Request = None,
+    token: str = Depends(get_auth_token)
 ):
     try:
         session_id = request.headers.get("x-session-id")
@@ -538,7 +625,7 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.delete("/files/{filename}")
-async def delete_file(filename: str, request: Request):
+async def delete_file(filename: str, request: Request, token: str = Depends(get_auth_token)):
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -568,7 +655,7 @@ async def delete_file(filename: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/files")
-async def list_files(request: Request):
+async def list_files(request: Request, token: str = Depends(get_auth_token)):
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -593,7 +680,7 @@ async def list_files(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.delete("/files")
-async def delete_all_files(request: Request):
+async def delete_all_files(request: Request, token: str = Depends(get_auth_token)):
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
