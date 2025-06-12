@@ -185,7 +185,7 @@ body.login-page {
     flex-direction: column;
     width: 100%;
     max-width: 1400px;
-    height: calc(100vh - 80px);
+    height: calc(100vh - 80px - 50px); /* Account for navbar (80px) and disclaimer (50px) */
     background-color: #ffffff;
     border-radius: 10px;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
@@ -521,11 +521,13 @@ pre {
     padding: 10px;
     background-color: #ffffff;
     border-top: 1px solid #e0e0e0;
-    z-index: 1000;
+    z-index: 100; /* Lower z-index to not interfere with mobile menu */
     display: flex;
     justify-content: center;
     gap: 5px; /* Adds a small space between the text and link */
     color: #000000; /* Sets the default text color to black */
+    height: 45px; /* Fixed height to help with calculations */
+    box-sizing: border-box;
 }
 
 .disclaimer-text a {
@@ -992,7 +994,7 @@ pre {
     
     .chat-container {
         margin: 70px 10px 10px;
-        height: calc(100vh - 90px);
+        height: calc(100vh - 90px - 45px); /* Account for navbar and disclaimer */
         border-radius: 5px;
     }
     
@@ -1017,6 +1019,6 @@ pre {
     
     .chat-container {
         margin: 60px 5px 5px;
-        height: calc(100vh - 75px);
+        height: calc(100vh - 75px - 45px); /* Account for navbar and disclaimer */
     }
 }
