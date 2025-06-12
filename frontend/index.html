@@ -22,6 +22,10 @@
             
             <!-- Desktop Navigation -->
             <div class="navbar-menu">
+                <button id="systemPromptButton" class="nav-btn">
+                    <span class="material-icons">settings</span>
+                    System Prompt
+                </button>
                 <button id="downloadButton" class="nav-btn">
                     <span class="material-icons">download</span>
                     Download
@@ -46,6 +50,10 @@
         
         <!-- Mobile Navigation Menu -->
         <div class="navbar-mobile-menu" id="navbarMobileMenu">
+            <button id="systemPromptButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">settings</span>
+                System Prompt
+            </button>
             <button id="downloadButtonMobile" class="nav-btn-mobile">
                 <span class="material-icons">download</span>
                 Download conversation
@@ -63,6 +71,62 @@
 
     <!-- Mobile overlay -->
     <div class="mobile-overlay" id="mobileOverlay"></div>
+
+    <!-- System Prompt Management Modal -->
+    <div id="promptManagementModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>System Prompt Management</h2>
+                <span class="close" id="closePromptModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="prompt-management-container">
+                    <!-- Prompt List Section -->
+                    <div class="prompt-list-section">
+                        <div class="section-header">
+                            <h3>Available Prompts</h3>
+                            <button id="createNewPromptBtn" class="btn btn-primary">
+                                <span class="material-icons">add</span>
+                                Create New
+                            </button>
+                        </div>
+                        <div id="promptsList" class="prompts-list">
+                            <!-- Prompts will be dynamically loaded here -->
+                        </div>
+                    </div>
+
+                    <!-- Prompt Editor Section -->
+                    <div class="prompt-editor-section">
+                        <div id="promptEditor" class="prompt-editor" style="display: none;">
+                            <h3 id="editorTitle">Edit Prompt</h3>
+                            <form id="promptForm">
+                                <div class="form-group">
+                                    <label for="promptName">Name:</label>
+                                    <input type="text" id="promptName" name="name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="promptDescription">Description:</label>
+                                    <input type="text" id="promptDescription" name="description">
+                                </div>
+                                <div class="form-group">
+                                    <label for="promptContent">Content:</label>
+                                    <textarea id="promptContent" name="content" required rows="20"></textarea>
+                                </div>
+                                <div class="form-actions">
+                                    <button type="submit" id="savePromptBtn" class="btn btn-success">Save</button>
+                                    <button type="button" id="cancelEditBtn" class="btn btn-secondary">Cancel</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div id="promptPreview" class="prompt-preview">
+                            <h3>Select a prompt to view or edit</h3>
+                            <p>Choose a prompt from the list on the left to view its content or make changes.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div class="chat-container">
         <div id="chatDisplay" class="chat-display"></div>
@@ -132,6 +196,7 @@
   <script src="prism.js"></script>
     <script src="config.js"></script>
     <script src="assistant.js"></script>
+    <script src="prompt-manager.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </body>
 </html>

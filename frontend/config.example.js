@@ -9,7 +9,12 @@ const config = {
             clear: 'http://localhost/api/clear',
             upload: 'http://localhost/api/upload',
             files: 'http://localhost/api/files',
-            transcribe: 'http://localhost/api/transcribe'
+            transcribe: 'http://localhost/api/transcribe',
+            login: 'http://localhost/api/login',
+            logout: 'http://localhost/api/logout',
+            verify: 'http://localhost/api/auth/verify',
+            prompts: 'http://localhost/api/prompts',
+            setActivePrompt: 'http://localhost/api/prompts/set-active'
         },
         production: {
             chat: 'https://<your-domain>/chat',
@@ -17,7 +22,12 @@ const config = {
             clear: 'https://<your-domain>/clear',
             upload: 'https://<your-domain>/upload',
             files: 'https://<your-domain>/files',
-            transcribe: 'https://<your-domain>/transcribe' 
+            transcribe: 'https://<your-domain>/transcribe',
+            login: 'https://<your-domain>/api/login',
+            logout: 'https://<your-domain>/api/logout',
+            verify: 'https://<your-domain>/api/auth/verify',
+            prompts: 'https://<your-domain>/api/prompts',
+            setActivePrompt: 'https://<your-domain>/api/prompts/set-active' 
         }
     },
 
