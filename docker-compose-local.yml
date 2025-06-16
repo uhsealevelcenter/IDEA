@@ -18,6 +18,7 @@ services:
       - LOCAL_DEV=1
       - PQA_HOME=/app/data
       - PAPER_DIRECTORY=/app/data/papers
+      - PROMPT_DIRECTORY=/app/data/prompts
     command: uvicorn app:app --reload --host 0.0.0.0 --port 8001
     depends_on:
       - redis

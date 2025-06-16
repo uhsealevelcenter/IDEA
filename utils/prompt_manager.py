@@ -10,9 +10,14 @@ logger = logging.getLogger(__name__)
 class PromptManager:
     """Manages CRUD operations for system prompts with file-based persistence"""
     
-    def __init__(self, static_dir: Path):
-        self.static_dir = Path(static_dir)
-        self.prompts_dir = self.static_dir / "prompts"
+    def __init__(self, prompts_dir: Optional[Path] = None):
+        if prompts_dir is None:
+            # Use environment variable or default fallback
+            prompt_directory = os.getenv("PROMPT_DIRECTORY", "/app/data/prompts")
+            self.prompts_dir = Path(prompt_directory)
+        else:
+            self.prompts_dir = Path(prompts_dir)
+        
         self.prompts_file = self.prompts_dir / "prompts.json"
         self.active_prompt_file = self.prompts_dir / "active_prompt.json"
         
@@ -228,10 +233,10 @@ class PromptManager:
 # Global instance (will be initialized in app.py)
 prompt_manager: Optional[PromptManager] = None
 
-def init_prompt_manager(static_dir: Path):
+def init_prompt_manager(prompts_dir: Optional[Path] = None):
     """Initialize the global prompt manager instance"""
     global prompt_manager
-    prompt_manager = PromptManager(static_dir)
+    prompt_manager = PromptManager(prompts_dir)
 
 def get_prompt_manager() -> PromptManager:
     """Get the global prompt manager instance"""
