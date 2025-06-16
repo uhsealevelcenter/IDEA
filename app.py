@@ -99,7 +99,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static")
 
 # Initialize prompt manager
-init_prompt_manager(STATIC_DIR)
+init_prompt_manager()
 
 origins = [
     "http://localhost:8000",

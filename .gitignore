@@ -169,6 +169,8 @@ data/**
 # But allow settings JSON files
 !data/.pqa/settings/
 !data/.pqa/settings/*.json
+!data/prompts/
+!data/prompts/*.json
 
 /frontend/config.js
 
