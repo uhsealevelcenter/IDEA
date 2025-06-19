@@ -14,7 +14,10 @@ const config = {
             logout: 'http://localhost/api/logout',
             verify: 'http://localhost/api/auth/verify',
             prompts: 'http://localhost/api/prompts',
-            setActivePrompt: 'http://localhost/api/prompts/set-active'
+            setActivePrompt: 'http://localhost/api/prompts/set-active',
+            knowledgeBase: 'http://localhost/api/knowledge-base/papers',
+            knowledgeBaseUpload: 'http://localhost/api/knowledge-base/papers/upload',
+            knowledgeBaseStats: 'http://localhost/api/knowledge-base/stats'
         },
         production: {
             chat: 'https://<your-domain>/chat',
@@ -27,7 +30,10 @@ const config = {
             logout: 'https://<your-domain>/api/logout',
             verify: 'https://<your-domain>/api/auth/verify',
             prompts: 'https://<your-domain>/api/prompts',
-            setActivePrompt: 'https://<your-domain>/api/prompts/set-active' 
+            setActivePrompt: 'https://<your-domain>/api/prompts/set-active',
+            knowledgeBase: 'https://<your-domain>/api/knowledge-base/papers',
+            knowledgeBaseUpload: 'https://<your-domain>/api/knowledge-base/papers/upload',
+            knowledgeBaseStats: 'https://<your-domain>/api/knowledge-base/stats'
         }
     },
 
