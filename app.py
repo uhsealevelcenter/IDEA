@@ -48,15 +48,12 @@ from utils.transcription_prompt import transcription_prompt # Transcription prom
 ## Specify the custom instructions to use (instructions to LLM and OpenInterpreter)
 #from utils.custom_instructions import get_custom_instructions # Generic IDEA example
 from utils.custom_instructions_ClimateIndices import get_custom_instructions # Climate Assistant
-
-# Import prompt manager
 from utils.prompt_manager import init_prompt_manager, get_prompt_manager
-
-# Authentication configuration
-AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")  # Default username
-AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "password123")  # Default password
-AUTH_PASSWORD_HASH = hashlib.sha256(AUTH_PASSWORD.encode()).hexdigest()
-SESSION_TIMEOUT = 24 * 60 * 60  # 24 hours in seconds
+from knowledge_base_routes import router as knowledge_base_router
+from auth import (
+    generate_auth_token, verify_password, is_authenticated, get_auth_token,
+    add_auth_session, remove_auth_session, SESSION_TIMEOUT
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -98,8 +95,9 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static")
 
-# Initialize prompt manager
 init_prompt_manager()
+
+app.include_router(knowledge_base_router)
 
 origins = [
     "http://localhost:8000",
@@ -203,41 +201,6 @@ redis_client = redis.Redis(host="redis", port=6379, db=0)
 # Not thread safe, but should be ok for proof of concept
 interpreter_instances: Dict[str, OpenInterpreter] = {}
 
-# Authentication session storage (in production, use Redis or database)
-auth_sessions: Dict[str, datetime] = {}
-
-def generate_auth_token() -> str:
-    """Generate a secure random token for authentication"""
-    return secrets.token_urlsafe(32)
-
-def verify_password(username: str, password: str) -> bool:
-    """Verify username and password"""
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    return username == AUTH_USERNAME and password_hash == AUTH_PASSWORD_HASH
-
-def is_authenticated(token: str) -> bool:
-    """Check if authentication token is valid and not expired"""
-    if token not in auth_sessions:
-        return False
-    
-    # Check if token has expired
-    if datetime.now() > auth_sessions[token]:
-        del auth_sessions[token]
-        return False
-    
-    return True
-
-def get_auth_token(authorization: str = Header(None)) -> str:
-    """Dependency to extract and validate auth token from headers"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    token = authorization.replace("Bearer ", "")
-    if not is_authenticated(token):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    return token
-
 # Authentication endpoints
 @app.post("/login", response_model=LoginResponse)
 async def login(login_request: LoginRequest):
@@ -245,7 +208,7 @@ async def login(login_request: LoginRequest):
     if verify_password(login_request.username, login_request.password):
         token = generate_auth_token()
         expiry_time = datetime.now() + timedelta(seconds=SESSION_TIMEOUT)
-        auth_sessions[token] = expiry_time
+        add_auth_session(token, expiry_time)
         
         return LoginResponse(
             success=True,
@@ -261,9 +224,7 @@ async def login(login_request: LoginRequest):
 @app.post("/logout")
 async def logout(token: str = Depends(get_auth_token)):
     """Logout endpoint to invalidate authentication token"""
-    if token in auth_sessions:
-        del auth_sessions[token]
-    
+    remove_auth_session(token)
     return {"message": "Logged out successfully"}
 
 @app.get("/auth/verify")

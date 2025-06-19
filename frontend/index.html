@@ -26,6 +26,10 @@
                     <span class="material-icons">settings</span>
                     System Prompt
                 </button>
+                <button id="knowledgeBaseButton" class="nav-btn">
+                    <span class="material-icons">psychology</span>
+                    Knowledge Base
+                </button>
                 <button id="downloadButton" class="nav-btn">
                     <span class="material-icons">download</span>
                     Download
@@ -54,6 +58,10 @@
                 <span class="material-icons">settings</span>
                 System Prompt
             </button>
+            <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">psychology</span>
+                Knowledge Base
+            </button>
             <button id="downloadButtonMobile" class="nav-btn-mobile">
                 <span class="material-icons">download</span>
                 Download conversation
@@ -71,6 +79,55 @@
 
     <!-- Mobile overlay -->
     <div class="mobile-overlay" id="mobileOverlay"></div>
+
+    <!-- Knowledge Base Management Modal -->
+    <div id="knowledgeBaseModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Knowledge Base Management</h2>
+                <span class="close" id="closeKnowledgeBaseModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="knowledge-base-container">
+                    <!-- Upload Section -->
+                    <div class="upload-section">
+                        <div class="section-header">
+                            <h3>Upload New Papers</h3>
+                            <div class="upload-info">
+                                <span>Supported formats: PDF, TXT, DOC, DOCX, MD</span>
+                                <span>Max size: 50MB</span>
+                            </div>
+                        </div>
+                        <div class="upload-area" id="knowledgeBaseUploadArea">
+                            <div class="upload-content">
+                                <span class="material-icons upload-icon">cloud_upload</span>
+                                <p>Drag and drop files here or click to browse</p>
+                                <input type="file" id="knowledgeBaseFileInput" multiple accept=".pdf,.txt,.doc,.docx,.md" style="display: none">
+                                <button id="browseKnowledgeBaseFiles" class="btn btn-primary">Browse Files</button>
+                            </div>
+                        </div>
+                        <div id="knowledgeBaseUploadProgress" class="progress-bar" style="display: none">
+                            <div class="progress"></div>
+                        </div>
+                    </div>
+
+                    <!-- Papers List Section -->
+                    <div class="papers-list-section">
+                        <div class="section-header">
+                            <h3>Current Papers</h3>
+                            <div class="knowledge-base-stats" id="knowledgeBaseStats">
+                                <span id="totalFiles">0 files</span>
+                                <span id="totalSize">0 MB</span>
+                            </div>
+                        </div>
+                        <div id="papersList" class="papers-list">
+                            <div class="loading">Loading papers...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- System Prompt Management Modal -->
     <div id="promptManagementModal" class="modal">
@@ -197,6 +254,7 @@
     <script src="config.js"></script>
     <script src="assistant.js"></script>
     <script src="prompt-manager.js"></script>
+    <script src="knowledge-base.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </body>
 </html>

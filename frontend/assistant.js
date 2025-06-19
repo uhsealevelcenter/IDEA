@@ -1327,6 +1327,17 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         dropOverlay.classList.remove('show');
 
+        // Check if drop is happening within knowledge base modal
+        const knowledgeBaseModal = document.getElementById('knowledgeBaseModal');
+        if (knowledgeBaseModal && knowledgeBaseModal.style.display === 'block') {
+            const modalRect = knowledgeBaseModal.getBoundingClientRect();
+            if (e.clientX >= modalRect.left && e.clientX <= modalRect.right &&
+                e.clientY >= modalRect.top && e.clientY <= modalRect.bottom) {
+                // Drop is within knowledge base modal, let it handle the event
+                return;
+            }
+        }
+
         if (e.dataTransfer?.files?.length > 0) {
             await handleFiles(e.dataTransfer.files);
         }
