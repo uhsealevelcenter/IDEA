@@ -76,7 +76,7 @@ class InterpreterError(Exception):
 
 
 today = date.today()
-root_path = "/sea-api"
+root_path = "/idea-api"
 host = (
     "http://localhost"
     if os.getenv("LOCAL_DEV") == "1"
