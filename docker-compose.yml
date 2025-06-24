@@ -5,8 +5,8 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
-    image: IDEA
-    container_name: IDEA_container
+    image: idea
+    container_name: idea_container
     ports:
       - "8002:8001" # so that we can have SEA and IDEA on the same machine
     env_file:
