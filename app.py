@@ -201,44 +201,7 @@ redis_client = redis.Redis(host="redis", port=6379, db=0)
 # Not thread safe, but should be ok for proof of concept
 interpreter_instances: Dict[str, OpenInterpreter] = {}
 
-# Authentication session storage (in production, use Redis or database)
-auth_sessions: Dict[str, datetime] = {}
-
-
-def generate_auth_token() -> str:
-    """Generate a secure random token for authentication"""
-    return secrets.token_urlsafe(32)
-
-
-def verify_password(username: str, password: str) -> bool:
-    """Verify username and password"""
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    return username == AUTH_USERNAME and password_hash == AUTH_PASSWORD_HASH
-
-
-def is_authenticated(token: str) -> bool:
-    """Check if authentication token is valid and not expired"""
-    if token not in auth_sessions:
-        return False
-
-    # Check if token has expired
-    if datetime.now() > auth_sessions[token]:
-        del auth_sessions[token]
-        return False
-
-    return True
-
-
-def get_auth_token(authorization: str = Header(None)) -> str:
-    """Dependency to extract and validate auth token from headers"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    token = authorization.replace("Bearer ", "")
-    if not is_authenticated(token):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    return token
+# Remove duplicate authentication functions - using auth module instead
 
 
 # Authentication endpoints
@@ -248,7 +211,7 @@ async def login(login_request: LoginRequest):
     if verify_password(login_request.username, login_request.password):
         token = generate_auth_token()
         expiry_time = datetime.now() + timedelta(seconds=SESSION_TIMEOUT)
-        auth_sessions[token] = expiry_time
+        add_auth_session(token, expiry_time)
 
         return LoginResponse(
             success=True,
@@ -265,9 +228,7 @@ async def login(login_request: LoginRequest):
 @app.post("/logout")
 async def logout(token: str = Depends(get_auth_token)):
     """Logout endpoint to invalidate authentication token"""
-    if token in auth_sessions:
-        del auth_sessions[token]
-
+    remove_auth_session(token)
     return {"message": "Logged out successfully"}
 
 
