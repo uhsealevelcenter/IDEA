@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
-    container_name: IDEA_container
+    container_name: idea_container
     expose:
       - "8001"
     env_file:

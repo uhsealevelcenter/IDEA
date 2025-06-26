@@ -5,14 +5,14 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
-    image: IDEA
-    container_name: IDEA_container
+    image: idea
+    container_name: idea_container
     ports:
-      - "8001:8001"
+      - "8002:8001" # so that we can have SEA and IDEA on the same machine
     env_file:
       - .env
     volumes:
-      - persistent_data:/app/data
+      - idea_persistent_data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
       - LOCAL_DEV=0
@@ -26,11 +26,11 @@ services:
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"
+      - "6380:6379" # so that we can have SEA and IDEA on the same machine
     volumes:
-      - redis_data:/data
+      - idea_redis_data:/data
     command: redis-server --appendonly yes
 
 volumes:
-  persistent_data:
-  redis_data:
+  idea_persistent_data:
+  idea_redis_data:
