@@ -22,32 +22,21 @@ from fastapi import UploadFile, File
 from utils.custom_functions import custom_tool
 import redis
 from starlette.middleware.base import BaseHTTPMiddleware
-from interpreter.core.core import OpenInterpreter 
+from interpreter.core.core import OpenInterpreter
 from slowapi.errors import RateLimitExceeded
-from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, PromptListResponse, SetActivePromptRequest
+from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, \
+    PromptListResponse, SetActivePromptRequest
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
 ## Required for audio transcription 
-#from openai import OpenAI # Uncomment if using OpenAI Whisper API instead of LiteLLM
-from litellm import transcription # LiteLLM for audio transcription
-from utils.transcription_prompt import transcription_prompt # Transcription prompt for Generic IDEA example (abbreviations, etc.)
-#from utils.transcription_prompt_SEA import transcription_prompt # Transcription prompt for SEA-IDEA (abbreviations, etc.)
-#from utils.transcription_prompt_CORA import transcription_prompt # Transcription prompt for CORA-IDEA (abbreviations, etc.)
+# from openai import OpenAI # Uncomment if using OpenAI Whisper API instead of LiteLLM
+from litellm import transcription  # LiteLLM for audio transcription
+from utils.transcription_prompt import \
+    transcription_prompt  # Transcription prompt for Generic IDEA example (abbreviations, etc.)
+from utils.custom_instructions_ClimateIndices import get_custom_instructions  # Climate Assistant
 
-## Note: System prompts are now managed through the prompt manager instead of direct imports
-## The following imports are kept for reference and initialization of default prompts:
-# from utils.system_prompt import sys_prompt # Generic IDEA example
-# from utils.system_prompt_SEA import sys_prompt # Station Explorer Assistant
-# from utils.system_prompt_InSight import sys_prompt # NASA's InSight Mission
-# from utils.system_prompt_HCDP import sys_prompt # Hawaii Climate Data Portal (under development)
-# from utils.system_prompt_APIcommunicator import sys_prompt # API Communicator (under development)
-# from utils.system_prompt_CMEMS import sys_prompt # Copernicus Marine Intelligent Data Exploring Assistant (CM-IDEA)
-# from utils.system_prompt_CORA import sys_prompt # NOAA's CORA Intelligent Data Exploring Assistant (CORA-IDEA)
-
-## Specify the custom instructions to use (instructions to LLM and OpenInterpreter)
-#from utils.custom_instructions import get_custom_instructions # Generic IDEA example
-from utils.custom_instructions_ClimateIndices import get_custom_instructions # Climate Assistant
+# Import prompt manager
 from utils.prompt_manager import init_prompt_manager, get_prompt_manager
 from knowledge_base_routes import router as knowledge_base_router
 from auth import (
@@ -67,7 +56,7 @@ CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
 STATIC_DIR = Path("static")
 UPLOAD_DIR = Path("uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.mat', '.tif', '.png', '.jpg'} # Added PNG, JPG. & MAT
+ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.mat', '.tif', '.png', '.jpg'}  # Added PNG, JPG. & MAT
 
 # Rate limiting
 UPLOAD_RATE_LIMIT = "5/minute"
@@ -79,18 +68,21 @@ CHAT_RATE_LIMIT = "10/minute"
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
+
 class InterpreterError(Exception):
     """Custom exception for interpreter-related errors"""
     pass
 
+
 today = date.today()
+root_path = "/idea-api"
 host = (
     "http://localhost"
     if os.getenv("LOCAL_DEV") == "1"
-    else "https://uhslc.soest.hawaii.edu/sea"
+    else "https://uhslc.soest.hawaii.edu/idea-api"
 )
 
-app = FastAPI()
+app = FastAPI(root_path=root_path)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static")
@@ -105,8 +97,12 @@ origins = [
     "http://localhost:8001",
     "http://127.0.0.1:8001",
     "http://localhost",
-    "*"
+    "*",
+    "http://172.18.46.161",
+    "http://172.18.46.161:8001",
+    "https://uhslc.soest.hawaii.edu/research/IDEA",
 ]
+
 
 # TODO:
 # ALLOWED_MIME_TYPES = {
@@ -128,6 +124,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
                 )
         return await call_next(request)
 
+
 app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -136,6 +133,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
@@ -147,7 +145,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         message = f"Too many requests. Please try again in {retry_after} seconds."
     else:
         message = "Too many requests. Please try again later."
-    
+
     return JSONResponse(
         status_code=429,
         content={
@@ -155,6 +153,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
             # "retry_after": exc.retry_after  # Seconds until next request is allowed
         }
     )
+
 
 async def scan_file(file_path: Path) -> tuple[bool, str]:
     """Scan a file for viruses using ClamAV"""
@@ -164,23 +163,23 @@ async def scan_file(file_path: Path) -> tuple[bool, str]:
     #     cd = clamd.ClamdUnixSocket()
     #     cd.ping()
     #     logger.info(f"ClamAV ping successful")
-        
+
     #     # Perform the scan
     #     logger.info(f"Scanning file: {file_path}")
     #     result = cd.scan(str(file_path))
     #     logger.info(f"ClamAV scan result: {result}")
-        
+
     #     if not result:
     #         return False, "Scan failed: No result from ClamAV"
-            
+
     #     file_result = result.get(str(file_path))
-        
+
     #     if file_result == "OK":
     #         logger.info(f"File {file_path} is clean")
     #         return True, "File is clean"
     #     else:
     #         return False, f"Potential threat detected: {file_result}"
-            
+
     # except clamd.ConnectionError as ce:
     #     logger.error(f"ClamAV connection error: {ce}")
     #     return True, "Virus scan skipped (ClamAV unavailable)"
@@ -192,14 +191,55 @@ async def check_session_upload_limit(session_id: str) -> bool:
     session_dir = STATIC_DIR / session_id / UPLOAD_DIR
     if not session_dir.exists():
         return True
-        
+
     file_count = sum(1 for _ in session_dir.glob("*") if _.is_file())
     return file_count < MAX_UPLOADS_PER_SESSION
+
 
 redis_client = redis.Redis(host="redis", port=6379, db=0)
 # Global dictionary to store interpreter instances
 # Not thread safe, but should be ok for proof of concept
 interpreter_instances: Dict[str, OpenInterpreter] = {}
+
+# Authentication session storage (in production, use Redis or database)
+auth_sessions: Dict[str, datetime] = {}
+
+
+def generate_auth_token() -> str:
+    """Generate a secure random token for authentication"""
+    return secrets.token_urlsafe(32)
+
+
+def verify_password(username: str, password: str) -> bool:
+    """Verify username and password"""
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    return username == AUTH_USERNAME and password_hash == AUTH_PASSWORD_HASH
+
+
+def is_authenticated(token: str) -> bool:
+    """Check if authentication token is valid and not expired"""
+    if token not in auth_sessions:
+        return False
+
+    # Check if token has expired
+    if datetime.now() > auth_sessions[token]:
+        del auth_sessions[token]
+        return False
+
+    return True
+
+
+def get_auth_token(authorization: str = Header(None)) -> str:
+    """Dependency to extract and validate auth token from headers"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "")
+    if not is_authenticated(token):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return token
+
 
 # Authentication endpoints
 @app.post("/login", response_model=LoginResponse)
@@ -208,8 +248,8 @@ async def login(login_request: LoginRequest):
     if verify_password(login_request.username, login_request.password):
         token = generate_auth_token()
         expiry_time = datetime.now() + timedelta(seconds=SESSION_TIMEOUT)
-        add_auth_session(token, expiry_time)
-        
+        auth_sessions[token] = expiry_time
+
         return LoginResponse(
             success=True,
             token=token,
@@ -221,16 +261,21 @@ async def login(login_request: LoginRequest):
             detail="Invalid username or password"
         )
 
+
 @app.post("/logout")
 async def logout(token: str = Depends(get_auth_token)):
     """Logout endpoint to invalidate authentication token"""
-    remove_auth_session(token)
+    if token in auth_sessions:
+        del auth_sessions[token]
+
     return {"message": "Logged out successfully"}
+
 
 @app.get("/auth/verify")
 async def verify_auth(token: str = Depends(get_auth_token)):
     """Verify if current authentication token is valid"""
     return {"authenticated": True, "message": "Token is valid"}
+
 
 # Prompt Management Endpoints
 @app.get("/prompts", response_model=List[PromptListResponse])
@@ -242,6 +287,7 @@ async def list_prompts(token: str = Depends(get_auth_token)):
     except Exception as e:
         logger.error(f"Error listing prompts: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to list prompts")
+
 
 @app.get("/prompts/{prompt_id}", response_model=PromptResponse)
 async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
@@ -257,6 +303,7 @@ async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
         logger.error(f"Error getting prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get prompt")
 
+
 @app.post("/prompts", response_model=PromptResponse)
 async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token)):
     """Create a new prompt"""
@@ -270,6 +317,7 @@ async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(g
     except Exception as e:
         logger.error(f"Error creating prompt: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to create prompt")
+
 
 @app.put("/prompts/{prompt_id}", response_model=PromptResponse)
 async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token)):
@@ -290,6 +338,7 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token:
         logger.error(f"Error updating prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to update prompt")
 
+
 @app.delete("/prompts/{prompt_id}")
 async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
     """Delete a prompt"""
@@ -304,6 +353,7 @@ async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
         logger.error(f"Error deleting prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete prompt")
 
+
 @app.post("/prompts/set-active")
 async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token)):
     """Set a prompt as the active one"""
@@ -311,16 +361,17 @@ async def set_active_prompt(request: SetActivePromptRequest, token: str = Depend
         success = get_prompt_manager().set_active_prompt(request.prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
-        
+
         # Clear all existing interpreter instances so they get recreated with the new system message
         clear_all_interpreter_instances()
-        
+
         return {"message": "Active prompt set successfully"}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error setting active prompt {request.prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to set active prompt")
+
 
 def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
     """Get existing interpreter or create new one"""
@@ -329,22 +380,22 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         if session_id in interpreter_instances:
             logger.info(f"Retrieved existing interpreter for session {session_id}")
             return interpreter_instances[session_id]
-        
+
         # Create new interpreter instance with default settings
         interpreter = OpenInterpreter()
-        
+
         # Get active system prompt from prompt manager
         active_prompt = get_prompt_manager().get_active_prompt()
         interpreter.system_message += active_prompt
 
         # Enable vision
-        interpreter.llm.supports_vision = True 
-        
+        interpreter.llm.supports_vision = True
+
         # OpenAI Models
         interpreter.llm.model = "gpt-4.1-2025-04-14"
-        #interpreter.llm.model = "gpt-4o-2024-11-20"
-        #interpreter.llm.model = "gpt-4o"
-        interpreter.llm.supports_functions = True 
+        # interpreter.llm.model = "gpt-4o-2024-11-20"
+        # interpreter.llm.model = "gpt-4o"
+        interpreter.llm.supports_functions = True
 
         # # Jetstream2 Models (https://docs.jetstream-cloud.org/inference-service/api/)
         # interpreter.llm.api_key = os.getenv("JETSTREAM2_API_KEY") # api key to send your model 
@@ -360,7 +411,7 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         interpreter.llm.context_window = 128000
         interpreter.llm.max_tokens = 16383
         interpreter.max_output = 16383
-        
+
         interpreter.llm.max_budget = 0.03
         interpreter.computer.import_computer_api = False
         interpreter.computer.run("python", custom_tool)
@@ -369,16 +420,17 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         # Store the instance
         interpreter_instances[session_id] = interpreter
         logger.info(f"Created new interpreter for session {session_id}")
-        
+
         # Store last active time in Redis
         redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_id}", str(time()))
-        
+
         return interpreter
 
     except Exception as e:
         logger.error(f"Error in get_or_create_interpreter: {str(e)}")
         raise InterpreterError(f"Failed to create/retrieve interpreter: {str(e)}")
-    
+
+
 async def periodic_cleanup():
     """Background task for periodic cleanup of idle sessions"""
     while True:
@@ -390,10 +442,12 @@ async def periodic_cleanup():
             logger.error(f"Error in periodic cleanup: {str(e)}")
             await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
 
+
 @app.on_event("startup")
 async def start_periodic_cleanup():
     """Start the periodic cleanup task when the app starts"""
     asyncio.create_task(periodic_cleanup())
+
 
 def clear_session(session_id: str):
     """Clear all resources associated with a session"""
@@ -405,7 +459,7 @@ def clear_session(session_id: str):
             interpreter.reset()
             # Remove from instances dict
             del interpreter_instances[session_id]
-        
+
         # Clear Redis keys
         redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_id}")
         redis_client.delete(f"messages:{session_id}")
@@ -421,6 +475,7 @@ def clear_session(session_id: str):
         logger.error(f"Error clearing session {session_id}: {str(e)}")
         raise
 
+
 def clear_all_interpreter_instances():
     """Clear all interpreter instances to force recreation with new system message"""
     try:
@@ -431,13 +486,14 @@ def clear_all_interpreter_instances():
                 logger.info(f"Reset interpreter for session {session_id}")
             except Exception as e:
                 logger.error(f"Error resetting interpreter for session {session_id}: {str(e)}")
-        
+
         # Clear the instances dictionary
         interpreter_instances.clear()
         logger.info("Cleared all interpreter instances due to system prompt change")
     except Exception as e:
         logger.error(f"Error clearing all interpreter instances: {str(e)}")
         raise
+
 
 async def cleanup_idle_sessions():
     """Remove interpreter instances and data for idle sessions"""
@@ -452,16 +508,17 @@ async def cleanup_idle_sessions():
                 last_active = redis_client.get(f"{LAST_ACTIVE_PREFIX}{session_id}")
                 if last_active:
                     logger.info(f"Last active time for session {session_id}: {last_active}")
-                    
+
                     last_active_time = float(last_active.decode('utf-8'))
                     if current_time - last_active_time > IDLE_TIMEOUT:
                         clear_session(session_id)
             except Exception as e:
                 logger.error(f"Error cleaning up session {session_id}: {str(e)}")
                 continue
-                
+
     except Exception as e:
         logger.error(f"Error in cleanup_idle_sessions: {str(e)}")
+
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
@@ -469,6 +526,7 @@ async def http_exception_handler(request, exc):
         status_code=exc.status_code,
         content={"detail": exc.detail}
     )
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
@@ -498,11 +556,11 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
         # LiteLLM alternative
         with open(temp_path, "rb") as audio_file:
-            transcription_response = transcription(        
-                #model="gpt-4o-transcribe",
+            transcription_response = transcription(
+                # model="gpt-4o-transcribe",
                 model="gpt-4o-mini-transcribe",
                 file=audio_file,
-                prompt=transcription_prompt # Optional prompt for transcription guidance (e.g., common abbreviations)
+                prompt=transcription_prompt  # Optional prompt for transcription guidance (e.g., common abbreviations)
             )
 
         os.remove(temp_path)
@@ -520,20 +578,20 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         session_id = request.headers.get("x-session-id")
         if not session_id:
             raise HTTPException(status_code=400, detail="x-session-id header is required")
-        
+
         body = await request.json()
         messages = body.get("messages", [])
 
         if not messages:
             raise HTTPException(status_code=400, detail="No messages provided")
-        
+
         logger.info(f"Received messages for session {session_id}")
         # Get or create interpreter instance
         interpreter = get_or_create_interpreter(session_id)
 
         # Add custom instructions (matches SEA design)
-        station_id = '000' # Placeholder
-        interpreter.custom_instructions =  get_custom_instructions(
+        station_id = '000'  # Placeholder
+        interpreter.custom_instructions = get_custom_instructions(
             today=today,
             host=host,
             session_id=session_id,
@@ -557,11 +615,11 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                 yield f"data: {json.dumps(error_message)}\n\n"
             finally:
                 redis_client.set(
-                f"messages:{session_id}", json.dumps(interpreter.messages)
-            )
+                    f"messages:{session_id}", json.dumps(interpreter.messages)
+                )
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
-    
+
     except Exception as e:
         logger.error(f"Unexpected error in chat_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -595,32 +653,34 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
     except Exception as e:
         logger.error(f"Unexpected error in clear_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-    
+
+
 async def has_executable_header(file_path: Path) -> bool:
-        """Check for executable file headers"""
-        with open(file_path, "rb") as f:
-            header = f.read(4)
-            # Check for MZ header (Windows executables)
-            if header.startswith(b'MZ'):
-                return True
-            # Check for ELF header (Linux executables)
-            if header.startswith(b'\x7fELF'):
-                return True
-        return False
-    
+    """Check for executable file headers"""
+    with open(file_path, "rb") as f:
+        header = f.read(4)
+        # Check for MZ header (Windows executables)
+        if header.startswith(b'MZ'):
+            return True
+        # Check for ELF header (Linux executables)
+        if header.startswith(b'\x7fELF'):
+            return True
+    return False
+
+
 # mime = magic.Magic(mime=True)
 @app.post("/upload")
 @limiter.limit(UPLOAD_RATE_LIMIT)
 async def upload_file(
-    file: UploadFile = File(...),
-    request: Request = None,
-    token: str = Depends(get_auth_token)
+        file: UploadFile = File(...),
+        request: Request = None,
+        token: str = Depends(get_auth_token)
 ):
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
-        
+
         # Check session upload limit
         if not await check_session_upload_limit(session_id):
             raise HTTPException(
@@ -652,10 +712,10 @@ async def upload_file(
                         temp_file.unlink()
                         raise HTTPException(
                             status_code=400,
-                            detail=f"File too large. Maximum size: {MAX_FILE_SIZE/1024/1024}MB"
+                            detail=f"File too large. Maximum size: {MAX_FILE_SIZE / 1024 / 1024}MB"
                         )
                     buffer.write(chunk)
-            
+
             # mime_type = mime.from_file(str(temp_file))
             # if mime_type not in ALLOWED_MIME_TYPES:
             #     temp_file.unlink()
@@ -664,7 +724,6 @@ async def upload_file(
                 temp_file.unlink()
                 raise HTTPException(status_code=400, detail="Executable file detected")
             # TODO: Scan file for viruses
-
 
             is_clean, scan_result = await scan_file(temp_file)
             if not is_clean:
@@ -692,7 +751,8 @@ async def upload_file(
     except Exception as e:
         logger.error(f"Upload error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+
 @app.delete("/files/{filename}")
 async def delete_file(filename: str, request: Request, token: str = Depends(get_auth_token)):
     try:
@@ -701,11 +761,11 @@ async def delete_file(filename: str, request: Request, token: str = Depends(get_
             raise HTTPException(status_code=400, detail="Session ID required")
 
         file_path = STATIC_DIR / session_id / UPLOAD_DIR / filename  # Removed "uploads" from path
-        
+
         # Ensure the file exists and is within the session directory
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         # Verify the file is in the correct session directory
         try:
             file_path.relative_to(STATIC_DIR / session_id / UPLOAD_DIR)
@@ -714,7 +774,7 @@ async def delete_file(filename: str, request: Request, token: str = Depends(get_
 
         # Delete the file
         file_path.unlink()
-        
+
         return {"message": "File deleted successfully"}
 
     except HTTPException:
@@ -722,6 +782,7 @@ async def delete_file(filename: str, request: Request, token: str = Depends(get_
     except Exception as e:
         logger.error(f"Delete file error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/files")
 async def list_files(request: Request, token: str = Depends(get_auth_token)):
@@ -747,7 +808,8 @@ async def list_files(request: Request, token: str = Depends(get_auth_token)):
     except Exception as e:
         logger.error(f"List files error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+
 @app.delete("/files")
 async def delete_all_files(request: Request, token: str = Depends(get_auth_token)):
     try:
@@ -761,7 +823,7 @@ async def delete_all_files(request: Request, token: str = Depends(get_auth_token
             for file_path in session_dir.glob("*"):
                 if file_path.is_file():
                     file_path.unlink()
-            
+
             # Optionally remove the directory itself
             session_dir.rmdir()
 
