@@ -34,7 +34,8 @@ from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdat
 from litellm import transcription  # LiteLLM for audio transcription
 from utils.transcription_prompt import \
     transcription_prompt  # Transcription prompt for Generic IDEA example (abbreviations, etc.)
-from utils.custom_instructions_ClimateIndices import get_custom_instructions  # Climate Assistant
+from utils.custom_instructions import get_custom_instructions  # Generic Assistant (Custom Instructions)
+#from utils.custom_instructions_ClimateIndices import get_custom_instructions  # Climate Assistant
 
 # Import prompt manager
 from utils.prompt_manager import init_prompt_manager, get_prompt_manager
