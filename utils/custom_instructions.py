@@ -1,7 +1,7 @@
 # Custom instructions to LLM and OpenInterpreter (Generic Assistant)
 def get_custom_instructions(today, host, session_id, static_dir, upload_dir, station_id):
+    ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     return f"""
-            Today's date is {today}.
             The host is {host}.
             The session_id is {session_id}.
             The uploaded files are available in {static_dir}/{session_id}/{upload_dir} folder. Use the file path to access the files when asked to analyze uploaded files
@@ -21,10 +21,13 @@ def get_custom_instructions(today, host, session_id, static_dir, upload_dir, sta
             1. You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
             pqa -s pqa_settings ask "<query>"
             Use it when:
-                1. Asked to perform literature review
+                1. Asked to perform literature review or "Knowledge Base" review.
                 2. The query involves specific scientific methods, findings, or technical details.
                 3. The answer requires citation from a primary source.
                 4. General knowledge may not provide a complete or accurate response.
                 If unsure, call the function to retrieve papers and then summarize the results for the user.
         
+            2. get_datetime(): Returns current UTC date and time in ISO/human format	
+            Use get_datetime() whenever asked about the current date and time. The function will return a dictionary with the two formats.
+
         """
