@@ -5,8 +5,17 @@ import pandas as pd
 import numpy as np
 import requests
 from io import StringIO
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
+def get_datetime():
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.microsecond >= 500_000:
+        now_utc += timedelta(seconds=1)
+    now_utc = now_utc.replace(microsecond=0)
+    return {
+        "iso": now_utc.isoformat(),
+        "human": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+    }
 
 def get_people():
     # URL of the UHSLC personnel directory

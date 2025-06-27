@@ -194,3 +194,8 @@ aiobotocore==2.19.0
 botocore==1.36.3
 aioitertools==0.7.1
 # End of AWS S3/Zarr compatibility
+timezonefinder
+#richdem # Requires C++11 (Dockerfile build issue)
+scikit-image
+earthaccess
+cartopy
