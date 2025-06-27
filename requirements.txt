@@ -188,7 +188,7 @@ openpyxl
 copernicusmarine
 tabulate
 cmocean
-# AWS S3/Zarr compatibility (needed for reading CORA data from AWS)
+## AWS S3/Zarr compatibility (needed for reading CORA data from AWS)
 zarr==2.18.0
 numcodecs==0.14.1
 s3fs==2024.12.0
@@ -197,4 +197,11 @@ intake-xarray==0.7.0
 aiobotocore==2.19.0
 botocore==1.36.3
 aioitertools==0.7.1
-# End of AWS S3/Zarr compatibility
+## End of AWS S3/Zarr compatibility
+## Start of IDEA-toZ libraries
+timezonefinder
+#richdem # Requires C++11 (Dockerfile build issue)
+scikit-image
+earthaccess
+cartopy
+## End of IDEA-toZ libraries
