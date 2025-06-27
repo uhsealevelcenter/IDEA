@@ -201,7 +201,6 @@ redis_client = redis.Redis(host="redis", port=6379, db=0)
 # Not thread safe, but should be ok for proof of concept
 interpreter_instances: Dict[str, OpenInterpreter] = {}
 
-# Remove duplicate authentication functions - using auth module instead
 
 
 # Authentication endpoints
