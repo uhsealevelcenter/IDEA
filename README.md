@@ -61,8 +61,9 @@ This project serves as a starting point for developers looking to build their ow
 
 ### 1. Clone the Repository
 
+To clone the `IDEA-toZ` branch (recommended for the Lost City of Z project):
 ```bash
-git clone https://github.com/uhsealevelcenter/IDEA.git
+git clone --branch IDEA-toZ https://github.com/uhsealevelcenter/IDEA.git
 cd IDEA
 ```
 
