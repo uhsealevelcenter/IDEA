@@ -42,8 +42,8 @@ from utils.system_prompt import sys_prompt # Generic IDEA example
 #from utils.system_prompt_CORA import sys_prompt # NOAA's CORA Intelligent Data Exploring Assistant (CORA-IDEA)
 
 ## Specify the custom instructions to use (instructions to LLM and OpenInterpreter)
-#from utils.custom_instructions import get_custom_instructions # Generic IDEA example
-from utils.custom_instructions_ClimateIndices import get_custom_instructions # Climate Assistant
+from utils.custom_instructions import get_custom_instructions # Generic IDEA example
+#from utils.custom_instructions_ClimateIndices import get_custom_instructions # Climate Assistant
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
