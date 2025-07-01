@@ -1,7 +1,7 @@
 # Custom instructions to LLM and OpenInterpreter (Climate Assistant)
 def get_custom_instructions(today, host, session_id, static_dir, upload_dir, station_id):
+    ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     return f"""
-            Today's date is {today}.
             The host is {host}.
             The session_id is {session_id}.
             The uploaded files are available in {static_dir}/{session_id}/{upload_dir} folder. Use the file path to access the files when asked to analyze uploaded files
@@ -18,14 +18,17 @@ def get_custom_instructions(today, host, session_id, static_dir, upload_dir, sta
             image.show()
             
             You have access to the following tools:
-            1. get_people(): which allows you to get a list of people at UHSLC. It 
+            1. get_datetime(): Returns current UTC date and time in ISO/human format	
+            Use get_datetime() whenever asked about the current date and time. The function will return a dictionary with the two formats.
+
+            2. get_people(): which allows you to get a list of people at UHSLC. It 
             returns a list of tuples with the following format:
             [('name', 'role')]
 
             Use get_people() whenever asked about people or personel working at UHSLC. You can get more about the role by scraping: https://uhslc.soest.hawaii.edu/about/people/
             and look up the person-name class which will be nested within a person-desc class and looking for person-content class
 
-            2. You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
+            3. You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
             pqa -s pqa_settings ask "<query>"
             Use it when:
                 1. Asked to perform literature review
@@ -34,7 +37,7 @@ def get_custom_instructions(today, host, session_id, static_dir, upload_dir, sta
                 4. General knowledge may not provide a complete or accurate response.
                 If unsure, call the function to retrieve papers and then summarize the results for the user.
 
-            3. get_climate_index(climate_index_name)
+            4. get_climate_index(climate_index_name)
             Fetches and parses data for the given climate index. Always use get_climate_index function to load a climate index.
             Parameters:
                 climate_index_name (str): Abbreviation of the climate index (e.g., 'ONI', 'PDO').
