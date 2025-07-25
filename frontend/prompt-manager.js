@@ -1,4 +1,5 @@
 // prompt-manager.js - System Prompt Management Interface
+// TODO: Editing disabled for press release - read-only mode for prompt selection
 
 class PromptManager {
     constructor() {
@@ -52,6 +53,8 @@ class PromptManager {
             }
         });
 
+        // TODO: Create/edit functionality disabled for press release
+        /*
         // Create new prompt button
         const createNewBtn = document.getElementById('createNewPromptBtn');
         if (createNewBtn) {
@@ -68,6 +71,7 @@ class PromptManager {
         if (cancelEditBtn) {
             cancelEditBtn.addEventListener('click', () => this.cancelEdit());
         }
+        */
 
         // Escape key to close modal
         document.addEventListener('keydown', (e) => {
@@ -107,6 +111,7 @@ class PromptManager {
             const response = await fetch(config.getEndpoints().prompts, {
                 method: 'GET',
                 headers: {
+                    'X-Session-Id': sessionId,
                     ...getAuthHeaders()
                 }
             });
@@ -156,6 +161,7 @@ class PromptManager {
 
         const formattedDate = new Date(prompt.updated_at).toLocaleDateString();
 
+        // TODO: Edit/Delete buttons disabled for press release
         item.innerHTML = `
             <div class="prompt-item-content">
                 <div class="prompt-item-name">
@@ -166,17 +172,12 @@ class PromptManager {
                 <div class="prompt-item-meta">Updated: ${formattedDate}</div>
             </div>
             <div class="prompt-item-actions">
-                <button class="btn btn-sm btn-primary edit-prompt" title="Edit">
-                    <span class="material-icons">edit</span>
-                </button>
                 ${!prompt.is_active ? `
                     <button class="btn btn-sm btn-success activate-prompt" title="Set as Active">
                         <span class="material-icons">check_circle</span>
+                        Set Active
                     </button>
                 ` : ''}
-                <button class="btn btn-sm btn-danger delete-prompt" title="Delete">
-                    <span class="material-icons">delete</span>
-                </button>
             </div>
         `;
 
@@ -187,8 +188,9 @@ class PromptManager {
             }
         });
 
+        // TODO: Edit/Delete functionality disabled for press release
+        /*
         const editBtn = item.querySelector('.edit-prompt');
-        const activateBtn = item.querySelector('.activate-prompt');
         const deleteBtn = item.querySelector('.delete-prompt');
 
         if (editBtn) {
@@ -198,17 +200,19 @@ class PromptManager {
             });
         }
 
-        if (activateBtn) {
-            activateBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.setActivePrompt(prompt.id);
-            });
-        }
-
         if (deleteBtn) {
             deleteBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.deletePrompt(prompt.id);
+            });
+        }
+        */
+
+        const activateBtn = item.querySelector('.activate-prompt');
+        if (activateBtn) {
+            activateBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.setActivePrompt(prompt.id);
             });
         }
 
@@ -227,8 +231,8 @@ class PromptManager {
         }
 
         this.currentPromptId = promptId;
-        // Go directly to edit view instead of preview
-        this.editPrompt(promptId);
+        // Show preview instead of edit since editing is disabled
+        this.showPromptPreview(promptId);
     }
 
     async showPromptPreview(promptId) {
@@ -243,20 +247,18 @@ class PromptManager {
                 <p><strong>Updated:</strong> ${new Date(prompt.updated_at).toLocaleString()}</p>
             </div>
             <div class="prompt-content-preview">
-                <h4>Content Preview:</h4>
-                <pre>${this.escapeHtml(prompt.content.substring(0, 500))}${prompt.content.length > 500 ? '...' : ''}</pre>
+                <h4>Content:</h4>
+                <pre>${this.escapeHtml(prompt.content)}</pre>
             </div>
             <div class="preview-actions">
-                <button class="btn btn-primary" onclick="promptManager.editPrompt('${prompt.id}')">
-                    <span class="material-icons">edit</span>
-                    Edit Prompt
-                </button>
                 ${!prompt.is_active ? `
                     <button class="btn btn-success" onclick="promptManager.setActivePrompt('${prompt.id}')">
                         <span class="material-icons">check_circle</span>
                         Set as Active
                     </button>
-                ` : ''}
+                ` : `
+                    <p class="active-prompt-notice"><span class="material-icons">check_circle</span> This is the currently active system prompt</p>
+                `}
             </div>
         `;
 
@@ -264,6 +266,8 @@ class PromptManager {
         this.promptEditor.style.display = 'none';
     }
 
+    // TODO: Create/Edit functionality disabled for press release
+    /*
     createNewPrompt() {
         this.currentPromptId = null;
         this.isEditing = true;
@@ -372,6 +376,7 @@ class PromptManager {
             this.showError(error.message || 'Failed to save prompt. Please try again.');
         }
     }
+    */
 
     async setActivePrompt(promptId) {
         try {
@@ -379,6 +384,7 @@ class PromptManager {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-Session-Id': sessionId,
                     ...getAuthHeaders()
                 },
                 body: JSON.stringify({ prompt_id: promptId })
@@ -393,7 +399,7 @@ class PromptManager {
             await this.loadPrompts();
             
             const prompt = this.prompts.find(p => p.id === promptId);
-            this.showSuccess(`"${prompt?.name}" is now the active system prompt.`);
+            this.showSuccess(`"${prompt?.name}" is now the active system prompt for this session.`);
             
             // Update the preview if this prompt is selected
             if (this.currentPromptId === promptId) {
@@ -406,6 +412,8 @@ class PromptManager {
         }
     }
 
+    // TODO: Delete functionality disabled for press release
+    /*
     async deletePrompt(promptId) {
         const prompt = this.prompts.find(p => p.id === promptId);
         if (!prompt) return;
@@ -449,6 +457,7 @@ class PromptManager {
             this.showPromptPreview(this.currentPromptId);
         }
     }
+    */
 
     resetEditor() {
         this.isEditing = false;
@@ -458,14 +467,17 @@ class PromptManager {
             this.promptPreview.style.display = 'block';
         } else {
             this.promptPreview.innerHTML = `
-                <h3>Select a prompt to view or edit</h3>
-                <p>Choose a prompt from the list on the left to view its content or make changes.</p>
+                <h3>Select a prompt to view</h3>
+                <p>Choose a prompt from the list on the left to view its content or set it as active.</p>
+                <div class="read-only-notice">
+                    <p><strong>Note:</strong> Prompt editing is temporarily disabled for this demonstration.</p>
+                </div>
             `;
             this.promptPreview.style.display = 'block';
         }
         
         // Clear form
-        this.promptForm.reset();
+        if (this.promptForm) this.promptForm.reset();
         this.currentPromptId = null;
     }
 
@@ -545,7 +557,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// Add some additional CSS for the toast notifications and preview
+// Add some additional CSS for the read-only mode
 const additionalCSS = `
     .prompt-description {
         font-style: italic;
@@ -581,12 +593,41 @@ const additionalCSS = `
         font-size: 0.85rem;
         line-height: 1.4;
         overflow-x: auto;
+        max-height: 300px;
+        overflow-y: auto;
     }
     
     .preview-actions {
         display: flex;
         gap: 1rem;
         flex-wrap: wrap;
+        align-items: center;
+    }
+    
+    .active-prompt-notice {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #28a745;
+        font-weight: 500;
+        margin: 0;
+    }
+    
+    .active-prompt-notice .material-icons {
+        font-size: 1.2rem;
+    }
+    
+    .read-only-notice {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        padding: 1rem;
+        border-radius: 6px;
+        margin-top: 1rem;
+    }
+    
+    .read-only-notice p {
+        margin: 0;
+        color: #856404;
     }
     
     .btn-sm {

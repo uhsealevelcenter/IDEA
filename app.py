@@ -242,10 +242,12 @@ async def verify_auth(token: str = Depends(get_auth_token)):
 
 # Prompt Management Endpoints
 @app.get("/prompts", response_model=List[PromptListResponse])
-async def list_prompts():  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
+async def list_prompts(request: Request):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """List all available prompts"""
     try:
-        prompts = get_prompt_manager().list_prompts()
+        # Get session-specific active prompt
+        session_id = request.headers.get("x-session-id")
+        prompts = get_prompt_manager().list_prompts(session_id)
         return prompts
     except Exception as e:
         logger.error(f"Error listing prompts: {str(e)}")
@@ -253,10 +255,11 @@ async def list_prompts():  # token: str = Depends(get_auth_token)): # TODO: Auth
 
 
 @app.get("/prompts/{prompt_id}", response_model=PromptResponse)
-async def get_prompt(prompt_id: str):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
+async def get_prompt(prompt_id: str, request: Request):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """Get a specific prompt by ID"""
     try:
-        prompt = get_prompt_manager().get_prompt(prompt_id)
+        session_id = request.headers.get("x-session-id")
+        prompt = get_prompt_manager().get_prompt(prompt_id, session_id)
         if not prompt:
             raise HTTPException(status_code=404, detail="Prompt not found")
         return prompt
@@ -267,9 +270,11 @@ async def get_prompt(prompt_id: str):  # , token: str = Depends(get_auth_token))
         raise HTTPException(status_code=500, detail="Failed to get prompt")
 
 
+# TODO: Create/Update/Delete endpoints disabled for press release
+"""
 @app.post("/prompts", response_model=PromptResponse)
 async def create_prompt(prompt_data: PromptCreateRequest):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
-    """Create a new prompt"""
+    # Create a new prompt
     try:
         new_prompt = get_prompt_manager().create_prompt(
             name=prompt_data.name,
@@ -284,7 +289,7 @@ async def create_prompt(prompt_data: PromptCreateRequest):  # , token: str = Dep
 
 @app.put("/prompts/{prompt_id}", response_model=PromptResponse)
 async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
-    """Update an existing prompt"""
+    # Update an existing prompt
     try:
         updated_prompt = get_prompt_manager().update_prompt(
             prompt_id=prompt_id,
@@ -304,7 +309,7 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest):  # , 
 
 @app.delete("/prompts/{prompt_id}")
 async def delete_prompt(prompt_id: str):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
-    """Delete a prompt"""
+    # Delete a prompt
     try:
         success = get_prompt_manager().delete_prompt(prompt_id)
         if not success:
@@ -315,24 +320,32 @@ async def delete_prompt(prompt_id: str):  # , token: str = Depends(get_auth_toke
     except Exception as e:
         logger.error(f"Error deleting prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete prompt")
+"""
 
 
 @app.post("/prompts/set-active")
-async def set_active_prompt(request: SetActivePromptRequest):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
-    """Set a prompt as the active one"""
+async def set_active_prompt(request_data: SetActivePromptRequest, request: Request):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
+    """Set a prompt as the active one for this session"""
     try:
-        success = get_prompt_manager().set_active_prompt(request.prompt_id)
+        session_id = request.headers.get("x-session-id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="x-session-id header is required")
+            
+        success = get_prompt_manager().set_active_prompt(request_data.prompt_id, session_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
 
-        # Clear all existing interpreter instances so they get recreated with the new system message
-        clear_all_interpreter_instances()
+        # Clear this session's interpreter instance so it gets recreated with the new system message
+        if session_id in interpreter_instances:
+            interpreter_instances[session_id].reset()
+            del interpreter_instances[session_id]
+            logger.info(f"Cleared interpreter instance for session {session_id} due to prompt change")
 
-        return {"message": "Active prompt set successfully"}
+        return {"message": "Active prompt set successfully for this session"}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error setting active prompt {request.prompt_id}: {str(e)}")
+        logger.error(f"Error setting active prompt {request_data.prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to set active prompt")
 
 
@@ -347,8 +360,8 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         # Create new interpreter instance with default settings
         interpreter = OpenInterpreter()
 
-        # Get active system prompt from prompt manager
-        active_prompt = get_prompt_manager().get_active_prompt()
+        # Get session-specific active system prompt from prompt manager
+        active_prompt = get_prompt_manager().get_active_prompt(session_id)
         interpreter.system_message += active_prompt
 
         # Enable vision
