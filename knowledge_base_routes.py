@@ -2,11 +2,11 @@ import os
 import logging
 from pathlib import Path
 from typing import List
-from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
+from fastapi import APIRouter, HTTPException, UploadFile, File  # Depends # TODO: Auth disabled for press release
 from fastapi.responses import JSONResponse
 import shutil
 
-from auth import get_auth_token  # Import the auth dependency from auth module
+# from auth import get_auth_token  # TODO: Auth disabled for press release - Import the auth dependency from auth module
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def ensure_papers_directory():
     PAPERS_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.get("/papers")
-async def list_papers(token: str = Depends(get_auth_token)):
+async def list_papers():  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """List all papers in the knowledge base"""
     try:
         ensure_papers_directory()
@@ -50,8 +50,8 @@ async def list_papers(token: str = Depends(get_auth_token)):
 
 @router.post("/papers/upload")
 async def upload_paper(
-    file: UploadFile = File(...),
-    token: str = Depends(get_auth_token)
+    file: UploadFile = File(...)
+    # token: str = Depends(get_auth_token) # TODO: Auth disabled for press release
 ):
     """Upload a new paper to the knowledge base"""
     try:
@@ -100,7 +100,7 @@ async def upload_paper(
         raise HTTPException(status_code=500, detail="Failed to upload paper")
 
 @router.delete("/papers/{filename}")
-async def delete_paper(filename: str, token: str = Depends(get_auth_token)):
+async def delete_paper(filename: str):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """Delete a paper from the knowledge base"""
     try:
         ensure_papers_directory()
@@ -132,7 +132,7 @@ async def delete_paper(filename: str, token: str = Depends(get_auth_token)):
         raise HTTPException(status_code=500, detail="Failed to delete paper")
 
 @router.get("/stats")
-async def get_knowledge_base_stats(token: str = Depends(get_auth_token)):
+async def get_knowledge_base_stats():  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """Get statistics about the knowledge base"""
     try:
         ensure_papers_directory()

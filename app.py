@@ -204,10 +204,12 @@ interpreter_instances: Dict[str, OpenInterpreter] = {}
 
 
 
+# TODO: Authentication endpoints temporarily disabled for press release
+"""
 # Authentication endpoints
 @app.post("/login", response_model=LoginResponse)
 async def login(login_request: LoginRequest):
-    """Login endpoint to authenticate users"""
+    # Login endpoint to authenticate users
     if verify_password(login_request.username, login_request.password):
         token = generate_auth_token()
         expiry_time = datetime.now() + timedelta(seconds=SESSION_TIMEOUT)
@@ -227,20 +229,20 @@ async def login(login_request: LoginRequest):
 
 @app.post("/logout")
 async def logout(token: str = Depends(get_auth_token)):
-    """Logout endpoint to invalidate authentication token"""
+    # Logout endpoint to invalidate authentication token
     remove_auth_session(token)
     return {"message": "Logged out successfully"}
 
 
 @app.get("/auth/verify")
 async def verify_auth(token: str = Depends(get_auth_token)):
-    """Verify if current authentication token is valid"""
+    # Verify if current authentication token is valid
     return {"authenticated": True, "message": "Token is valid"}
-
+"""
 
 # Prompt Management Endpoints
 @app.get("/prompts", response_model=List[PromptListResponse])
-async def list_prompts(token: str = Depends(get_auth_token)):
+async def list_prompts():  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """List all available prompts"""
     try:
         prompts = get_prompt_manager().list_prompts()
@@ -251,7 +253,7 @@ async def list_prompts(token: str = Depends(get_auth_token)):
 
 
 @app.get("/prompts/{prompt_id}", response_model=PromptResponse)
-async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
+async def get_prompt(prompt_id: str):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """Get a specific prompt by ID"""
     try:
         prompt = get_prompt_manager().get_prompt(prompt_id)
@@ -266,7 +268,7 @@ async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
 
 
 @app.post("/prompts", response_model=PromptResponse)
-async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token)):
+async def create_prompt(prompt_data: PromptCreateRequest):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """Create a new prompt"""
     try:
         new_prompt = get_prompt_manager().create_prompt(
@@ -281,7 +283,7 @@ async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(g
 
 
 @app.put("/prompts/{prompt_id}", response_model=PromptResponse)
-async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token)):
+async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """Update an existing prompt"""
     try:
         updated_prompt = get_prompt_manager().update_prompt(
@@ -301,7 +303,7 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token:
 
 
 @app.delete("/prompts/{prompt_id}")
-async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
+async def delete_prompt(prompt_id: str):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """Delete a prompt"""
     try:
         success = get_prompt_manager().delete_prompt(prompt_id)
@@ -316,7 +318,7 @@ async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
 
 
 @app.post("/prompts/set-active")
-async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token)):
+async def set_active_prompt(request: SetActivePromptRequest):  # , token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     """Set a prompt as the active one"""
     try:
         success = get_prompt_manager().set_active_prompt(request.prompt_id)
@@ -534,7 +536,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 @app.post("/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
-async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token)):
+async def chat_endpoint(request: Request, background_tasks: BackgroundTasks):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -587,7 +589,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
 
 
 @app.get("/history")
-def history_endpoint(request: Request, token: str = Depends(get_auth_token)):
+def history_endpoint(request: Request):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     session_id = request.headers.get("x-session-id")
     if not session_id:
         return {"error": "x-session-id header is required"}
@@ -599,7 +601,7 @@ def history_endpoint(request: Request, token: str = Depends(get_auth_token)):
 
 
 @app.post("/clear")
-def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
+def clear_endpoint(request: Request):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -634,8 +636,8 @@ async def has_executable_header(file_path: Path) -> bool:
 @limiter.limit(UPLOAD_RATE_LIMIT)
 async def upload_file(
         file: UploadFile = File(...),
-        request: Request = None,
-        token: str = Depends(get_auth_token)
+        request: Request = None
+        # token: str = Depends(get_auth_token) # TODO: Auth disabled for press release
 ):
     try:
         session_id = request.headers.get("x-session-id")
@@ -715,7 +717,7 @@ async def upload_file(
 
 
 @app.delete("/files/{filename}")
-async def delete_file(filename: str, request: Request, token: str = Depends(get_auth_token)):
+async def delete_file(filename: str, request: Request):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -746,7 +748,7 @@ async def delete_file(filename: str, request: Request, token: str = Depends(get_
 
 
 @app.get("/files")
-async def list_files(request: Request, token: str = Depends(get_auth_token)):
+async def list_files(request: Request):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -772,7 +774,7 @@ async def list_files(request: Request, token: str = Depends(get_auth_token)):
 
 
 @app.delete("/files")
-async def delete_all_files(request: Request, token: str = Depends(get_auth_token)):
+async def delete_all_files(request: Request):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:

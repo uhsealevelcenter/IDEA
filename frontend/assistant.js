@@ -32,10 +32,13 @@ let controller = null;
 let promptIdeasVisible = false;
 let currentMessageId = null;
 
+// TODO: Authentication temporarily disabled for press release
 // Authentication state
-let authToken = localStorage.getItem('authToken');
+// let authToken = localStorage.getItem('authToken');
 
+// TODO: Authentication functions commented out for press release
 // Authentication functions
+/*
 async function checkAuthentication() {
     if (!authToken) {
         redirectToLogin();
@@ -67,16 +70,22 @@ async function checkAuthentication() {
 function redirectToLogin() {
     window.location.href = 'login.html';
 }
+*/
 
+// TODO: Authentication headers disabled for press release
 function getAuthHeaders() {
-    return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+    // return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+    return {}; // No auth headers for press release
 }
 
+// TODO: Logout functionality disabled for press release
+/*
 function logout() {
     localStorage.removeItem('authToken');
     authToken = null;
     redirectToLogin();
 }
+*/
 
 // Session Management
 let sessionId = generateId('session');
@@ -276,7 +285,7 @@ function handleLogout() {
         } catch (error) {
             console.error('Logout error:', error);
         } finally {
-            logout();
+            // logout(); // Disabled for press release
         }
     };
 }
@@ -285,11 +294,11 @@ const logoutButton = document.getElementById('logoutButton');
 const logoutButtonMobile = document.getElementById('logoutButtonMobile');
 
 if (logoutButton) {
-    logoutButton.addEventListener('click', handleLogout());
+    // logoutButton.addEventListener('click', handleLogout()); // Disabled for press release
 }
 
 if (logoutButtonMobile) {
-    logoutButtonMobile.addEventListener('click', handleLogout());
+    // logoutButtonMobile.addEventListener('click', handleLogout()); // Disabled for press release
 }
 
 // Error handling utility
@@ -794,10 +803,10 @@ function addCopyButtons() {
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
     // Check authentication before doing anything else
-    const isAuthenticated = await checkAuthentication();
-    if (!isAuthenticated) {
-        return; // Will redirect to login
-    }
+    // const isAuthenticated = await checkAuthentication(); // Disabled for press release
+    // if (!isAuthenticated) {
+    //     return; // Will redirect to login
+    // }
 
     if (!micStream) await warmUpMicrophone(); // Ensure microphone is warmed up (sppeds up first use)
 
