@@ -1,3 +1,4 @@
+// TODO: Knowledge Base editing disabled for press release - read-only mode
 class KnowledgeBaseManager {
     constructor() {
         this.modal = null;
@@ -27,7 +28,9 @@ class KnowledgeBaseManager {
         const knowledgeBaseButton = document.getElementById('knowledgeBaseButton');
         const knowledgeBaseButtonMobile = document.getElementById('knowledgeBaseButtonMobile');
         const closeButton = document.getElementById('closeKnowledgeBaseModal');
-        const browseButton = document.getElementById('browseKnowledgeBaseFiles');
+        
+        // TODO: Upload functionality disabled for press release
+        // const browseButton = document.getElementById('browseKnowledgeBaseFiles');
 
         if (knowledgeBaseButton) {
             knowledgeBaseButton.addEventListener('click', () => this.openModal());
@@ -45,6 +48,9 @@ class KnowledgeBaseManager {
         if (closeButton) {
             closeButton.addEventListener('click', () => this.closeModal());
         }
+        
+        // TODO: Upload functionality disabled for press release
+        /*
         if (browseButton) {
             browseButton.addEventListener('click', () => this.fileInput.click());
         }
@@ -60,6 +66,7 @@ class KnowledgeBaseManager {
             this.uploadArea.addEventListener('dragleave', (e) => this.handleDragLeave(e));
             this.uploadArea.addEventListener('drop', (e) => this.handleDrop(e));
         }
+        */
 
         // Close modal when clicking outside
         window.addEventListener('click', (e) => {
@@ -72,6 +79,22 @@ class KnowledgeBaseManager {
     async openModal() {
         this.modal.style.display = 'block';
         document.body.classList.add('modal-open');
+        
+        // TODO: Hide upload section for press release
+        const uploadSection = document.querySelector('.upload-section');
+        if (uploadSection) {
+            uploadSection.style.display = 'none';
+        }
+        
+        // Add read-only notice to modal header
+        const modalBody = document.querySelector('#knowledgeBaseModal .modal-body');
+        if (modalBody && !modalBody.querySelector('.kb-read-only-notice')) {
+            const notice = document.createElement('div');
+            notice.className = 'kb-read-only-notice read-only-notice';
+            notice.innerHTML = '<p><strong>Note:</strong> Knowledge base management is temporarily disabled for this demonstration. You can view existing papers but cannot upload or delete files.</p>';
+            modalBody.insertBefore(notice, modalBody.firstChild);
+        }
+        
         await this.loadPapers();
         await this.loadStats();
     }
@@ -81,6 +104,8 @@ class KnowledgeBaseManager {
         document.body.classList.remove('modal-open');
     }
 
+    // TODO: Upload functionality disabled for press release
+    /*
     handleDragOver(e) {
         e.preventDefault();
         e.stopPropagation(); // Prevent the global drag handler from firing
@@ -141,6 +166,7 @@ class KnowledgeBaseManager {
             this.hideUploadProgress();
         }
     }
+    */
 
     async loadPapers() {
         try {
@@ -185,10 +211,18 @@ class KnowledgeBaseManager {
 
     renderPapers(papers) {
         if (!papers || papers.length === 0) {
-            this.papersList.innerHTML = '<div class="no-papers">No papers found. Upload some papers to get started.</div>';
+            this.papersList.innerHTML = `
+                <div class="no-papers">
+                    <p>No papers found.</p>
+                    <div class="read-only-notice">
+                        <p><strong>Note:</strong> Knowledge base management is temporarily disabled for this demonstration.</p>
+                    </div>
+                </div>
+            `;
             return;
         }
 
+        // TODO: Delete functionality disabled for press release
         const papersHtml = papers.map(paper => `
             <div class="paper-item" data-filename="${paper.name}">
                 <div class="paper-info">
@@ -202,16 +236,15 @@ class KnowledgeBaseManager {
                     </div>
                 </div>
                 <div class="paper-actions">
-                    <button class="btn btn-danger btn-sm delete-paper" data-filename="${paper.name}">
-                        <span class="material-icons">delete</span>
-                        Delete
-                    </button>
+                    <span class="read-only-indicator">Read-only mode</span>
                 </div>
             </div>
         `).join('');
 
         this.papersList.innerHTML = papersHtml;
 
+        // TODO: Delete functionality disabled for press release
+        /*
         // Bind delete events
         this.papersList.querySelectorAll('.delete-paper').forEach(button => {
             button.addEventListener('click', (e) => {
@@ -219,6 +252,7 @@ class KnowledgeBaseManager {
                 this.deletePaper(filename);
             });
         });
+        */
     }
 
     renderStats(stats) {
@@ -233,6 +267,8 @@ class KnowledgeBaseManager {
         }
     }
 
+    // TODO: Delete functionality disabled for press release
+    /*
     async deletePaper(filename) {
         if (!confirm(`Are you sure you want to delete "${filename}"? This action cannot be undone.`)) {
             return;
@@ -260,6 +296,7 @@ class KnowledgeBaseManager {
             this.showMessage(`Failed to delete ${filename}: ${error.message}`, 'error');
         }
     }
+    */
 
     getFileIcon(extension) {
         switch (extension) {
@@ -289,6 +326,8 @@ class KnowledgeBaseManager {
         return new Date(timestamp * 1000).toLocaleDateString();
     }
 
+    // TODO: Upload progress functionality disabled for press release
+    /*
     showUploadProgress() {
         if (this.uploadProgress) {
             this.uploadProgress.style.display = 'block';
@@ -300,6 +339,7 @@ class KnowledgeBaseManager {
             this.uploadProgress.style.display = 'none';
         }
     }
+    */
 
     showMessage(message, type = 'info') {
         // Create a simple toast notification
@@ -347,4 +387,56 @@ class KnowledgeBaseManager {
 // Initialize knowledge base manager when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.knowledgeBaseManager = new KnowledgeBaseManager();
-}); 
+});
+
+// Add CSS for read-only mode
+const knowledgeBaseCSS = `
+    .read-only-notice {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        padding: 1rem;
+        border-radius: 6px;
+        margin-top: 1rem;
+        margin-bottom: 1rem;
+    }
+    
+    .kb-read-only-notice {
+        margin-top: 0;
+        margin-bottom: 1.5rem;
+    }
+    
+    .read-only-notice p {
+        margin: 0;
+        color: #856404;
+    }
+    
+    .read-only-indicator {
+        color: #6c757d;
+        font-style: italic;
+        font-size: 0.85rem;
+        padding: 0.25rem 0.5rem;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+        border: 1px solid #e9ecef;
+    }
+    
+    .no-papers {
+        text-align: center;
+        padding: 2rem;
+        color: #666;
+    }
+    
+    .no-papers p:first-child {
+        font-style: italic;
+        margin-bottom: 1rem;
+    }
+    
+    .upload-section {
+        transition: all 0.3s ease;
+    }
+`;
+
+// Inject the CSS
+const knowledgeStyle = document.createElement('style');
+knowledgeStyle.textContent = knowledgeBaseCSS;
+document.head.appendChild(knowledgeStyle); 

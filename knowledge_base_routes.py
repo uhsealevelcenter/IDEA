@@ -2,7 +2,7 @@ import os
 import logging
 from pathlib import Path
 from typing import List
-from fastapi import APIRouter, HTTPException, UploadFile, File  # Depends # TODO: Auth disabled for press release
+from fastapi import APIRouter, HTTPException  # UploadFile, File  # TODO: Upload functionality disabled for press release
 from fastapi.responses import JSONResponse
 import shutil
 
@@ -48,12 +48,14 @@ async def list_papers():  # token: str = Depends(get_auth_token)): # TODO: Auth 
         logger.error(f"Error listing papers: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to list papers")
 
+# TODO: Upload/Delete functionality disabled for press release
+"""
 @router.post("/papers/upload")
 async def upload_paper(
     file: UploadFile = File(...)
     # token: str = Depends(get_auth_token) # TODO: Auth disabled for press release
 ):
-    """Upload a new paper to the knowledge base"""
+    # Upload a new paper to the knowledge base
     try:
         ensure_papers_directory()
         
@@ -101,7 +103,7 @@ async def upload_paper(
 
 @router.delete("/papers/{filename}")
 async def delete_paper(filename: str):  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
-    """Delete a paper from the knowledge base"""
+    # Delete a paper from the knowledge base
     try:
         ensure_papers_directory()
         
@@ -130,6 +132,7 @@ async def delete_paper(filename: str):  # token: str = Depends(get_auth_token)):
     except Exception as e:
         logger.error(f"Error deleting paper: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete paper")
+"""
 
 @router.get("/stats")
 async def get_knowledge_base_stats():  # token: str = Depends(get_auth_token)): # TODO: Auth disabled for press release
