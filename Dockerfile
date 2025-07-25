@@ -1,12 +1,24 @@
 FROM python:3.11 AS builder
 
 # TODO: file upload virus scan
-# Install build dependencies
-# RUN apt-get update && apt-get install -y \
-#     build-essential \
-#     clamav \
-#     clamav-daemon \
-#     && rm -rf /var/lib/apt/lists/*
+# Install build dependencies including GDAL
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gdal-bin \
+    libgdal-dev \
+    libproj-dev \
+    libgeos-dev \
+    libspatialite-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set GDAL environment variables
+ENV GDAL_CONFIG /usr/bin/gdal-config
+ENV CPLUS_INCLUDE_PATH /usr/include/gdal
+ENV C_INCLUDE_PATH /usr/include/gdal
+
+# Set a specific GDAL version to avoid version detection issues
+ENV GDAL_VERSION 3.6.2
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -28,6 +40,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 # into this layer.
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \
+    pip install --no-cache-dir wheel setuptools cython numpy && \
+    pip install --no-cache-dir rasterio==1.4.3 && \
     python -m pip install -r requirements.txt
 
 # Final stage
@@ -36,16 +50,21 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install runtime dependencies (original version)
+# Install runtime dependencies including GDAL
 RUN apt-get update && apt-get install -y \
     wget \
     libexpat1-dev \
     curl \
+    gdal-bin \
+    libgdal32 \
+    libproj25 \
+    libgeos-c1v5 \
+    libspatialite7 \
     && rm -rf /var/lib/apt/lists/*
-#     clamav \
-#     clamav-daemon \
-#     clamav-freshclam \
-#     clamav-unofficial-sigs
+
+# Set GDAL environment variables for runtime
+ENV GDAL_CONFIG /usr/bin/gdal-config
+ENV GDAL_DATA /usr/share/gdal
 
 # ## Install runtime dependencies (For puppeteer pdf generation, under development)
 # RUN apt-get update && apt-get install -y \
