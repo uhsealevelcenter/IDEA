@@ -15,18 +15,26 @@ Comments about options for using alternative LLM inference endpoints are provide
 
 ## Important Note About Usage
 
-This is a single-user development tool, not a production-ready chat application. It is designed to run locally as a personal assistant and lacks features typically found in production systems such as:
+This is a **single-user development tool**, not a production-ready multi-user application. It includes basic authentication but is designed for **one user at a time**. Even with authentication, multiple simultaneous users will interfere with each other's sessions and data. It lacks many features typically found in enterprise production systems such as:
 
-- Multi-user support
-- Authentication/Authorization
-- Conversation history persistence
-- Security guardrails
-- Production-level error handling
+- Multi-user support with role-based access
+- Database-backed user management
+- Advanced security features (2FA, audit logs, etc.)
+- Conversation history persistence across server restarts
+- Enterprise-grade security guardrails
+- Production-level error handling and monitoring
 - Enterprise support
 
-**Security Warning:** This tool is intended for local development use only. Running it on a public server is strongly discouraged as it lacks the necessary security features. While the Docker container provides some isolation, it should not be considered a complete security solution.
+**Security Warning:** While this tool includes basic authentication, it is intended primarily for controlled environments. If deploying on a public server:
+- Use strong, unique passwords
+- Implement HTTPS
+- Consider additional network security (VPN, IP whitelisting)
+- Monitor access logs
+- Keep the system updated
 
-This project serves as a starting point for developers looking to build their own AI-powered tools, but it requires significant additional development to be production-ready.
+The Docker container provides some isolation, but should not be considered a complete security solution for highly sensitive environments.
+
+This project serves as a starting point for developers looking to build their own AI-powered tools, but requires additional security hardening for sensitive production environments.
 
 ## Features
 
@@ -53,8 +61,9 @@ This project serves as a starting point for developers looking to build their ow
 
 ### 1. Clone the Repository
 
+To clone the `IDEA-toZ` branch (recommended for the Lost City of Z project):
 ```bash
-git clone https://github.com/uhsealevelcenter/IDEA.git
+git clone --branch IDEA-toZ https://github.com/uhsealevelcenter/IDEA.git
 cd IDEA
 ```
 
@@ -62,11 +71,19 @@ cd IDEA
 
 Create a `.env` file in the project root. You have two options:
 
-- **Option A:** Rename the provided `example.env` to `.env` and add your OpenAI API key:
+- **Option A:** Rename the provided `example.env` to `.env` and configure the required variables:
   ```ini
   OPENAI_API_KEY=YOUR_API_KEY_HERE
+  # Authentication Configuration
+  AUTH_USERNAME=admin
+  AUTH_PASSWORD=your_secure_password_here
   ```
 - **Option B:** Manually create a `.env` file with the necessary variables.
+
+**Important Security Notes:**
+- **Change the default password** before deploying to any environment
+- Use a strong, unique password for the `AUTH_PASSWORD`
+- Keep your `.env` file secure and never commit it to version control
 
 ### 3. Prepare the Frontend Configuration
 
@@ -96,18 +113,75 @@ Note: The first time you run this, it will take a while because it has to downlo
 - **NGINX:** Reverse-proxy and static file server available on port **80**.
 - **Redis:** In-memory store for caching, running on port **6379**.
 
-### 5. That's it!
+### 5. Access the Application
 
-You should now be able to run the SEA locally and make changes to the code. Visit [http://localhost](http://localhost) to interact with the SEA.
+You should now be able to run IDEA locally and make changes to the code. Visit [http://localhost](http://localhost) to access the application.
+
+**First Time Login:**
+1. You'll be redirected to a login page at `http://localhost/login.html`
+2. Use the credentials you set in your `.env` file:
+   - **Username:** `admin` (or your custom username)
+   - **Password:** The password you set in `AUTH_PASSWORD`
+3. After successful login, you'll be redirected to the main application
+
+**Authentication Features:**
+- **Session Management:** Login tokens are valid for 24 hours
+- **Logout:** Use the logout button in the navigation bar
+- **Auto-redirect:** If your session expires, you'll be automatically redirected to login
+- **Mobile Support:** Logout option available in the mobile hamburger menu
 
 ## Deploying to Production
 
 The production setup uses a separate Docker Compose configuration (`docker-compose.yml`) along with the `production_start.sh` script.
 
-   
+### Production Environment Variables
+
+Ensure your production `.env` file includes secure authentication credentials:
+
+```ini
+OPENAI_API_KEY=your_production_api_key
+# Authentication Configuration - USE STRONG PASSWORDS!
+AUTH_USERNAME=your_admin_username
+AUTH_PASSWORD=your_very_secure_production_password
+# Other production variables
+LOCAL_DEV=0
+PQA_HOME=/app/data
+PAPER_DIRECTORY=/app/data/papers
+```
+
+### Production Security Recommendations
+
+**Critical Security Steps:**
+1. **Use strong, unique passwords** - Never use default passwords in production
+2. **Secure your `.env` file** - Ensure proper file permissions (600) and restrict access
+3. **HTTPS Only** - Always use HTTPS in production (configure your reverse proxy/load balancer)
+4. **Network Security** - Ensure the application is only accessible through your intended network configuration
+5. **Regular Updates** - Keep dependencies and base images updated
+
+### Deployment Process
+
 The `production_start.sh` script will:
-- Stop any running services defined in `docker-compose.yml`.
-- Build and run the new containers in detached mode.
+- Stop any running services defined in `docker-compose.yml`
+- Build and run the new containers in detached mode
+- Apply your production environment variables
+
+```bash
+./production_start.sh
+```
+
+**Production Access:**
+- Users will need to login with the credentials specified in your production `.env` file
+- Consider implementing additional security measures like IP whitelisting or VPN access
+- Monitor login attempts and session activity for security purposes
+
+**⚠️ Critical Multi-User Limitation:**
+- **Single-User Design**: IDEA is designed for **ONE USER AT A TIME**
+- **Simultaneous Usage Warning**: If multiple users access the application simultaneously using the same login credentials, they will share:
+  - The same conversation history
+  - The same file uploads and session data
+  - The same interpreter instance and code execution context
+- **Unpredictable Behavior**: Multiple simultaneous users can cause data corruption, unexpected responses, and interfering code executions
+- **Recommendation**: Ensure only one person uses the application at a time, or deploy separate instances for different users
 
 
 ## Project Structure
@@ -146,13 +220,22 @@ To replicate our results for the Mars InSight mission from our paper named Build
 
 The project behavior is controlled by several environment variables in the `.env` file:
 
-This one is a secret and it should live in your .env file (not checked to the repo)
-- `OPENAI_API_KEY`: Your API key provided by OpenAI.
+**Secrets (must be in .env file, never commit to repo):**
+- `OPENAI_API_KEY`: Your API key provided by OpenAI
+- `AUTH_USERNAME`: Username for application login (default: `admin`)
+- `AUTH_PASSWORD`: Password for application login (default: `password123`)
 
-These are not secrets but simply settings. You can define these in your docker-compose file
-- `LOCAL_DEV`: Set to `1` for local development mode; set to `0` for production.
-- `PQA_HOME`: Path to store Paper-QA settings, typically `/app/data`.
-- `PAPER_DIRECTORY`: Path to the papers directory, typically `/app/data/papers`.
+**Configuration settings:**
+- `LOCAL_DEV`: Set to `1` for local development mode; set to `0` for production
+- `PQA_HOME`: Path to store Paper-QA settings, typically `/app/data`
+- `PAPER_DIRECTORY`: Path to the papers directory, typically `/app/data/papers`
+
+**Authentication System Details:**
+- The application uses a simple username/password authentication system
+- Login sessions are valid for 24 hours
+- All API endpoints are protected and require authentication
+- Sessions are stored in memory (will be lost on server restart)
+- **Important**: Authentication provides access control but **NOT user isolation** - all authenticated users share the same data and sessions
 
 ## Docker & Container Details
 

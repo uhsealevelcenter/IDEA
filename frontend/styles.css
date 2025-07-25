@@ -10,9 +10,174 @@ body {
     font-family: Arial, sans-serif;
     background-color: #f5f5f5;
     height: 100vh;
+    margin: 0;
+}
+
+/* Main layout with navbar */
+body.main-app {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Login page specific styles */
+body.login-page {
     display: flex;
     justify-content: center;
     align-items: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Navbar Styles */
+.navbar {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 0;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+}
+
+.navbar-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+}
+
+.navbar-brand {
+    display: flex;
+    flex-direction: column;
+}
+
+.navbar-brand h1 {
+    font-size: 1.8rem;
+    font-weight: bold;
+    margin: 0;
+    color: white;
+}
+
+.navbar-subtitle {
+    font-size: 0.8rem;
+    opacity: 0.9;
+    margin-top: -2px;
+}
+
+.navbar-menu {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: white;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+}
+
+.nav-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+}
+
+.nav-btn.logout-btn:hover {
+    background: rgba(220, 53, 69, 0.8);
+}
+
+.nav-btn .material-icons {
+    font-size: 1.1rem;
+}
+
+/* Mobile navbar toggle */
+.navbar-toggle {
+    display: none;
+    flex-direction: column;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.5rem;
+}
+
+.hamburger-line {
+    width: 25px;
+    height: 3px;
+    background: white;
+    margin: 3px 0;
+    transition: 0.3s;
+    border-radius: 2px;
+}
+
+.navbar-toggle.active .hamburger-line:nth-child(1) {
+    transform: rotate(-45deg) translate(-5px, 6px);
+}
+
+.navbar-toggle.active .hamburger-line:nth-child(2) {
+    opacity: 0;
+}
+
+.navbar-toggle.active .hamburger-line:nth-child(3) {
+    transform: rotate(45deg) translate(-5px, -6px);
+}
+
+/* Mobile menu */
+.navbar-mobile-menu {
+    position: fixed;
+    top: 0;
+    left: -100%;
+    width: 280px;
+    height: 100vh;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 5rem 1rem 2rem;
+    transition: left 0.3s ease;
+    z-index: 999;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.navbar-mobile-menu.active {
+    left: 0;
+}
+
+.nav-btn-mobile {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-bottom: 0.75rem;
+    transition: all 0.3s ease;
+    text-align: left;
+}
+
+.nav-btn-mobile:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.nav-btn-mobile.logout-btn:hover {
+    background: rgba(220, 53, 69, 0.8);
+}
+
+.nav-btn-mobile .material-icons {
+    font-size: 1.2rem;
 }
 
 .chat-container {
@@ -20,10 +185,11 @@ body {
     flex-direction: column;
     width: 100%;
     max-width: 1400px;
-    height: 90vh;
+    height: calc(100vh - 80px - 50px); /* Account for navbar (80px) and disclaimer (50px) */
     background-color: #ffffff;
     border-radius: 10px;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    margin: 90px auto 20px;
 }
 
 
@@ -355,11 +521,13 @@ pre {
     padding: 10px;
     background-color: #ffffff;
     border-top: 1px solid #e0e0e0;
-    z-index: 1000;
+    z-index: 100; /* Lower z-index to not interfere with mobile menu */
     display: flex;
     justify-content: center;
     gap: 5px; /* Adds a small space between the text and link */
     color: #000000; /* Sets the default text color to black */
+    height: 45px; /* Fixed height to help with calculations */
+    box-sizing: border-box;
 }
 
 .disclaimer-text a {
@@ -678,4 +846,805 @@ pre {
 
 #micButton.recording {
   color: red;
+}
+
+/* Login Page Styles */
+.login-container {
+    background: white;
+    padding: 2rem;
+    border-radius: 10px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 400px;
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.login-header h1 {
+    color: #333;
+    margin-bottom: 0.5rem;
+}
+
+.login-header p {
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #333;
+    font-weight: 500;
+}
+
+.form-group input[type="text"], 
+.form-group input[type="password"] {
+    width: 100%;
+    padding: 0.75rem;
+    border: 2px solid #e1e1e1;
+    border-radius: 5px;
+    font-size: 1rem;
+    transition: border-color 0.3s ease;
+    box-sizing: border-box;
+}
+
+.form-group input[type="text"]:focus, 
+.form-group input[type="password"]:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.login-button {
+    width: 100%;
+    padding: 0.75rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.login-button:hover {
+    transform: translateY(-2px);
+}
+
+.login-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.error-message {
+    background: #fee;
+    color: #c33;
+    padding: 0.75rem;
+    border-radius: 5px;
+    margin-bottom: 1rem;
+    display: none;
+}
+
+.success-message {
+    background: #efe;
+    color: #3c3;
+    padding: 0.75rem;
+    border-radius: 5px;
+    margin-bottom: 1rem;
+    display: none;
+}
+
+.footer-text {
+    text-align: center;
+    margin-top: 2rem;
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.footer-text a {
+    color: #667eea;
+    text-decoration: none;
+}
+
+.footer-text a:hover {
+    text-decoration: underline;
+}
+
+/* Mobile overlay for menu */
+.mobile-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    z-index: 998;
+}
+
+.mobile-overlay.active {
+    display: block;
+}
+
+/* Mobile Responsive Styles */
+@media (max-width: 768px) {
+    .navbar-menu {
+        display: none;
+    }
+    
+    .navbar-toggle {
+        display: flex;
+    }
+    
+    .navbar-brand h1 {
+        font-size: 1.5rem;
+    }
+    
+    .navbar-subtitle {
+        font-size: 0.7rem;
+    }
+    
+    .chat-container {
+        margin: 70px 10px 10px;
+        height: calc(100vh - 90px - 45px); /* Account for navbar and disclaimer */
+        border-radius: 5px;
+    }
+    
+    .login-container {
+        margin: 1rem;
+        max-width: calc(100vw - 2rem);
+    }
+}
+
+@media (max-width: 480px) {
+    .navbar-brand h1 {
+        font-size: 1.3rem;
+    }
+    
+    .navbar-subtitle {
+        font-size: 0.65rem;
+    }
+    
+    .navbar-container {
+        padding: 0.5rem 1rem;
+    }
+    
+    .chat-container {
+        margin: 60px 5px 5px;
+        height: calc(100vh - 75px - 45px); /* Account for navbar and disclaimer */
+    }
+}
+
+/* Prompt Management Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: 2% auto;
+    padding: 0;
+    border: none;
+    width: 95%;
+    max-width: 1200px;
+    height: 90vh;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 12px 12px 0 0;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.close {
+    color: white;
+    float: right;
+    font-size: 2rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+.close:hover,
+.close:focus {
+    opacity: 0.7;
+    text-decoration: none;
+}
+
+.modal-body {
+    flex: 1;
+    padding: 2rem;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.prompt-management-container {
+    display: flex;
+    height: 100%;
+}
+
+.prompt-list-section {
+    width: 350px;
+    border-right: 1px solid #e0e0e0;
+    background-color: #f8f9fa;
+    display: flex;
+    flex-direction: column;
+}
+
+.section-header {
+    padding: 0.5rem;
+    border-bottom: 1px solid #e0e0e0;
+    background-color: white;
+}
+
+.section-header h3 {
+    margin: 0 0 1rem 0;
+    font-size: 1.1rem;
+    color: #333;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    font-family: inherit;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-success:hover {
+    background: #218838;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: #5a6268;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: white;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.5rem;
+}
+
+.btn-danger:hover {
+    background: #c82333;
+}
+
+.btn .material-icons {
+    font-size: 1rem;
+}
+
+.prompts-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.prompt-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #e0e0e0;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    background-color: white;
+}
+
+.prompt-item:hover {
+    background-color: #f1f3f4;
+}
+
+.prompt-item.active {
+    background-color: #e3f2fd;
+    border-left: 4px solid #2196f3;
+}
+
+.prompt-item-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.prompt-item-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #333;
+    margin-bottom: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.prompt-item-description {
+    font-size: 0.8rem;
+    color: #666;
+    margin-bottom: 0.5rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.prompt-item-meta {
+    font-size: 0.75rem;
+    color: #888;
+}
+
+.active-badge {
+    background: #4caf50;
+    color: white;
+    font-size: 0.7rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 12px;
+    font-weight: 500;
+}
+
+.prompt-item-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.prompt-item:hover .prompt-item-actions {
+    opacity: 1;
+}
+
+.prompt-editor-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background-color: white;
+    overflow: hidden;
+}
+
+.prompt-editor {
+    padding: 2rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.prompt-editor h3 {
+    margin: 0 0 1.5rem 0;
+    color: #333;
+}
+
+.prompt-preview {
+    padding: 2rem;
+    text-align: center;
+    color: #666;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    flex: 1;
+}
+
+.prompt-preview h3 {
+    margin-bottom: 1rem;
+    color: #333;
+}
+
+#promptForm {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    color: #333;
+}
+
+.form-group input,
+.form-group textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    transition: border-color 0.2s ease;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.form-group textarea {
+    resize: vertical;
+    height: 200px;
+    max-height: 400px;
+    min-height: 150px;
+    font-family: 'Courier New', monospace;
+    line-height: 1.4;
+}
+
+.form-actions {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    flex-shrink: 0;
+}
+
+/* Mobile responsiveness for prompt management */
+@media (max-width: 768px) {
+    .modal-content {
+        width: 98%;
+        height: 95vh;
+        margin: 1% auto;
+    }
+    
+    .prompt-management-container {
+        flex-direction: column;
+    }
+    
+    .prompt-list-section {
+        width: 100%;
+        max-height: 300px;
+        border-right: none;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .prompt-editor-section {
+        flex: 1;
+    }
+    
+    .modal-header {
+        padding: 1rem;
+    }
+    
+    .modal-header h2 {
+        font-size: 1.3rem;
+    }
+    
+    .section-header {
+        padding: 0.5rem;
+    }
+    
+    .prompt-item {
+        padding: 0.75rem 1rem;
+    }
+    
+    .prompt-editor {
+        padding: 1rem;
+    }
+    
+    .form-group textarea {
+        height: 150px;
+        min-height: 120px;
+        max-height: 250px;
+    }
+}
+
+@media (max-width: 480px) {
+    .modal-content {
+        width: 100%;
+        height: 100vh;
+        margin: 0;
+        border-radius: 0;
+    }
+    
+    .modal-header {
+        border-radius: 0;
+    }
+    
+    .prompt-item-actions {
+        opacity: 1;
+    }
+    
+    .form-actions {
+        flex-direction: column;
+    }
+    
+    .btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Knowledge Base Styles */
+.knowledge-base-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    height: 100%;
+    overflow: hidden;
+}
+
+.upload-section {
+    border: 2px dashed #ddd;
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: #fafafa;
+    transition: all 0.3s ease;
+    flex-shrink: 0; /* Prevent from growing */
+    max-height: 200px; /* Limit maximum height */
+}
+
+.upload-section:hover {
+    border-color: #667eea;
+    background: #f8f9ff;
+}
+
+.upload-area {
+    text-align: center;
+    padding: 0.75rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.upload-area.drag-over {
+    border-color: #667eea;
+    background: #e8edff;
+}
+
+.upload-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.upload-icon {
+    font-size: 1.5rem !important;
+    color: #667eea;
+}
+
+.upload-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    font-size: 0.8rem;
+    color: #666;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.papers-list-section {
+    flex: 1;
+    min-height: 50vh; /* At least half the viewport height */
+    height: calc(100% - 220px); /* Take remaining space after upload section */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.knowledge-base-stats {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.9rem;
+    color: #666;
+}
+
+.papers-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    background: white;
+    min-height: 0; /* Important for flex children to be scrollable */
+}
+
+.paper-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid #eee;
+    transition: background-color 0.2s ease;
+}
+
+.paper-item:last-child {
+    border-bottom: none;
+}
+
+.paper-item:hover {
+    background: #f8f9ff;
+}
+
+.paper-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.paper-name {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.file-icon {
+    color: #667eea;
+    font-size: 1.2rem !important;
+}
+
+.filename {
+    font-weight: 500;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.paper-meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.paper-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-left: 1rem;
+}
+
+.btn-sm {
+    font-size: 0.8rem;
+    padding: 0.4rem 0.8rem;
+}
+
+.btn-sm .material-icons {
+    font-size: 1rem !important;
+}
+
+.no-papers, .loading, .error {
+    text-align: center;
+    padding: 2rem;
+    color: #666;
+    font-style: italic;
+}
+
+.error {
+    color: #f44336;
+}
+
+/* Progress bar for knowledge base uploads */
+#knowledgeBaseUploadProgress {
+    margin-top: 1rem;
+}
+
+/* Toast notifications */
+.toast {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Mobile responsiveness for knowledge base */
+@media (max-width: 768px) {
+    .knowledge-base-container {
+        gap: 1.5rem;
+        max-height: 60vh;
+    }
+    
+    .upload-section {
+        padding: 1rem;
+    }
+    
+    .upload-area {
+        padding: 1rem;
+    }
+    
+    .upload-icon {
+        font-size: 2rem !important;
+    }
+    
+    .paper-item {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+    
+    .paper-actions {
+        margin-left: 0;
+        justify-content: flex-end;
+    }
+    
+    .knowledge-base-stats {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    
+    .papers-list {
+        max-height: 250px;
+    }
+}
+
+@media (max-width: 480px) {
+    .upload-content p {
+        font-size: 0.9rem;
+    }
+    
+    .paper-meta {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    
+    .filename {
+        font-size: 0.9rem;
+    }
 }

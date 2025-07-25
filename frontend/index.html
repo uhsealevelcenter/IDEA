@@ -4,22 +4,188 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IDEA</title>
+    <title>IDEA-toZ</title>
     <link rel="stylesheet" href="styles.css">
     <!-- Highlight.js CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
     <link href="prism.css" rel="stylesheet" />  
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"> <!-- Mic icon -->
 </head>
-<body>
-    <div class="chat-container">
-        <header class="chat-header">
-            <div class="header-title-section">
-                <button id="downloadButton">Download conversation</button>
-                <h1>IDEA</h1>
-                <button id="newMessagesButton">Start over</button>
+<body class="main-app">
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="navbar-brand">
+                <h1>IDEA-toZ</h1>
+                <span class="navbar-subtitle">Intelligent Data Exploring Assistant</span>
             </div>
-        </header>
+            
+            <!-- Desktop Navigation -->
+            <div class="navbar-menu">
+                <button id="systemPromptButton" class="nav-btn">
+                    <span class="material-icons">settings</span>
+                    System Prompt
+                </button>
+                <button id="knowledgeBaseButton" class="nav-btn">
+                    <span class="material-icons">psychology</span>
+                    Knowledge Base
+                </button>
+                <button id="downloadButton" class="nav-btn">
+                    <span class="material-icons">download</span>
+                    Download
+                </button>
+                <button id="newMessagesButton" class="nav-btn">
+                    <span class="material-icons">refresh</span>
+                    Start Over
+                </button>
+                <button id="logoutButton" class="nav-btn logout-btn">
+                    <span class="material-icons">logout</span>
+                    Logout
+                </button>
+            </div>
+            
+            <!-- Mobile Menu Toggle -->
+            <button class="navbar-toggle" id="navbarToggle">
+                <span class="hamburger-line"></span>
+                <span class="hamburger-line"></span>
+                <span class="hamburger-line"></span>
+            </button>
+        </div>
+        
+        <!-- Mobile Navigation Menu -->
+        <div class="navbar-mobile-menu" id="navbarMobileMenu">
+            <button id="systemPromptButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">settings</span>
+                System Prompt
+            </button>
+            <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">psychology</span>
+                Knowledge Base
+            </button>
+            <button id="downloadButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">download</span>
+                Download conversation
+            </button>
+            <button id="newMessagesButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">refresh</span>
+                Start over
+            </button>
+            <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
+                <span class="material-icons">logout</span>
+                Logout
+            </button>
+        </div>
+    </nav>
+
+    <!-- Mobile overlay -->
+    <div class="mobile-overlay" id="mobileOverlay"></div>
+
+    <!-- Knowledge Base Management Modal -->
+    <div id="knowledgeBaseModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Knowledge Base Management</h2>
+                <span class="close" id="closeKnowledgeBaseModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="knowledge-base-container">
+                    <!-- Upload Section -->
+                    <div class="upload-section">
+                        <div class="section-header">
+                            <h3>Upload New Papers</h3>
+                            <div class="upload-info">
+                                <span>Supported formats: PDF, TXT, DOC, DOCX, MD</span>
+                                <span>Max size: 50MB</span>
+                            </div>
+                        </div>
+                        <div class="upload-area" id="knowledgeBaseUploadArea">
+                            <div class="upload-content">
+                                <span class="material-icons upload-icon">cloud_upload</span>
+                                <p>Drag and drop files here or click to browse</p>
+                                <input type="file" id="knowledgeBaseFileInput" multiple accept=".pdf,.txt,.doc,.docx,.md" style="display: none">
+                                <button id="browseKnowledgeBaseFiles" class="btn btn-primary">Browse Files</button>
+                            </div>
+                        </div>
+                        <div id="knowledgeBaseUploadProgress" class="progress-bar" style="display: none">
+                            <div class="progress"></div>
+                        </div>
+                    </div>
+
+                    <!-- Papers List Section -->
+                    <div class="papers-list-section">
+                        <div class="section-header">
+                            <h3>Current Papers</h3>
+                            <div class="knowledge-base-stats" id="knowledgeBaseStats">
+                                <span id="totalFiles">0 files</span>
+                                <span id="totalSize">0 MB</span>
+                            </div>
+                        </div>
+                        <div id="papersList" class="papers-list">
+                            <div class="loading">Loading papers...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Prompt Management Modal -->
+    <div id="promptManagementModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>System Prompt Management</h2>
+                <span class="close" id="closePromptModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="prompt-management-container">
+                    <!-- Prompt List Section -->
+                    <div class="prompt-list-section">
+                        <div class="section-header">
+                            <h3>Available Prompts</h3>
+                            <button id="createNewPromptBtn" class="btn btn-primary">
+                                <span class="material-icons">add</span>
+                                Create New
+                            </button>
+                        </div>
+                        <div id="promptsList" class="prompts-list">
+                            <!-- Prompts will be dynamically loaded here -->
+                        </div>
+                    </div>
+
+                    <!-- Prompt Editor Section -->
+                    <div class="prompt-editor-section">
+                        <div id="promptEditor" class="prompt-editor" style="display: none;">
+                            <h3 id="editorTitle">Edit Prompt</h3>
+                            <form id="promptForm">
+                                <div class="form-group">
+                                    <label for="promptName">Name:</label>
+                                    <input type="text" id="promptName" name="name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="promptDescription">Description:</label>
+                                    <input type="text" id="promptDescription" name="description">
+                                </div>
+                                <div class="form-group">
+                                    <label for="promptContent">Content:</label>
+                                    <textarea id="promptContent" name="content" required rows="20"></textarea>
+                                </div>
+                                <div class="form-actions">
+                                    <button type="submit" id="savePromptBtn" class="btn btn-success">Save</button>
+                                    <button type="button" id="cancelEditBtn" class="btn btn-secondary">Cancel</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div id="promptPreview" class="prompt-preview">
+                            <h3>Select a prompt to view or edit</h3>
+                            <p>Choose a prompt from the list on the left to view its content or make changes.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="chat-container">
         <div id="chatDisplay" class="chat-display"></div>
         <footer class="chat-footer">
             <div class="file-upload-section">
@@ -55,8 +221,8 @@
         <div id="promptIdeasContainer"></div>
     </div>
     <div class="disclaimer-text">
-        <span>IDEA can make mistakes. Check important results.</span>
-        <a href="https://github.com/uhsealevelcenter/IDEA"> Click for more information.</a>
+        <span>IDEA can make mistakes — check important results. Inputs may be used to improve services by UHSLC and/or LLM providers.</span>
+        <a href="https://github.com/uhsealevelcenter/IDEA"> [More info]</a>
     </div>
     </div>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
@@ -87,6 +253,8 @@
   <script src="prism.js"></script>
     <script src="config.js"></script>
     <script src="assistant.js"></script>
+    <script src="prompt-manager.js"></script>
+    <script src="knowledge-base.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </body>
 </html>

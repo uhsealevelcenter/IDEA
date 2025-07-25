@@ -32,6 +32,52 @@ let controller = null;
 let promptIdeasVisible = false;
 let currentMessageId = null;
 
+// Authentication state
+let authToken = localStorage.getItem('authToken');
+
+// Authentication functions
+async function checkAuthentication() {
+    if (!authToken) {
+        redirectToLogin();
+        return false;
+    }
+
+    try {
+        const response = await fetch(config.getEndpoints().verify, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (!response.ok) {
+            localStorage.removeItem('authToken');
+            redirectToLogin();
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Auth verification error:', error);
+        localStorage.removeItem('authToken');
+        redirectToLogin();
+        return false;
+    }
+}
+
+function redirectToLogin() {
+    window.location.href = 'login.html';
+}
+
+function getAuthHeaders() {
+    return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+}
+
+function logout() {
+    localStorage.removeItem('authToken');
+    authToken = null;
+    redirectToLogin();
+}
+
 // Session Management
 let sessionId = generateId('session');
 let threadId = localStorage.getItem('threadId') || (() => {
@@ -217,6 +263,35 @@ newMessagesButton.addEventListener('click', () => {
     resetTextareaHeight();
 });
 
+// Logout button event listeners (both desktop and mobile)
+function handleLogout() {
+    return async () => {
+        try {
+            await fetch(config.getEndpoints().logout, {
+                method: 'POST',
+                headers: {
+                    ...getAuthHeaders()
+                }
+            });
+        } catch (error) {
+            console.error('Logout error:', error);
+        } finally {
+            logout();
+        }
+    };
+}
+
+const logoutButton = document.getElementById('logoutButton');
+const logoutButtonMobile = document.getElementById('logoutButtonMobile');
+
+if (logoutButton) {
+    logoutButton.addEventListener('click', handleLogout());
+}
+
+if (logoutButtonMobile) {
+    logoutButtonMobile.addEventListener('click', handleLogout());
+}
+
 // Error handling utility
 function handleError(error, customMessage = 'An error occurred') {
     console.error(error);
@@ -268,7 +343,8 @@ async function sendRequest(msgOverride=null) {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "X-Session-Id": sessionId
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
             },
             body: JSON.stringify(params),
             signal,
@@ -610,7 +686,8 @@ async function clearChatHistory() {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "X-Session-Id": sessionId
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
             },
         });
 
@@ -622,7 +699,8 @@ async function clearChatHistory() {
         const fileResponse = await fetch(config.getEndpoints().files, {
             method: "DELETE",
             headers: {
-                "X-Session-Id": sessionId
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
             },
         });
 
@@ -715,13 +793,20 @@ function addCopyButtons() {
 
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
+    // Check authentication before doing anything else
+    const isAuthenticated = await checkAuthentication();
+    if (!isAuthenticated) {
+        return; // Will redirect to login
+    }
+
     if (!micStream) await warmUpMicrophone(); // Ensure microphone is warmed up (sppeds up first use)
 
     try {
         const response = await fetch(config.getEndpoints().history, {
             method: "GET",
             headers: {
-                "X-Session-Id": sessionId
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
             }
         });
         if (response.ok) {
@@ -893,6 +978,77 @@ function initializeFileUpload() {
     updateFilesList();
 }
 
+// Mobile navigation functionality
+function initializeMobileNavigation() {
+    const navbarToggle = document.getElementById('navbarToggle');
+    const navbarMobileMenu = document.getElementById('navbarMobileMenu');
+    const mobileOverlay = document.getElementById('mobileOverlay');
+    
+    // Mobile menu buttons
+    const downloadButtonMobile = document.getElementById('downloadButtonMobile');
+    const newMessagesButtonMobile = document.getElementById('newMessagesButtonMobile');
+
+    function toggleMobileMenu() {
+        navbarToggle.classList.toggle('active');
+        navbarMobileMenu.classList.toggle('active');
+        mobileOverlay.classList.toggle('active');
+        
+        // Prevent body scroll when menu is open
+        if (navbarMobileMenu.classList.contains('active')) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+    }
+
+    function closeMobileMenu() {
+        navbarToggle.classList.remove('active');
+        navbarMobileMenu.classList.remove('active');
+        mobileOverlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // Toggle menu on hamburger click
+    if (navbarToggle) {
+        navbarToggle.addEventListener('click', toggleMobileMenu);
+    }
+
+    // Close menu on overlay click
+    if (mobileOverlay) {
+        mobileOverlay.addEventListener('click', closeMobileMenu);
+    }
+
+    // Handle mobile button clicks
+    if (downloadButtonMobile) {
+        downloadButtonMobile.addEventListener('click', () => {
+            downloadConversation();
+            closeMobileMenu();
+        });
+    }
+
+    if (newMessagesButtonMobile) {
+        newMessagesButtonMobile.addEventListener('click', () => {
+            clearChatHistory();
+            resetTextareaHeight();
+            closeMobileMenu();
+        });
+    }
+
+    // Close menu on window resize if it gets too wide
+    window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+            closeMobileMenu();
+        }
+    });
+
+    // Close menu on escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && navbarMobileMenu.classList.contains('active')) {
+            closeMobileMenu();
+        }
+    });
+}
+
 // File upload error handling improvements
 async function uploadFile(file, progressElement) {
     try {
@@ -906,7 +1062,8 @@ async function uploadFile(file, progressElement) {
         const response = await fetch(config.getEndpoints().upload, {
             method: 'POST',
             headers: {
-                'X-Session-Id': sessionId
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
             },
             body: formData
         });
@@ -931,7 +1088,8 @@ async function updateFilesList() {
     try {
         const response = await fetch(config.getEndpoints().files, {
             headers: {
-                'X-Session-Id': sessionId
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
             }
         });
 
@@ -959,7 +1117,8 @@ async function updateFilesList() {
                     const response = await fetch(`${config.getEndpoints().files}/${encodeURIComponent(filename)}`, {
                         method: 'DELETE',
                         headers: {
-                            'X-Session-Id': sessionId
+                            'X-Session-Id': sessionId,
+                            ...getAuthHeaders()
                         }
                     });
 
@@ -1063,6 +1222,7 @@ function downloadConversation() {
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeFileUpload();
+    initializeMobileNavigation();
 
     // Microphone Dictation Button Logic
     const micButton = document.getElementById('micButton');
@@ -1166,6 +1326,17 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('drop', async (e) => {
         e.preventDefault();
         dropOverlay.classList.remove('show');
+
+        // Check if drop is happening within knowledge base modal
+        const knowledgeBaseModal = document.getElementById('knowledgeBaseModal');
+        if (knowledgeBaseModal && knowledgeBaseModal.style.display === 'block') {
+            const modalRect = knowledgeBaseModal.getBoundingClientRect();
+            if (e.clientX >= modalRect.left && e.clientX <= modalRect.right &&
+                e.clientY >= modalRect.top && e.clientY <= modalRect.bottom) {
+                // Drop is within knowledge base modal, let it handle the event
+                return;
+            }
+        }
 
         if (e.dataTransfer?.files?.length > 0) {
             await handleFiles(e.dataTransfer.files);
