@@ -1148,77 +1148,282 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-function downloadConversation() {
-    // Create a clone of the chat display to modify for PDF
-    const chatClone = chatDisplay.cloneNode(true);
-    
-    // Apply some PDF-specific styling
-    const pdfContainer = document.createElement('div');
-    pdfContainer.innerHTML = `
-        <h1 style="text-align: center; margin-bottom: 20px;">IDEA conversation</h1>
-        <h2 style="text-align: center; margin-bottom: 10px;"><a href="https://github.com/uhsealevelcenter/IDEA" target="_blank">Intelligent Data Exploring Assistant</a></h2>
-        <p style="text-align: center; margin-bottom: 30px;">
-            Generated on ${new Date().toLocaleString()}
-        </p>
-    `;
-    pdfContainer.appendChild(chatClone);
-
-    // Configure PDF options
-    const opt = {
-        margin: [10, 10],
-        filename: 'IDEA-conversation.pdf',
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { 
-            scale: 2,
-            useCORS: true,
-            logging: false
-        },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
-    // Generate PDF
-    html2pdf().set(opt).from(pdfContainer).save()
-        .then(() => {
-            appendSystemMessage("Conversation downloaded successfully!");
-        })
-        .catch(err => {
-            console.error("PDF generation failed:", err);
-            appendSystemMessage("Failed to download conversation. Please try again.");
-        });
+async function downloadConversation() {
+    try {
+        appendSystemMessage("Preparing conversation for download...");
+        
+        // Create a complete, self-contained HTML document
+        const htmlContent = await createSelfContainedHTML();
+        
+        // Create blob and download
+        const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `IDEA-conversation-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        appendSystemMessage("Conversation downloaded successfully!");
+    } catch (err) {
+        console.error("Download failed:", err);
+        appendSystemMessage("Failed to download conversation. Please try again.");
+    }
 }
 
-// // Alternative download function using fetch (Puppeteer backend)
-// async function downloadConversation_alt() {
-//     try {
-//         const chatHtml = chatDisplay.outerHTML;
-//         const response = await fetch('/sea-api/downloadConversation', {
-//             method: 'POST',
-//             headers: { 'Content-Type': 'application/json' },
-//             body: JSON.stringify({
-//                 html: chatHtml,
-//                 generatedTime: new Date().toLocaleString()
-//             }),
-//         });
+async function createSelfContainedHTML() {
+    // Get all CSS from the current page
+    const allCSS = await extractAllCSS();
+    
+    // Clone the chat display and process images
+    const chatClone = chatDisplay.cloneNode(true);
+    await processImagesInElement(chatClone);
+    
+    // Create the complete HTML document
+    const htmlTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDEA Conversation - ${new Date().toLocaleDateString()}</title>
+    <style>
+        ${allCSS}
+        
+        /* Additional styles for the exported conversation */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #fff;
+        }
+        
+        .export-header {
+            text-align: center;
+            margin-bottom: 40px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 20px;
+        }
+        
+        .export-header h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        
+        .export-header p {
+            color: #7f8c8d;
+            margin: 5px 0;
+        }
+        
+        .chat-display {
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        
+        /* Ensure code blocks are properly styled */
+        pre {
+            background: #f8f9fa !important;
+            border: 1px solid #e9ecef !important;
+            border-radius: 6px !important;
+            padding: 16px !important;
+            overflow-x: auto !important;
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
+        }
+        
+        code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace !important;
+            font-size: 0.9em !important;
+        }
+        
+        /* Ensure images are responsive */
+        img {
+            max-width: 100% !important;
+            height: auto !important;
+            border-radius: 8px !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+        }
+        
+        /* Print styles */
+        @media print {
+            .export-header {
+                break-inside: avoid;
+            }
+            
+            .message {
+                break-inside: avoid;
+                margin-bottom: 1em;
+            }
+            
+            pre {
+                break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="export-header">
+        <h1>IDEA Conversation</h1>
+        <h2><a href="https://github.com/uhsealevelcenter/IDEA" target="_blank">Intelligent Data Exploring Assistant</a></h2>
+        <p>Generated on: ${new Date().toLocaleString()}</p>
+        <p>Total messages: ${messages.length}</p>
+    </div>
+    
+    <div class="chat-display">
+        ${chatClone.innerHTML}
+    </div>
+    
+    <script>
+        // Add some interactivity for the exported file
+        document.addEventListener('DOMContentLoaded', function() {
+            // Make all links open in new tab
+            document.querySelectorAll('a').forEach(link => {
+                if (!link.getAttribute('target')) {
+                    link.setAttribute('target', '_blank');
+                }
+            });
+            
+            // Add click-to-copy functionality for code blocks
+            document.querySelectorAll('pre code').forEach(function(codeBlock) {
+                const pre = codeBlock.parentElement;
+                if (!pre.querySelector('.export-copy-btn')) {
+                    const copyBtn = document.createElement('button');
+                    copyBtn.className = 'export-copy-btn';
+                    copyBtn.innerHTML = 'Copy';
+                    copyBtn.style.cssText = \`
+                        position: absolute;
+                        top: 8px;
+                        right: 8px;
+                        background: #007bff;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                        font-size: 12px;
+                        cursor: pointer;
+                        opacity: 0.8;
+                    \`;
+                    
+                    pre.style.position = 'relative';
+                    pre.appendChild(copyBtn);
+                    
+                    copyBtn.addEventListener('click', function() {
+                        navigator.clipboard.writeText(codeBlock.textContent).then(function() {
+                            copyBtn.innerHTML = 'Copied!';
+                            setTimeout(function() {
+                                copyBtn.innerHTML = 'Copy';
+                            }, 2000);
+                        }).catch(function() {
+                            // Fallback for older browsers
+                            const textarea = document.createElement('textarea');
+                            textarea.value = codeBlock.textContent;
+                            document.body.appendChild(textarea);
+                            textarea.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(textarea);
+                            copyBtn.innerHTML = 'Copied!';
+                            setTimeout(function() {
+                                copyBtn.innerHTML = 'Copy';
+                            }, 2000);
+                        });
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>`;
+    
+    return htmlTemplate;
+}
 
-//         if (!response.ok) {
-//             throw new Error('Failed to generate PDF');
-//         }
+async function extractAllCSS() {
+    let allCSS = '';
+    
+    // Extract CSS from style tags
+    document.querySelectorAll('style').forEach(style => {
+        allCSS += style.textContent + '\n';
+    });
+    
+    // Extract CSS from external stylesheets
+    const styleSheets = Array.from(document.styleSheets);
+    for (const sheet of styleSheets) {
+        try {
+            if (sheet.href && sheet.href.startsWith(window.location.origin)) {
+                // Only process same-origin stylesheets
+                const cssRules = Array.from(sheet.cssRules || sheet.rules || []);
+                cssRules.forEach(rule => {
+                    allCSS += rule.cssText + '\n';
+                });
+            }
+        } catch (e) {
+            // Cross-origin stylesheets can't be read, skip them
+            console.warn('Could not read stylesheet:', sheet.href);
+        }
+    }
+    
+    return allCSS;
+}
 
-//         const blob = await response.blob();
-//         const url = URL.createObjectURL(blob);
+async function processImagesInElement(element) {
+    const images = element.querySelectorAll('img');
+    
+    for (const img of images) {
+        try {
+            // Only process images that are not already data URLs
+            if (!img.src.startsWith('data:')) {
+                const dataURL = await convertImageToDataURL(img);
+                if (dataURL) {
+                    img.src = dataURL;
+                }
+            }
+        } catch (e) {
+            console.warn('Could not convert image to data URL:', img.src);
+        }
+    }
+}
 
-//         const a = document.createElement('a');
-//         a.href = url;
-//         a.download = 'chat-conversation.pdf';
-//         a.click();
-//         URL.revokeObjectURL(url);
-
-//         appendSystemMessage('Conversation downloaded successfully!');
-//     } catch (error) {
-//         console.error('PDF download failed:', error);
-//         appendSystemMessage('Failed to download conversation.');
-//     }
-// }
+function convertImageToDataURL(img) {
+    return new Promise((resolve) => {
+        try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Create a new image to handle cross-origin issues
+            const newImg = new Image();
+            newImg.crossOrigin = 'anonymous';
+            
+            newImg.onload = function() {
+                canvas.width = newImg.naturalWidth;
+                canvas.height = newImg.naturalHeight;
+                ctx.drawImage(newImg, 0, 0);
+                
+                try {
+                    const dataURL = canvas.toDataURL('image/png');
+                    resolve(dataURL);
+                } catch (e) {
+                    console.warn('Could not convert image to data URL:', e);
+                    resolve(null);
+                }
+            };
+            
+            newImg.onerror = function() {
+                console.warn('Could not load image for conversion');
+                resolve(null);
+            };
+            
+            newImg.src = img.src;
+        } catch (e) {
+            console.warn('Error in convertImageToDataURL:', e);
+            resolve(null);
+        }
+    });
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeFileUpload();
@@ -1347,7 +1552,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadButton = document.getElementById('downloadButton');
     if (downloadButton) {
         downloadButton.addEventListener('click', downloadConversation);
-        // downloadButton.addEventListener('click', downloadConversation_alt); // Alternative method (under development)
     }
 });
 
