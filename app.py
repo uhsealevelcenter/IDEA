@@ -116,7 +116,9 @@ origins = [
 # Add request size limit middleware
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        if request.method == "POST":
+        #if request.method == "POST":
+        if request.method == "POST" and request.url.path.endswith("/upload"): # Limits to uploads, so images in chat are unlimited
+
             content_length = request.headers.get("content-length")
             if content_length and int(content_length) > MAX_FILE_SIZE:
                 return JSONResponse(
