@@ -382,6 +382,7 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         # # Intelligence models (e.g., GPT4.1)
         # interpreter.llm.temperature = 0.2 # Temperature (0-2, float) --> fairly deterministic
         # interpreter.llm.context_window = 128000 # Setting to maximum for gpt-4o as per documentation
+        # interpreter.llm.context_window = 1047576 # Setting to maximum for gpt-4.1 as per documentation
         # interpreter.llm.max_tokens = 16383 # Max tokens generated per request (prompt + max_tokens can not exceed context_window)
         # #interpreter.llm.max_budget = 0.03 # Commented (depreciated?)
         
