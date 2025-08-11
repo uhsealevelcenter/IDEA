@@ -181,9 +181,9 @@ data/**
 !data/benchmarks/*.json
 
 # Except, allow Mars InSight data sample (csv)
-!data/InSight/
-!data/InSight/*0200_*.csv
-!data/InSight/*0591_*.csv
+#!data/InSight/
+#!data/InSight/*0200_*.csv
+#!data/InSight/*0591_*.csv
 
 # Except, allow Mars papers referred to in IDEA article (PDF files)
 !data/papers/
