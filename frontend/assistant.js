@@ -78,6 +78,82 @@ function logout() {
     redirectToLogin();
 }
 
+//// Math formatting helpers
+
+// Protect $$...$$, $...$, \[...\], \(...\) from Marked
+function protectMath(text) {
+  const store = [];
+
+  // Order matters: block math first, then inline
+  const protect = (regex) => (src) =>
+    src.replace(regex, (m) => {
+      const key = `@@MATH${store.length}@@`;
+      store.push(m);             // keep the original, untouched
+      return key;                // placeholder Marked won't touch
+    });
+
+  // Block: $$...$$ (multiline)
+  let out = protect(/\$\$([\s\S]*?)\$\$/g)(text);
+
+  // Display \[...\] (multiline)
+  out = protect(/\\\[([\s\S]*?)\\\]/g)(out);
+
+  // Inline: $...$ (not $$)
+  out = protect(/(?<!\$)\$([^\n]+?)\$(?!\$)/g)(out);
+
+  // Inline \( ... \)
+  out = protect(/\\\(([^\n]+?)\\\)/g)(out);
+
+  return { text: out, store };
+}
+
+function restoreMath(html, store) {
+  return store.reduce((acc, m, i) => acc.replace(`@@MATH${i}@@`, m), html);
+}
+
+// Returns true if display/inline math is closed (so it's safe to typeset)
+function hasBalancedMath(s) {
+  // even number of $$ delimiters
+  const dollars = (s.match(/\$\$/g) || []).length % 2 === 0;
+  // balanced \[ \]
+  const lb = (s.match(/\\\[/g) || []).length;
+  const rb = (s.match(/\\\]/g) || []).length;
+  // balanced \( \)
+  const lp = (s.match(/\\\(/g) || []).length;
+  const rp = (s.match(/\\\)/g) || []).length;
+  return dollars && lb === rb && lp === rp;
+}
+
+// MathJax-safe typeset helper
+function typeset(el) {
+  if (!el) return Promise.resolve();
+  if (!window.MathJax) return Promise.resolve();
+  // Wait for MathJax startup (only once), then typeset the element
+  if (MathJax.startup && MathJax.startup.promise) {
+    return MathJax.startup.promise.then(() => MathJax.typesetPromise([el]));
+  }
+  // Fallback if startup.promise isn’t exposed for some reason
+  if (MathJax.typesetPromise) {
+    return MathJax.typesetPromise([el]);
+  }
+  return Promise.resolve();
+}
+
+function hasMathDelimiters(s) {
+  return /\$\$|\\\[|\\\]|(?<!\$)\$[^\n]+?\$(?!\$)|\\\([^\n]+?\\\)/.test(s);
+}
+
+// queued typeset helper
+let __mathQueue = Promise.resolve();
+
+// Prism.js code highlighting helper
+function prismHighlightUnder(el) {
+  if (!el || !window.Prism) return;
+  // Highlight only inside this container to avoid re-highlighting the whole page
+  Prism.highlightAllUnder(el);
+}
+//// End of Math formatting helpers
+
 // Session Management
 let sessionId = generateId('session');
 let threadId = localStorage.getItem('threadId') || (() => {
@@ -92,29 +168,6 @@ const sendButton = document.getElementById('sendButton');
 const stopButton = document.getElementById('stopButton');
 const newMessagesButton = document.getElementById('newMessagesButton');
 const messageInput = document.getElementById('messageInput');
-
-// Configure Marked.js for code highlighting
-marked.setOptions({
-    highlight: function(code, lang) {
-        if (lang && hljs.getLanguage(lang)) {
-            return hljs.highlight(code, { language: lang }).value;
-        } else {
-            return hljs.highlightAuto(code).value;
-        }
-    }
-});
-
-// window.MathJax = {
-//     tex: {
-//         inlineMath: [['$', '$'], ['\\(', '\\)']],
-//         displayMath: [['$$', '$$'], ['\\[', '\\]']],
-//         processEscapes: true
-//     },
-//     svg: {
-//         fontCache: 'global'
-//     }
-// };
-
 const progressBar = document.getElementById('uploadProgress');
 const progressElement = progressBar.querySelector('.progress');
 
@@ -564,35 +617,36 @@ function updateMessageContent(id, content) {
 
         if (contentDiv.getAttribute('data-type') === 'console') {
             // contentDiv.parentElement.remove();
-            contentDiv.parentElement.style.display = 'none';
+            contentDiv.parentElement.style.display = 'none'; // Hide Console Output
+            return;
         }
+        
+        // Handle different message types (more robust Math rendering)
         if (message.type === 'message') {
-            // Escape backslashes to preserve them through Markdown parsing
-            const escapedContent = content.replace(/\\/g, '\\\\');
-            // const contentWithPreservedBreaks = escapedContent.replace(/\n/g, '  \n');
-            // Parse Markdown to HTML using Marked.js
-            const parsedMarkdown = marked.parse(escapedContent);
-            // Sanitize the parsed HTML
-            // const sanitizedContent = DOMPurify.sanitize(parsedMarkdown);
-            // Set the sanitized HTML
-            contentDiv.innerHTML = parsedMarkdown;
-            // Apply syntax highlighting
-            contentDiv.querySelectorAll('pre code').forEach((block) => {
-                hljs.highlightElement(block);
-            });
-            // if (window.MathJax) {
-            //     // Ensure MathJax has finished loading
-            //     MathJax.startup.promise.then(() => {
-            //         return MathJax.typesetPromise([contentDiv]);
-            //     }).catch((err) => {
-            //         console.error('MathJax typeset failed:', err.message);
-            //     });
-            // }
-            if (window.MathJax) {
-                MathJax.typesetPromise([contentDiv]).catch((err) => {
-                    console.error('MathJax typeset failed:', err.message);
-                });
+            // 1) Start from the raw content
+            let raw = content;
+
+            // 2) Protect any *closed* math from Markdown
+            const { text: shielded, store } = protectMath(raw);
+
+            // 3) If math is NOT balanced yet, avoid Markdown corruption.
+            //    Show the raw text (or a very light markdown parse) and return early.
+            //    This prevents Markdown from inserting tags inside $$... (which MathJax needs as plain text)
+            if (!hasBalancedMath(raw)) {
+            contentDiv.textContent = raw;   // no HTML injection; safe during streaming
+            return;
             }
+
+            // 4) Now it's safe: run Markdown, restore math, inject HTML
+            const parsedMarkdown = marked.parse(shielded);
+            const htmlWithMath = restoreMath(parsedMarkdown, store);
+            contentDiv.innerHTML = htmlWithMath;
+
+            // 5) Highlight code blocks using Prism
+            prismHighlightUnder(contentDiv);
+
+            // 6) Typeset math (don’t wait for message.isComplete)
+            typeset(contentDiv);
         } else if (message.type === 'image') {
             if (message.format === 'base64.png') {
                 contentDiv.innerHTML = `<img src="data:image/png;base64,${content}" alt="Image">`;
@@ -618,7 +672,7 @@ function updateMessageContent(id, content) {
                 Prism.highlightElement(codeBlock);
             }
             addCopyButtons();
-        }
+            }
         } else if (message.type === 'file') {
             contentDiv.innerHTML = `<a href="${content}" download>Download File</a>`;
         } 
@@ -826,6 +880,9 @@ window.addEventListener('DOMContentLoaded', async () => {
                 }
             });
             scrollToBottom();
+
+            // Typeset once after conversation is loaded
+            typeset(document.getElementById('chatDisplay'));
         }
     } catch (error) {
         console.error("Failed to fetch history:", error);
@@ -886,39 +943,6 @@ async function waitForSelect2(timeout = 5000) {
         checkSelect2();
     });
 }
-
-// // File upload functionality
-// function initializeFileUpload() {
-//     const uploadButton = document.getElementById('uploadButton');
-//     const fileInput = document.getElementById('fileUpload');
-//     const uploadedFiles = document.getElementById('uploadedFiles');
-//     const progressBar = document.getElementById('uploadProgress');
-//     const progressElement = progressBar.querySelector('.progress');
-
-//     uploadButton.addEventListener('click', () => {
-//         fileInput.click();
-//     });
-
-//     fileInput.addEventListener('change', async () => {
-//         const files = fileInput.files;
-//         if (files.length === 0) return;
-
-//         for (const file of files) {
-//             try {
-//                 progressBar.style.display = 'block';
-//                 await uploadFile(file, progressElement);
-//                 await updateFilesList();
-//             } catch (error) {
-//                 appendSystemMessage(`Error uploading ${file.name}: ${error.message}`);
-//             }
-//         }
-//         progressBar.style.display = 'none';
-//         fileInput.value = ''; // Reset file input
-//     });
-
-//     // Initial file list load
-//     updateFilesList();
-// }
 
 // File upload functionality (drag and drop, paste, etc.)
 function initializeFileUpload() {
@@ -1227,8 +1251,7 @@ async function createSelfContainedHTML() {
         
         /* Ensure code blocks are properly styled */
         pre {
-            background: #f8f9fa !important;
-            border: 1px solid #e9ecef !important;
+            background-color: #000000 !important;
             border-radius: 6px !important;
             padding: 16px !important;
             overflow-x: auto !important;
@@ -1237,7 +1260,7 @@ async function createSelfContainedHTML() {
         }
         
         code {
-            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace !important;
+            font-family: 'Courier New', Courier, monospace !important;
             font-size: 0.9em !important;
         }
         
@@ -1272,6 +1295,7 @@ async function createSelfContainedHTML() {
         <h2><a href="https://github.com/uhsealevelcenter/IDEA" target="_blank">Intelligent Data Exploring Assistant</a></h2>
         <p>Generated on: ${new Date().toLocaleString()}</p>
         <p>Total messages: ${messages.length}</p>
+        <p>(Note: equations not displayed)</p>
     </div>
     
     <div class="chat-display">

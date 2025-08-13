@@ -1648,3 +1648,9 @@ pre {
         font-size: 0.9rem;
     }
 }
+
+/* Unused: Console output */
+.message .content[data-type="console"] {
+  font-family: monospace;
+  white-space: pre-wrap; /* preserve newlines */
+}
