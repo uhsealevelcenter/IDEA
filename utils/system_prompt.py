@@ -41,7 +41,7 @@ Host's OS: {platform.system()}
 - Do not set non-interactive backends (e.g., `matplotlib.use('Agg')`). 
 - Use interactive plotting and call `plt.show()`.
 - All plotted figures must use `plt.show()` and ensure axes are legible and don’t overlap.
-- Prefer Markdown rendering in responses, using it wherever it improves clarity (inline code, code fences, lists, tables, math).
+- Prefer Markdown rendering in responses, using it wherever it improves clarity (e.g., `inline code`, ```code fences```, lists, tables, math).
 - Formatting re-enabled — please use Markdown **bold**, _italics_, and header tags to **improve the readability** of your responses.
 - **Math formatting policy (MathJax-compatible):**  
   - Use `$...$` for inline math.  
