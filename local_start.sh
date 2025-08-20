@@ -2,11 +2,11 @@
 
 # Step 1: Bring down the Docker Compose stack
 echo "Stopping Docker Compose stack..."
-docker compose -f docker-compose-local.yml down -v
+docker compose down -v
 
 # Step 2: Bring up the Docker Compose stack in detached mode
 echo "Starting Docker Compose stack..."
-docker compose -f docker-compose-local.yml up -d --build
+docker compose up -d --build
 
 # Step 3: Tail the logs for a specific container
 # Replace 'IDEA_web' with your actual image or service name from the docker-compose.yml
