@@ -40,9 +40,10 @@ from utils.custom_instructions import get_custom_instructions  # Generic Assista
 # Import prompt manager
 from utils.prompt_manager import init_prompt_manager, get_prompt_manager
 from knowledge_base_routes import router as knowledge_base_router
+from sqlmodel import Session
 from auth import (
     generate_auth_token, verify_password, is_authenticated, get_auth_token,
-    add_auth_session, remove_auth_session, SESSION_TIMEOUT
+    add_auth_session, remove_auth_session, SESSION_TIMEOUT, get_db
 )
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
@@ -210,12 +211,13 @@ interpreter_instances: Dict[str, OpenInterpreter] = {}
 
 # Authentication endpoints
 @app.post("/login", response_model=LoginResponse)
-async def login(login_request: LoginRequest):
+async def login(login_request: LoginRequest, session: Session = Depends(get_db)):
     """Login endpoint to authenticate users"""
-    if verify_password(login_request.username, login_request.password):
+    user = verify_password(login_request.username, login_request.password, session)
+    if user:
         token = generate_auth_token()
         expiry_time = datetime.now() + timedelta(seconds=SESSION_TIMEOUT)
-        add_auth_session(token, expiry_time)
+        add_auth_session(token, user.id, expiry_time)
 
         return LoginResponse(
             success=True,
@@ -225,7 +227,7 @@ async def login(login_request: LoginRequest):
     else:
         raise HTTPException(
             status_code=401,
-            detail="Invalid username or password"
+            detail="Invalid email or password"
         )
 
 

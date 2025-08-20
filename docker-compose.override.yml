@@ -23,6 +23,11 @@ services:
     depends_on:
       - redis
   
+  db:
+    restart: "no"
+    ports:
+      - "5432:5432"
+  
   frontend:
       image: python:3.11-alpine
       ports:

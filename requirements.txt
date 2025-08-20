@@ -114,6 +114,12 @@ PySocks==1.7.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 python-multipart==0.0.12
+# Database dependencies
+sqlmodel==0.0.24
+alembic==1.14.0
+psycopg2-binary==2.9.10
+passlib[bcrypt]==1.7.4
+email-validator==2.1.2
 pytz==2024.2
 PyYAML==6.0.2
 pyzmq==26.2.0
