@@ -47,6 +47,7 @@ from auth import (
 )
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
+from utils.pqa_multi_tenant import ensure_user_pqa_settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -161,6 +162,10 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
+def make_session_key(user_id: str | int, session_id: str) -> str:
+    return f"{user_id}:{session_id}"
+
+
 async def scan_file(file_path: Path) -> tuple[bool, str]:
     """Scan a file for viruses using ClamAV"""
     # TODO: Not implemented yet
@@ -260,7 +265,6 @@ async def list_prompts(token: str = Depends(get_auth_token), db: Session = Depen
         logger.error(f"Error listing prompts: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to list prompts")
 
-
 @app.get("/prompts/{prompt_id}", response_model=PromptResponse)
 async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Get a specific prompt by ID for the current user"""
@@ -277,7 +281,6 @@ async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: S
     except Exception as e:
         logger.error(f"Error getting prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get prompt")
-
 
 @app.post("/prompts", response_model=PromptResponse)
 async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
@@ -299,7 +302,6 @@ async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(g
     except Exception as e:
         logger.error(f"Error creating prompt: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to create prompt")
-
 
 @app.put("/prompts/{prompt_id}", response_model=PromptResponse)
 async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
@@ -325,7 +327,6 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token:
         logger.error(f"Error updating prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to update prompt")
 
-
 @app.delete("/prompts/{prompt_id}")
 async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Delete a prompt for the current user"""
@@ -342,7 +343,6 @@ async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token), db
     except Exception as e:
         logger.error(f"Error deleting prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete prompt")
-
 
 @app.post("/prompts/set-active")
 async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
@@ -366,27 +366,27 @@ async def set_active_prompt(request: SetActivePromptRequest, token: str = Depend
         raise HTTPException(status_code=500, detail="Failed to set active prompt")
 
 
-def get_or_create_interpreter(session_id: str, token: str | None = None, db: Session | None = None) -> OpenInterpreter:
+def get_or_create_interpreter(session_key: str, token: str | None = None, db: Session | None = None) -> OpenInterpreter:
     """Get existing interpreter or create new one. If token+db provided, use per-user active prompt."""
     try:
         # Return existing instance if it exists
-        if session_id in interpreter_instances:
-            logger.info(f"Retrieved existing interpreter for session {session_id}")
-            return interpreter_instances[session_id]
+        if session_key in interpreter_instances:
+            logger.info(f"Retrieved existing interpreter for session {session_key}")
+            return interpreter_instances[session_key]
 
         # Create new interpreter instance with default settings
         interpreter = OpenInterpreter()
 
         # Get active system prompt from prompt manager
         active_prompt = ""
+        user = None
         if token and db is not None:
             user = get_current_user(token)
             if user:
                 active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
-        if not active_prompt:
+        if not active_prompt and (token and db and user):
             # Fallback to previous file-backed default behavior for safety
-            active_prompt = get_prompt_manager().get_active_prompt(db, user.id) if (token and db and user) else ""
-        # interpreter.system_message += active_prompt
+            active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
         interpreter.system_message = sys_prompt + active_prompt
 
         # Enable vision
@@ -429,11 +429,11 @@ def get_or_create_interpreter(session_id: str, token: str | None = None, db: Ses
         interpreter.auto_run = True
 
         # Store the instance
-        interpreter_instances[session_id] = interpreter
-        logger.info(f"Created new interpreter for session {session_id}")
+        interpreter_instances[session_key] = interpreter
+        logger.info(f"Created new interpreter for session {session_key}")
         return interpreter
     except Exception as e:
-        logger.error(f"Error creating interpreter for session {session_id}: {str(e)}")
+        logger.error(f"Error creating interpreter for session {session_key}: {str(e)}")
         raise
 
 
@@ -455,45 +455,46 @@ async def start_periodic_cleanup():
     asyncio.create_task(periodic_cleanup())
 
 
-def clear_session(session_id: str):
+def clear_session(session_key: str):
     """Clear all resources associated with a session"""
     try:
         # Get interpreter instance
-        interpreter = interpreter_instances.get(session_id)
+        interpreter = interpreter_instances.get(session_key)
         if interpreter:
             # Call reset() to properly terminate all languages and clean up
             interpreter.reset()
             # Remove from instances dict
-            del interpreter_instances[session_id]
+            del interpreter_instances[session_key]
 
         # Clear Redis keys
-        redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_id}")
-        redis_client.delete(f"messages:{session_id}")
+        redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_key}")
+        redis_client.delete(f"messages:{session_key}")
 
-        # Remove session directory and all its contents
-        session_dir = STATIC_DIR / session_id
+        # Remove session directory and all its contents (only per UI session, not user-specific)
+        try:
+            _, raw_session_id = session_key.split(":", 1)
+        except ValueError:
+            raw_session_id = session_key
+        session_dir = STATIC_DIR / raw_session_id
         if session_dir.exists():
-            # Remove all contents recursively
             import shutil
             shutil.rmtree(session_dir)
-        logger.info(f"Cleared session {session_id}")
+        logger.info(f"Cleared session {session_key}")
     except Exception as e:
-        logger.error(f"Error clearing session {session_id}: {str(e)}")
+        logger.error(f"Error clearing session {session_key}: {str(e)}")
         raise
 
 
 def clear_all_interpreter_instances():
     """Clear all interpreter instances to force recreation with new system message"""
     try:
-        # Reset and clear all interpreter instances
-        for session_id, interpreter in list(interpreter_instances.items()):
+        for session_key, interpreter in list(interpreter_instances.items()):
             try:
                 interpreter.reset()
-                logger.info(f"Reset interpreter for session {session_id}")
+                logger.info(f"Reset interpreter for session {session_key}")
             except Exception as e:
-                logger.error(f"Error resetting interpreter for session {session_id}: {str(e)}")
+                logger.error(f"Error resetting interpreter for session {session_key}: {str(e)}")
 
-        # Clear the instances dictionary
         interpreter_instances.clear()
         logger.info("Cleared all interpreter instances due to system prompt change")
     except Exception as e:
@@ -508,22 +509,20 @@ async def cleanup_idle_sessions():
         current_time = time()
         logger.info(f"Current time: {current_time}")
         logger.info(f"interpreter_instances: {list(interpreter_instances.keys())}")
-        # Check all active sessions
-        for session_id in list(interpreter_instances.keys()):
+        for session_key in list(interpreter_instances.keys()):
             try:
-                last_active = redis_client.get(f"{LAST_ACTIVE_PREFIX}{session_id}")
+                last_active = redis_client.get(f"{LAST_ACTIVE_PREFIX}{session_key}")
                 if last_active:
-                    logger.info(f"Last active time for session {session_id}: {last_active}")
+                    logger.info(f"Last active time for session {session_key}: {last_active}")
 
                     last_active_time = float(last_active.decode('utf-8'))
                     if current_time - last_active_time > IDLE_TIMEOUT:
-                        clear_session(session_id)
+                        clear_session(session_key)
             except Exception as e:
-                logger.error(f"Error cleaning up session {session_id}: {str(e)}")
-                continue
-
+                logger.error(f"Error during idle cleanup for {session_key}: {str(e)}")
     except Exception as e:
-        logger.error(f"Error in cleanup_idle_sessions: {str(e)}")
+        logger.error(f"Error cleaning up sessions: {str(e)}")
+        raise
 
 
 @app.exception_handler(HTTPException)
@@ -591,11 +590,17 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         if not messages:
             raise HTTPException(status_code=400, detail="No messages provided")
 
-        logger.info(f"Received messages for session {session_id}")
-        # Get or create interpreter instance
-        interpreter = get_or_create_interpreter(session_id, token, db)
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        session_key = make_session_key(user.id, session_id)
 
-        # Add custom instructions (matches SEA design)
+        logger.info(f"Received messages for session {session_key}")
+        interpreter = get_or_create_interpreter(session_key, token, db)
+
+        pqa_settings_path = ensure_user_pqa_settings(user.id)
+        pqa_settings_name = Path(str(pqa_settings_path)).stem
+
         station_id = '000'  # Placeholder
         interpreter.custom_instructions = get_custom_instructions(
             today=today,
@@ -603,25 +608,24 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             session_id=session_id,
             static_dir=STATIC_DIR,
             upload_dir=UPLOAD_DIR,
-            station_id=station_id
+            station_id=station_id,
+            pqa_settings_name=pqa_settings_name
         )
 
-        # Update last active time
-        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_id}", str(time()))
+        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
 
         def event_stream():
             try:
-                # logger.info(f"Messages sent to interpreter: {messages}") # Debugging
                 for result in interpreter.chat(messages[-1], stream=True):
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
-                error_message = {"error": str(e)}  # <-- fix: use str(e)
+                error_message = {"error": str(e)}
                 yield f"data: {json.dumps(error_message)}\n\n"
             finally:
                 redis_client.set(
-                    f"messages:{session_id}", json.dumps(interpreter.messages)
+                    f"messages:{session_key}", json.dumps(interpreter.messages)
                 )
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -636,8 +640,12 @@ def history_endpoint(request: Request, token: str = Depends(get_auth_token)):
     session_id = request.headers.get("x-session-id")
     if not session_id:
         return {"error": "x-session-id header is required"}
+    user = get_current_user(token)
+    if user is None:
+        return {"error": "Invalid or expired token"}
+    session_key = make_session_key(user.id, session_id)
 
-    stored_messages = redis_client.get(f"messages:{session_id}")
+    stored_messages = redis_client.get(f"messages:{session_key}")
     if stored_messages:
         return json.loads(stored_messages)
     return []
@@ -649,9 +657,12 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
         session_id = request.headers.get("x-session-id")
         if not session_id:
             raise HTTPException(status_code=400, detail="x-session-id header is required")
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-        # redis_client.delete(f"messages:{session_id}")
-        clear_session(session_id)
+        session_key = make_session_key(user.id, session_id)
+        clear_session(session_key)
         return {"status": "Chat history cleared"}
     except redis.RedisError as e:
         logger.error(f"Redis error in clear_endpoint: {str(e)}")
