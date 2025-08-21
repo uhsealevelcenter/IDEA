@@ -43,7 +43,7 @@ from knowledge_base_routes import router as knowledge_base_router
 from sqlmodel import Session
 from auth import (
     generate_auth_token, verify_password, is_authenticated, get_auth_token,
-    add_auth_session, remove_auth_session, SESSION_TIMEOUT, get_db
+    add_auth_session, remove_auth_session, SESSION_TIMEOUT, get_db, get_current_user
 )
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
@@ -246,21 +246,29 @@ async def verify_auth(token: str = Depends(get_auth_token)):
 
 # Prompt Management Endpoints
 @app.get("/prompts", response_model=List[PromptListResponse])
-async def list_prompts(token: str = Depends(get_auth_token)):
-    """List all available prompts"""
+async def list_prompts(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """List all available prompts for the current user"""
     try:
-        prompts = get_prompt_manager().list_prompts()
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        prompts = get_prompt_manager().list_prompts(db, user.id)
         return prompts
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing prompts: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to list prompts")
 
 
 @app.get("/prompts/{prompt_id}", response_model=PromptResponse)
-async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
-    """Get a specific prompt by ID"""
+async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Get a specific prompt by ID for the current user"""
     try:
-        prompt = get_prompt_manager().get_prompt(prompt_id)
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        prompt = get_prompt_manager().get_prompt(db, user.id, prompt_id)
         if not prompt:
             raise HTTPException(status_code=404, detail="Prompt not found")
         return prompt
@@ -272,25 +280,37 @@ async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
 
 
 @app.post("/prompts", response_model=PromptResponse)
-async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token)):
-    """Create a new prompt"""
+async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Create a new prompt for the current user"""
     try:
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
         new_prompt = get_prompt_manager().create_prompt(
+            db,
+            user.id,
             name=prompt_data.name,
             description=prompt_data.description,
             content=prompt_data.content
         )
         return new_prompt
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating prompt: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to create prompt")
 
 
 @app.put("/prompts/{prompt_id}", response_model=PromptResponse)
-async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token)):
-    """Update an existing prompt"""
+async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Update an existing prompt for the current user"""
     try:
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
         updated_prompt = get_prompt_manager().update_prompt(
+            db,
+            user.id,
             prompt_id=prompt_id,
             name=prompt_data.name,
             description=prompt_data.description,
@@ -307,10 +327,13 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token:
 
 
 @app.delete("/prompts/{prompt_id}")
-async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
-    """Delete a prompt"""
+async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Delete a prompt for the current user"""
     try:
-        success = get_prompt_manager().delete_prompt(prompt_id)
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        success = get_prompt_manager().delete_prompt(db, user.id, prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
         return {"message": "Prompt deleted successfully"}
@@ -322,10 +345,13 @@ async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
 
 
 @app.post("/prompts/set-active")
-async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token)):
-    """Set a prompt as the active one"""
+async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Set a prompt as the active one for the current user"""
     try:
-        success = get_prompt_manager().set_active_prompt(request.prompt_id)
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        success = get_prompt_manager().set_active_prompt(db, user.id, request.prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
 
@@ -340,8 +366,8 @@ async def set_active_prompt(request: SetActivePromptRequest, token: str = Depend
         raise HTTPException(status_code=500, detail="Failed to set active prompt")
 
 
-def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
-    """Get existing interpreter or create new one"""
+def get_or_create_interpreter(session_id: str, token: str | None = None, db: Session | None = None) -> OpenInterpreter:
+    """Get existing interpreter or create new one. If token+db provided, use per-user active prompt."""
     try:
         # Return existing instance if it exists
         if session_id in interpreter_instances:
@@ -352,9 +378,16 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         interpreter = OpenInterpreter()
 
         # Get active system prompt from prompt manager
-        active_prompt = get_prompt_manager().get_active_prompt()
-        #interpreter.system_message += active_prompt # Appends System Prompt to Open Interpreter's default message 
-        interpreter.system_message = sys_prompt + active_prompt # Combine generic and specific prompts. Does not append System Prompt to Open Interpreter's default message 
+        active_prompt = ""
+        if token and db is not None:
+            user = get_current_user(token)
+            if user:
+                active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
+        if not active_prompt:
+            # Fallback to previous file-backed default behavior for safety
+            active_prompt = get_prompt_manager().get_active_prompt(db, user.id) if (token and db and user) else ""
+        # interpreter.system_message += active_prompt
+        interpreter.system_message = sys_prompt + active_prompt
 
         # Enable vision
         interpreter.llm.supports_vision = True
@@ -398,15 +431,10 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         # Store the instance
         interpreter_instances[session_id] = interpreter
         logger.info(f"Created new interpreter for session {session_id}")
-
-        # Store last active time in Redis
-        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_id}", str(time()))
-
         return interpreter
-
     except Exception as e:
-        logger.error(f"Error in get_or_create_interpreter: {str(e)}")
-        raise InterpreterError(f"Failed to create/retrieve interpreter: {str(e)}")
+        logger.error(f"Error creating interpreter for session {session_id}: {str(e)}")
+        raise
 
 
 async def periodic_cleanup():
@@ -551,7 +579,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 @app.post("/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
-async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token)):
+async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -565,7 +593,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
 
         logger.info(f"Received messages for session {session_id}")
         # Get or create interpreter instance
-        interpreter = get_or_create_interpreter(session_id)
+        interpreter = get_or_create_interpreter(session_id, token, db)
 
         # Add custom instructions (matches SEA design)
         station_id = '000'  # Placeholder
