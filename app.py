@@ -47,7 +47,7 @@ from auth import (
 )
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
-from utils.pqa_multi_tenant import ensure_user_pqa_settings
+from utils.pqa_multi_tenant import ensure_user_pqa_settings, ensure_user_index_built
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -600,6 +600,11 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
 
         pqa_settings_path = ensure_user_pqa_settings(user.id)
         pqa_settings_name = Path(str(pqa_settings_path)).stem
+        # Build user index once if not present
+        try:
+            ensure_user_index_built(user.id)
+        except Exception:
+            pass
 
         station_id = '000'  # Placeholder
         interpreter.custom_instructions = get_custom_instructions(
