@@ -4,6 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, EmailStr
 from sqlmodel import Field, SQLModel
+import sqlalchemy as sa
 
 # Pydantic models for authentication
 class LoginRequest(BaseModel):
@@ -110,3 +111,14 @@ class Token(SQLModel):
 # Contents of JWT token
 class TokenPayload(SQLModel):
     sub: str | None = None
+
+
+class SystemPrompt(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id", index=True, nullable=False)
+    name: str = Field(max_length=255)
+    description: str = Field(default="", sa_column=sa.Column(sa.Text, nullable=False, default=""))
+    content: str = Field(sa_column=sa.Column(sa.Text, nullable=False))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    is_active: bool = Field(default=False, index=True)
