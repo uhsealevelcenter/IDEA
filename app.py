@@ -5,6 +5,7 @@ import os
 from datetime import date, datetime, timedelta
 from time import time
 import logging
+from logging.handlers import RotatingFileHandler
 from typing import Dict, List
 import hashlib
 import secrets
@@ -49,8 +50,56 @@ from auth import (
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
 from utils.pqa_multi_tenant import ensure_user_pqa_settings, ensure_user_index_built
 
+import interpreter.core.llm.llm as llm_mod
+
+
+
+# LOG_DIR = Path("logs")
+# LOG_DIR.mkdir(parents=True, exist_ok=True)
+# LOG_FILE = LOG_DIR / "idea.log"
+
+# logging.basicConfig(
+#     level=logging.DEBUG,
+#     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+#     handlers=[
+#         RotatingFileHandler(str(LOG_FILE), maxBytes=10*1024*1024, backupCount=5, encoding="utf-8"),
+#         logging.StreamHandler()
+#     ],
+# )
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Inject reasoning_effort at the completions layer (affects both text + tool paths)
+_orig_completions = llm_mod.fixed_litellm_completions
+
+def fixed_litellm_completions_with_reasoning(**params):
+    p = dict(params)
+    p.setdefault("reasoning_effort", "high")
+    # Optionally: also enforce a cap on generated tokens for reasoning models
+    p.setdefault("max_completion_tokens", 64000)
+    yield from _orig_completions(**p)
+
+llm_mod.fixed_litellm_completions = fixed_litellm_completions_with_reasoning
+
+# Keep function-level monkeypatch (optional now that completions is wrapped)
+_orig_text = llm_mod.run_text_llm
+
+def run_text_llm_with_reasoning(self, params):
+    p = dict(params)
+    p.setdefault("reasoning_effort", "high")
+    return _orig_text(self, p)
+
+llm_mod.run_text_llm = run_text_llm_with_reasoning
+
+# If you also need tool-calling:
+_orig_tool = llm_mod.run_tool_calling_llm
+
+def run_tool_calling_llm_with_reasoning(self, params):
+    p = dict(params)
+    p.setdefault("reasoning_effort", "high")
+    return _orig_tool(self, p)
+
+llm_mod.run_tool_calling_llm = run_tool_calling_llm_with_reasoning
 
 IDLE_TIMEOUT = 3600  # 1 hour in seconds
 INTERPRETER_PREFIX = "interpreter:"
@@ -399,7 +448,7 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         # interpreter.llm.model = "gpt-4o"
         interpreter.llm.supports_functions = True
 
-        # ## Jetstream2 Models (https://docs.jetstream-cloud.org/inference-service/api/)
+        ## Jetstream2 Models (https://docs.jetstream-cloud.org/inference-service/api/)
         # interpreter.llm.api_key = os.getenv("JETSTREAM2_API_KEY") # api key to send your model 
         # interpreter.llm.api_base = "https://llm.jetstream-cloud.org/api" # add api base for OpenAI compatible provider
         # interpreter.llm.model = "openai/DeepSeek-R1" # add openai/ prefix to route as OpenAI provider
@@ -409,11 +458,11 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
 
         ## Specific settings for LLMs
         # Reasoning models (e.g, GPT5)
-        interpreter.llm.reasoning_effort = "minimal" # GPT-5 "minimal" | "low" | "medium" | "high"
+        # interpreter.llm.reasoning_effort = "high" # GPT-5 "minimal" | "low" | "medium" | "high"
         interpreter.llm.temperature = 0.2 # Temperature not used by reasoning models, set to default (e.g., GPT-5)
         interpreter.llm.context_window = 400000 # GPT-5 (max context window)
-        interpreter.llm.max_completion_tokens = 64000 # GPT-5 (128K, previously max_tokens, max tokens generated per request (prompt + max_completion_tokens can not exceed context_window
-            
+        # interpreter.llm.max_completion_tokens = 64000 # GPT-5 (128K, previously max_tokens, max tokens generated per request (prompt + max_completion_tokens can not exceed context_window)
+
         # # Intelligence models (e.g., GPT4.1)
         # interpreter.llm.temperature = 0.2 # Temperature (0-2, float) --> fairly deterministic
         # interpreter.llm.context_window = 128000 # Setting to maximum for gpt-4o as per documentation
