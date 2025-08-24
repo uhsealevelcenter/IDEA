@@ -26,7 +26,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter
 from slowapi.errors import RateLimitExceeded
 from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, \
-    PromptListResponse, SetActivePromptRequest
+    PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate
+import crud
+from core.security import verify_password as verify_password_hash
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
@@ -296,6 +298,34 @@ async def logout(token: str = Depends(get_auth_token)):
 async def verify_auth(token: str = Depends(get_auth_token)):
     """Verify if current authentication token is valid"""
     return {"authenticated": True, "message": "Token is valid"}
+
+
+# Account management endpoints
+@app.post("/users/change-password")
+async def change_password(payload: UpdatePassword, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Change password for the current authenticated user"""
+    try:
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        # Re-fetch user in this DB session to avoid detached instance issues
+        db_user = crud.get_user_by_id(session=db, user_id=user.id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Verify current password
+        if not verify_password_hash(payload.current_password, db_user.hashed_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+        # Update to new password
+        crud.update_user(session=db, db_user=db_user, user_in=UserUpdate(password=payload.new_password))
+        return {"message": "Password updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error changing password: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to change password")
 
 
 # Prompt Management Endpoints
