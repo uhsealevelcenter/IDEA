@@ -36,6 +36,10 @@
                     <span class="material-icons">refresh</span>
                     Start Over
                 </button>
+                <button id="accountSettingsButton" class="nav-btn">
+                    <span class="material-icons">manage_accounts</span>
+                    Account
+                </button>
                 <button id="logoutButton" class="nav-btn logout-btn">
                     <span class="material-icons">logout</span>
                     Logout
@@ -67,6 +71,10 @@
             <button id="newMessagesButtonMobile" class="nav-btn-mobile">
                 <span class="material-icons">refresh</span>
                 Start over
+            </button>
+            <button id="accountSettingsButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">manage_accounts</span>
+                Account Settings
             </button>
             <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
                 <span class="material-icons">logout</span>
@@ -183,6 +191,37 @@
         </div>
     </div>
 
+    <!-- Account Settings Modal -->
+    <div id="accountSettingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Account Settings</h2>
+                <span class="close" id="closeAccountSettingsModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="accountSettingsForm">
+                    <div class="form-group">
+                        <label for="currentPasswordInput">Current Password</label>
+                        <input type="password" id="currentPasswordInput" autocomplete="current-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="newPasswordInput">New Password</label>
+                        <input type="password" id="newPasswordInput" autocomplete="new-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPasswordInput">Confirm New Password</label>
+                        <input type="password" id="confirmPasswordInput" autocomplete="new-password" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-success">Update Password</button>
+                        <button type="button" id="cancelAccountSettingsBtn" class="btn btn-secondary">Cancel</button>
+                    </div>
+                    <div id="accountSettingsMessage" class="form-message" aria-live="polite"></div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div class="chat-container">
         <div id="chatDisplay" class="chat-display"></div>
         <footer class="chat-footer">
@@ -246,6 +285,7 @@
     <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
     <script src="config.js"></script>
     <script src="assistant.js"></script>
+    <script src="account-settings.js"></script>
     <script src="prompt-manager.js"></script>
     <script src="knowledge-base.js"></script>
 </body>
