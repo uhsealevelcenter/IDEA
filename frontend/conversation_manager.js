@@ -4,17 +4,18 @@
  */
 
 const MESSAGE_TYPES = {
-    CONSOLE: 'console',
     MESSAGE: 'message',
-    IMAGE: 'image',
     CODE: 'code',
+    IMAGE: 'image',
+    CONSOLE: 'console',
     FILE: 'file',
-    SYSTEM: 'system'
+    CONFIRMATION: 'confirmation'
 };
 
 const MESSAGE_ROLES = {
     USER: 'user',
-    ASSISTANT: 'assistant'
+    ASSISTANT: 'assistant',
+    COMPUTER: 'computer'
 };
 
 class ConversationManager {

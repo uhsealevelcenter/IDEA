@@ -517,10 +517,14 @@ function processChunk(chunk) {
                 
                 // Save the completed message to conversation if it's from assistant or computer
                 if (conversationManager && (message.role === 'assistant' || message.role === 'computer')) {
+                    // Validate message type against backend enums
+                    const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+                    const messageType = validTypes.includes(message.type) ? message.type : 'message';
+                    
                     conversationManager.addMessage(
                         message.role, 
                         message.content, 
-                        message.type,
+                        messageType,
                         message.format,
                         message.recipient
                     ).catch(error => {
@@ -568,8 +572,9 @@ function appendMessage(message) {
 
     // Save user messages immediately to conversation (assistant/computer messages are saved when complete)
     if (conversationManager && message.role === 'user' && message.content) {
-        // Map message types to conversation manager types
-        const messageType = message.type || MESSAGE_TYPES.MESSAGE;
+        // Validate message type against backend enums
+        const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+        const messageType = validTypes.includes(message.type) ? message.type : 'message';
         
         // Save to conversation asynchronously
         conversationManager.addMessage(
