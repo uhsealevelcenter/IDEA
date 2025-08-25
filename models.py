@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, EmailStr
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Relationship, SQLModel
 import sqlalchemy as sa
 
 # Pydantic models for authentication
@@ -98,7 +99,7 @@ class UsersPublic(SQLModel):
 
 
 # Generic message
-class Message(SQLModel):
+class GenericMessage(SQLModel):
     message: str
 
 
@@ -122,3 +123,140 @@ class SystemPrompt(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_active: bool = Field(default=False, index=True)
+
+
+# Enums for conversation and message models
+class MessageRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    COMPUTER = "computer"
+
+
+class MessageType(str, Enum):
+    MESSAGE = "message"
+    CODE = "code"
+    IMAGE = "image"
+    CONSOLE = "console"
+    FILE = "file"
+    CONFIRMATION = "confirmation"
+
+
+class MessageFormat(str, Enum):
+    OUTPUT = "output"
+    PATH = "path"
+    BASE64_PNG = "base64.png"
+    BASE64_JPEG = "base64.jpeg"
+    PYTHON = "python"
+    JAVASCRIPT = "javascript"
+    SHELL = "shell"
+    HTML = "html"
+    ACTIVE_LINE = "active_line"
+    EXECUTION = "execution"
+
+
+class MessageRecipient(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+# Conversation Models
+class ConversationBase(SQLModel):
+    title: str | None = Field(default=None, max_length=255)
+
+
+class ConversationCreate(ConversationBase):
+    pass
+
+
+class ConversationUpdate(ConversationBase):
+    title: str | None = Field(default=None, max_length=255)
+    is_favorite: bool | None = None
+
+
+class Conversation(ConversationBase, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    session_id: str = Field(max_length=255, index=True, nullable=False)
+    share_token: str | None = Field(default=None, max_length=255, unique=True, index=True)
+    is_shared: bool = Field(default=False)
+    is_favorite: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Relationships
+    messages: list["Message"] = Relationship(back_populates="conversation", cascade_delete=True)
+
+
+class ConversationPublic(ConversationBase):
+    id: uuid.UUID
+    session_id: str
+    is_shared: bool
+    is_favorite: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationWithMessages(ConversationPublic):
+    messages: list["MessagePublic"]
+
+
+class ConversationShared(SQLModel):
+    id: uuid.UUID
+    title: str | None
+    created_at: datetime
+    updated_at: datetime
+    messages: list["MessagePublic"]
+
+
+class ConversationsPublic(SQLModel):
+    data: list[ConversationPublic]
+    count: int
+
+
+# Sharing Models
+class ConversationShareCreate(SQLModel):
+    pass
+
+
+class ConversationShareResponse(SQLModel):
+    share_token: str
+    share_url: str
+
+
+# Message Models
+class MessageBase(SQLModel):
+    role: MessageRole
+    content: str
+    message_type: MessageType = Field(default=MessageType.MESSAGE)
+    message_format: MessageFormat | None = Field(default=None)
+    recipient: MessageRecipient | None = Field(default=None)
+
+
+class MessageCreate(MessageBase):
+    conversation_id: uuid.UUID
+
+
+class MessageUpdate(SQLModel):
+    content: str | None = None
+    message_type: MessageType | None = None
+    message_format: MessageFormat | None = None
+    recipient: MessageRecipient | None = None
+
+
+class Message(MessageBase, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    conversation_id: uuid.UUID = Field(foreign_key="conversation.id", nullable=False, ondelete="CASCADE")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Relationships
+    conversation: Conversation | None = Relationship(back_populates="messages")
+
+
+class MessagePublic(MessageBase):
+    id: uuid.UUID
+    conversation_id: uuid.UUID
+    created_at: datetime
+
+
+class MessagesPublic(SQLModel):
+    data: list[MessagePublic]
+    count: int

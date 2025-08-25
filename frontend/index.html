@@ -32,6 +32,10 @@
                     <span class="material-icons">download</span>
                     Download
                 </button>
+                <button id="conversationsButton" class="nav-btn">
+                    <span class="material-icons">chat</span>
+                    Conversations
+                </button>
                 <button id="newMessagesButton" class="nav-btn">
                     <span class="material-icons">refresh</span>
                     Start Over
@@ -67,6 +71,10 @@
             <button id="downloadButtonMobile" class="nav-btn-mobile">
                 <span class="material-icons">download</span>
                 Download conversation
+            </button>
+            <button id="conversationsButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">chat</span>
+                Conversations
             </button>
             <button id="newMessagesButtonMobile" class="nav-btn-mobile">
                 <span class="material-icons">refresh</span>
@@ -222,6 +230,39 @@
         </div>
     </div>
 
+    <!-- Conversations Management Modal -->
+    <div id="conversationsModal" class="modal">
+        <div class="modal-content wide-modal">
+            <div class="modal-header">
+                <h2>Conversation History</h2>
+                <span class="close" id="closeConversationsModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="conversations-container">
+                    <!-- Search and Filter Section -->
+                    <div class="conversations-header">
+                        <div class="search-section">
+                            <input type="text" id="conversationSearch" placeholder="Search conversations..." class="search-input">
+                            <button id="refreshConversations" class="btn btn-secondary">
+                                <span class="material-icons">refresh</span>
+                                Refresh
+                            </button>
+                        </div>
+                        <div class="filter-section">
+                            <button id="showAllConversations" class="btn btn-primary active">All</button>
+                            <button id="showFavoriteConversations" class="btn btn-secondary">Favorites</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Conversations List -->
+                    <div class="conversations-list" id="conversationsList">
+                        <div class="loading">Loading conversations...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="chat-container">
         <div id="chatDisplay" class="chat-display"></div>
         <footer class="chat-footer">
@@ -284,9 +325,11 @@
     </script>
     <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
     <script src="config.js"></script>
+    <script src="conversation_manager.js"></script>
     <script src="assistant.js"></script>
     <script src="account-settings.js"></script>
     <script src="prompt-manager.js"></script>
     <script src="knowledge-base.js"></script>
+    <script src="conversation_ui.js"></script>
 </body>
 </html>

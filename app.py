@@ -43,6 +43,7 @@ from utils.custom_instructions import get_custom_instructions  # Generic Assista
 # Import prompt manager
 from utils.prompt_manager import init_prompt_manager, get_prompt_manager
 from knowledge_base_routes import router as knowledge_base_router
+from conversation_routes import router as conversation_router
 from sqlmodel import Session
 from auth import (
     generate_auth_token, verify_password, is_authenticated, get_auth_token,
@@ -76,7 +77,7 @@ _orig_completions = llm_mod.fixed_litellm_completions
 
 def fixed_litellm_completions_with_reasoning(**params):
     p = dict(params)
-    p.setdefault("reasoning_effort", "high")
+    p.setdefault("reasoning_effort", "low")
     # Optionally: also enforce a cap on generated tokens for reasoning models
     p.setdefault("max_completion_tokens", 64000)
     yield from _orig_completions(**p)
@@ -88,7 +89,7 @@ _orig_text = llm_mod.run_text_llm
 
 def run_text_llm_with_reasoning(self, params):
     p = dict(params)
-    p.setdefault("reasoning_effort", "high")
+    p.setdefault("reasoning_effort", "low")
     return _orig_text(self, p)
 
 llm_mod.run_text_llm = run_text_llm_with_reasoning
@@ -98,7 +99,7 @@ _orig_tool = llm_mod.run_tool_calling_llm
 
 def run_tool_calling_llm_with_reasoning(self, params):
     p = dict(params)
-    p.setdefault("reasoning_effort", "high")
+    p.setdefault("reasoning_effort", "low")
     return _orig_tool(self, p)
 
 llm_mod.run_tool_calling_llm = run_tool_calling_llm_with_reasoning
@@ -146,6 +147,7 @@ app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static
 init_prompt_manager()
 
 app.include_router(knowledge_base_router)
+app.include_router(conversation_router, prefix="/conversations", tags=["conversations"])
 
 origins = [
     "http://localhost:8000",
