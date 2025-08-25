@@ -15,14 +15,7 @@ async function warmUpMicrophone() {
 
 // Constants and State Management
 const INITIAL_TEXTAREA_HEIGHT = '38px';
-const MESSAGE_TYPES = {
-    CONSOLE: 'console',
-    MESSAGE: 'message',
-    IMAGE: 'image',
-    CODE: 'code',
-    FILE: 'file',
-    SYSTEM: 'system'
-};
+// MESSAGE_TYPES is imported from conversation_manager.js
 
 // Global State
 let messages = [];
@@ -31,6 +24,9 @@ let isGenerating = false;
 let controller = null;
 let promptIdeasVisible = false;
 let currentMessageId = null;
+
+// Conversation manager instance
+let conversationManager;
 
 // Authentication state
 let authToken = localStorage.getItem('authToken');
@@ -314,6 +310,11 @@ stopButton.addEventListener('click', () => {
 newMessagesButton.addEventListener('click', () => {
     clearChatHistory();
     resetTextareaHeight();
+    
+    // Start a new conversation
+    if (conversationManager) {
+        conversationManager.startNewConversation();
+    }
 });
 
 // Logout button event listeners (both desktop and mobile)
@@ -513,8 +514,22 @@ function processChunk(chunk) {
             if (chunk.end) {
                 message.isComplete = true;  // Mark message as complete
                 // console.log(`Message ${currentMessageId} completed`);
+                
+                // Save the completed message to conversation if it's from assistant or computer
+                if (conversationManager && (message.role === 'assistant' || message.role === 'computer')) {
+                    conversationManager.addMessage(
+                        message.role, 
+                        message.content, 
+                        message.type,
+                        message.format,
+                        message.recipient
+                    ).catch(error => {
+                        console.error('Failed to save completed message to conversation:', error);
+                    });
+                }
             }
             message.format = chunk.format || undefined;
+            message.recipient = chunk.recipient || undefined;
             if (chunk.format == 'active_line') {
                 message.content = chunk.content || '';
             }else{
@@ -550,6 +565,23 @@ function appendMessage(message) {
     messageElement.appendChild(contentElement);
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+
+    // Save user messages immediately to conversation (assistant/computer messages are saved when complete)
+    if (conversationManager && message.role === 'user' && message.content) {
+        // Map message types to conversation manager types
+        const messageType = message.type || MESSAGE_TYPES.MESSAGE;
+        
+        // Save to conversation asynchronously
+        conversationManager.addMessage(
+            message.role, 
+            message.content, 
+            messageType, 
+            message.format, 
+            message.recipient
+        ).catch(error => {
+            console.error('Failed to save user message to conversation:', error);
+        });
+    }
 }
 
 // Modify updateMessageContent with better error handling
@@ -855,6 +887,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     if (!micStream) await warmUpMicrophone(); // Ensure microphone is warmed up (sppeds up first use)
 
+    // Initialize conversation manager
+    conversationManager = new ConversationManager();
+
     try {
         const response = await fetch(config.getEndpoints().history, {
             method: "GET",
@@ -1055,6 +1090,11 @@ function initializeMobileNavigation() {
             clearChatHistory();
             resetTextareaHeight();
             closeMobileMenu();
+            
+            // Start a new conversation
+            if (conversationManager) {
+                conversationManager.startNewConversation();
+            }
         });
     }
 

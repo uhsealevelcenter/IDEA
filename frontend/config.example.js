@@ -18,7 +18,10 @@ const config = {
             setActivePrompt: 'http://localhost/api/prompts/set-active',
             knowledgeBase: 'http://localhost/api/knowledge-base/papers',
             knowledgeBaseUpload: 'http://localhost/api/knowledge-base/papers/upload',
-            knowledgeBaseStats: 'http://localhost/api/knowledge-base/stats'
+            knowledgeBaseStats: 'http://localhost/api/knowledge-base/stats',
+            conversations: 'http://localhost/conversations',
+            conversationMessages: 'http://localhost/conversations',
+            conversationShare: 'http://localhost/conversations'
         },
         production: {
             chat: 'https://<your-domain>/chat',
@@ -35,7 +38,10 @@ const config = {
             setActivePrompt: 'https://<your-domain>/api/prompts/set-active',
             knowledgeBase: 'https://<your-domain>/api/knowledge-base/papers',
             knowledgeBaseUpload: 'https://<your-domain>/api/knowledge-base/papers/upload',
-            knowledgeBaseStats: 'https://<your-domain>/api/knowledge-base/stats'
+            knowledgeBaseStats: 'https://<your-domain>/api/knowledge-base/stats',
+            conversations: 'https://<your-domain>/conversations',
+            conversationMessages: 'https://<your-domain>/conversations',
+            conversationShare: 'https://<your-domain>/conversations'
         }
     },
 
