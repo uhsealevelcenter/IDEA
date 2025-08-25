@@ -11,7 +11,7 @@ import hashlib
 import secrets
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -300,6 +300,18 @@ async def logout(token: str = Depends(get_auth_token)):
 async def verify_auth(token: str = Depends(get_auth_token)):
     """Verify if current authentication token is valid"""
     return {"authenticated": True, "message": "Token is valid"}
+
+
+@app.get("/share/{share_token}")
+async def shared_conversation_page(share_token: str):
+    """Serve the shared conversation page"""
+    frontend_dir = Path(__file__).parent / "frontend"
+    share_html_path = frontend_dir / "share.html"
+    
+    if not share_html_path.exists():
+        raise HTTPException(status_code=404, detail="Share page not found")
+    
+    return FileResponse(share_html_path, media_type="text/html")
 
 
 # Account management endpoints
