@@ -175,7 +175,7 @@ class ConversationUpdate(ConversationBase):
 
 class Conversation(ConversationBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    session_id: str = Field(max_length=255, index=True, nullable=False)
+    user_id: uuid.UUID = Field(foreign_key="user.id", index=True, nullable=False)
     share_token: str | None = Field(default=None, max_length=255, unique=True, index=True)
     is_shared: bool = Field(default=False)
     is_favorite: bool = Field(default=False)
@@ -184,11 +184,12 @@ class Conversation(ConversationBase, table=True):
     
     # Relationships
     messages: list["Message"] = Relationship(back_populates="conversation", cascade_delete=True)
+    user: User | None = Relationship()
 
 
 class ConversationPublic(ConversationBase):
     id: uuid.UUID
-    session_id: str
+    user_id: uuid.UUID
     is_shared: bool
     is_favorite: bool
     created_at: datetime

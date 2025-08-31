@@ -19,9 +19,8 @@ const MESSAGE_ROLES = {
 };
 
 class ConversationManager {
-    constructor(apiBaseUrl, sessionId) {
+    constructor(apiBaseUrl) {
         this.apiBaseUrl = apiBaseUrl || window.API_BASE_URL || 'http://localhost:8002';
-        this.sessionId = sessionId || this.getOrCreateSessionId();
         this.currentConversationId = null;
         this.conversations = [];
         this.currentMessages = [];
@@ -31,15 +30,11 @@ class ConversationManager {
     }
     
     /**
-     * Get or create a session ID for this browser session
+     * Get authentication headers for API requests
      */
-    getOrCreateSessionId() {
-        let sessionId = sessionStorage.getItem('idea_session_id');
-        if (!sessionId) {
-            sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-            sessionStorage.setItem('idea_session_id', sessionId);
-        }
-        return sessionId;
+    getAuthHeaders() {
+        const authToken = localStorage.getItem('authToken');
+        return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
     }
     
     /**
@@ -54,11 +49,16 @@ class ConversationManager {
     }
     
     /**
-     * Load all conversations for the current session
+     * Load all conversations for the current user
      */
     async loadConversations() {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/?session_id=${this.sessionId}`);
+            const response = await fetch(`${this.apiBaseUrl}/conversations/`, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...this.getAuthHeaders()
+                }
+            });
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -77,10 +77,11 @@ class ConversationManager {
      */
     async createConversation(title = null) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/?session_id=${this.sessionId}`, {
+            const response = await fetch(`${this.apiBaseUrl}/conversations/`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...this.getAuthHeaders()
                 },
                 body: JSON.stringify({
                     title: title
@@ -110,7 +111,12 @@ class ConversationManager {
      */
     async loadConversation(conversationId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}?session_id=${this.sessionId}`);
+            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}`, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...this.getAuthHeaders()
+                }
+            });
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -147,10 +153,11 @@ class ConversationManager {
                 conversation_id: this.currentConversationId
             };
             
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${this.currentConversationId}/messages?session_id=${this.sessionId}`, {
+            const response = await fetch(`${this.apiBaseUrl}/conversations/${this.currentConversationId}/messages`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...this.getAuthHeaders()
                 },
                 body: JSON.stringify(messageData),
             });
@@ -185,8 +192,11 @@ class ConversationManager {
      */
     async deleteConversation(conversationId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}?session_id=${this.sessionId}`, {
+            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}`, {
                 method: 'DELETE',
+                headers: {
+                    ...this.getAuthHeaders()
+                }
             });
             
             if (!response.ok) {
@@ -218,10 +228,11 @@ class ConversationManager {
      */
     async updateConversation(conversationId, updates) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}?session_id=${this.sessionId}`, {
+            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...this.getAuthHeaders()
                 },
                 body: JSON.stringify(updates),
             });
@@ -252,8 +263,11 @@ class ConversationManager {
      */
     async toggleFavorite(conversationId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}/favorite?session_id=${this.sessionId}`, {
+            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}/favorite`, {
                 method: 'POST',
+                headers: {
+                    ...this.getAuthHeaders()
+                }
             });
             
             if (!response.ok) {
@@ -282,10 +296,11 @@ class ConversationManager {
      */
     async createShareLink(conversationId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}/share?session_id=${this.sessionId}`, {
+            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}/share`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...this.getAuthHeaders()
                 },
                 body: JSON.stringify({}),
             });
