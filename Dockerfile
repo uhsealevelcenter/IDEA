@@ -122,16 +122,22 @@ COPY . .
 ##
 
 # Create required directories
-RUN echo '#!/bin/bash\n\
-mkdir -p /app/data/benchmarks\n\
-mkdir -p /app/data/metadata\n\
-mkdir -p /app/data/altimetry\n\
-mkdir -p /app/data/papers\n\
-mkdir -p /app/static\n\
-chmod 755 /app/data\n\
-chmod +x /app/scripts/fetch_data.sh\n\
-exec "$@"' > /entrypoint.sh && \
-chmod +x /entrypoint.sh
+# RUN echo '#!/bin/bash\n\
+# mkdir -p /app/data/benchmarks\n\
+# mkdir -p /app/data/metadata\n\
+# mkdir -p /app/data/altimetry\n\
+# mkdir -p /app/data/papers\n\
+# mkdir -p /app/static\n\
+# chmod 755 /app/data\n\
+# chmod +x /app/scripts/fetch_data.sh\n\
+# exec "$@"' > /entrypoint.sh && \
+# chmod +x /entrypoint.sh
+
+# Setup paper-qa settings
+# RUN pqa -s default_setting --llm gpt-4o-mini --summary-llm gpt-4o-mini save
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Setup paper-qa settings
 # RUN pqa -s default_setting --llm gpt-4o-mini --summary-llm gpt-4o-mini save
