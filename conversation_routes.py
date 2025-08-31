@@ -5,8 +5,9 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from auth import get_db
+from auth import get_db, get_auth_token, get_current_user
 from models import (
+    User,
     Conversation,
     ConversationCreate,
     ConversationPublic,
@@ -27,24 +28,28 @@ from models import (
 router = APIRouter()
 
 
+def get_current_user_dependency(token: str = Depends(get_auth_token)) -> User:
+    """Dependency to get the current user from auth token"""
+    user = get_current_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    return user
+
+
 @router.get("/", response_model=ConversationsPublic)
 def read_conversations(
-    session_id: str,
     session: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_dependency),
     skip: int = 0,
     limit: int = 100,
 ) -> Any:
     """
-    Retrieve conversations for the current session.
+    Retrieve conversations for the current user.
     """
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required")
-        
-    # For session-based access (no user authentication required)
-    count_statement = select(Conversation).where(Conversation.session_id == session_id)
+    count_statement = select(Conversation).where(Conversation.user_id == current_user.id)
     statement = (
         select(Conversation)
-        .where(Conversation.session_id == session_id)
+        .where(Conversation.user_id == current_user.id)
         .offset(skip)
         .limit(limit)
         .order_by(Conversation.updated_at.desc())
@@ -58,19 +63,16 @@ def read_conversations(
 
 @router.get("/favorites", response_model=ConversationsPublic)
 def read_favorite_conversations(
-    session_id: str,
     session: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_dependency),
     skip: int = 0,
     limit: int = 100,
 ) -> Any:
     """
-    Retrieve favorite conversations for the current session.
+    Retrieve favorite conversations for the current user.
     """
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required")
-
     count_statement = select(Conversation).where(
-        Conversation.session_id == session_id,
+        Conversation.user_id == current_user.id,
         Conversation.is_favorite == True
     )
     count = len(session.exec(count_statement).all())
@@ -78,7 +80,7 @@ def read_favorite_conversations(
     statement = (
         select(Conversation)
         .where(
-            Conversation.session_id == session_id,
+            Conversation.user_id == current_user.id,
             Conversation.is_favorite == True
         )
         .offset(skip)
@@ -94,7 +96,7 @@ def read_favorite_conversations(
 def read_conversation(
     conversation_id: UUID,
     session: Session = Depends(get_db),
-    session_id: str = None,
+    current_user: User = Depends(get_current_user_dependency),
 ) -> Any:
     """
     Get conversation by ID with messages.
@@ -103,7 +105,7 @@ def read_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    if session_id and conversation.session_id != session_id:
+    if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     # Get messages for this conversation
@@ -117,7 +119,7 @@ def read_conversation(
     return ConversationWithMessages(
         id=conversation.id,
         title=conversation.title,
-        session_id=conversation.session_id,
+        user_id=conversation.user_id,
         is_shared=conversation.is_shared,
         is_favorite=conversation.is_favorite,
         created_at=conversation.created_at,
@@ -131,7 +133,7 @@ def create_conversation(
     *, 
     session: Session = Depends(get_db),
     conversation_in: ConversationCreate,
-    session_id: str
+    current_user: User = Depends(get_current_user_dependency)
 ) -> Any:
     """
     Create new conversation.
@@ -141,7 +143,7 @@ def create_conversation(
     
     conversation = Conversation(
         title=title,
-        session_id=session_id
+        user_id=current_user.id
     )
     session.add(conversation)
     session.commit()
@@ -153,7 +155,7 @@ def create_conversation(
 def delete_conversation(
     conversation_id: UUID,
     session: Session = Depends(get_db),
-    session_id: str = None,
+    current_user: User = Depends(get_current_user_dependency),
 ) -> GenericMessage:
     """
     Delete a conversation.
@@ -162,7 +164,7 @@ def delete_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    if session_id and conversation.session_id != session_id:
+    if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     session.delete(conversation)
@@ -176,7 +178,7 @@ def add_message(
     session: Session = Depends(get_db),
     conversation_id: UUID,
     message_in: MessageCreate,
-    session_id: str = None,
+    current_user: User = Depends(get_current_user_dependency),
 ) -> Any:
     """
     Add a message to a conversation.
@@ -185,7 +187,7 @@ def add_message(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    if session_id and conversation.session_id != session_id:
+    if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     # Check if this is the first user message and conversation needs a better title
@@ -221,7 +223,7 @@ def add_message(
 def read_conversation_messages(
     conversation_id: UUID,
     session: Session = Depends(get_db),
-    session_id: str = None,
+    current_user: User = Depends(get_current_user_dependency),
     skip: int = 0,
     limit: int = 100,
 ) -> Any:
@@ -232,7 +234,7 @@ def read_conversation_messages(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    if session_id and conversation.session_id != session_id:
+    if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     count_statement = select(Message).where(Message.conversation_id == conversation_id)
@@ -256,7 +258,7 @@ def update_conversation(
     session: Session = Depends(get_db),
     conversation_id: UUID,
     conversation_in: ConversationUpdate,
-    session_id: str = None,
+    current_user: User = Depends(get_current_user_dependency),
 ) -> Any:
     """
     Update conversation title and favorite status.
@@ -265,7 +267,7 @@ def update_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    if session_id and conversation.session_id != session_id:
+    if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     if conversation_in.title is not None:
@@ -285,7 +287,7 @@ def toggle_favorite_conversation(
     *,
     session: Session = Depends(get_db),
     conversation_id: UUID,
-    session_id: str = None,
+    current_user: User = Depends(get_current_user_dependency),
 ) -> Any:
     """
     Toggle favorite status of a conversation.
@@ -294,7 +296,7 @@ def toggle_favorite_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    if session_id and conversation.session_id != session_id:
+    if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     conversation.is_favorite = not conversation.is_favorite
@@ -310,7 +312,7 @@ def create_share_link(
     session: Session = Depends(get_db),
     conversation_id: UUID,
     share_in: ConversationShareCreate,
-    session_id: str = None,
+    current_user: User = Depends(get_current_user_dependency),
 ) -> Any:
     """
     Create a shareable link for a conversation.
@@ -319,7 +321,7 @@ def create_share_link(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    if session_id and conversation.session_id != session_id:
+    if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     # Generate a unique share token if one doesn't exist
@@ -341,7 +343,7 @@ def remove_share_link(
     *,
     session: Session = Depends(get_db),
     conversation_id: UUID,
-    session_id: str = None,
+    current_user: User = Depends(get_current_user_dependency),
 ) -> GenericMessage:
     """
     Remove the shareable link for a conversation.
@@ -350,7 +352,7 @@ def remove_share_link(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    if session_id and conversation.session_id != session_id:
+    if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     conversation.share_token = None
