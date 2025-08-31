@@ -50,3 +50,13 @@ const config = {
         return this.endpoints[this.environment];
     }
 };
+
+// Set global API_BASE_URL for ConversationManager
+window.API_BASE_URL = (() => {
+    const endpoints = config.endpoints[config.environment];
+    if (endpoints.conversations) {
+        const url = new URL(endpoints.conversations);
+        return `${url.protocol}//${url.host}`;
+    }
+    return 'http://localhost:8002';
+})();

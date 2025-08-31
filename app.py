@@ -149,17 +149,23 @@ init_prompt_manager()
 app.include_router(knowledge_base_router)
 app.include_router(conversation_router, prefix="/conversations", tags=["conversations"])
 
-origins = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://localhost:8001",
-    "http://127.0.0.1:8001",
-    "http://localhost",
-    "*",
-    "http://172.18.46.161",
-    "http://172.18.46.161:8001",
-    "https://uhslc.soest.hawaii.edu/research/IDEA",
-]
+# Get CORS origins from environment variable or use defaults
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env:
+    origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+else:
+    # Default origins if environment variable is not set
+    origins = [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+        "http://localhost",
+        "*",
+        "http://172.18.46.161",
+        "http://172.18.46.161:8001",
+        "https://uhslc.soest.hawaii.edu/research/IDEA",
+    ]
 
 
 # TODO:
