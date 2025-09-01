@@ -901,6 +901,29 @@ pre {
     border-color: #667eea;
 }
 
+/* Account Settings Styles */
+.account-info-section {
+    margin-bottom: 1.5rem;
+}
+
+.account-info-section h3 {
+    margin-bottom: 1rem;
+    color: #333;
+    font-size: 1.1rem;
+}
+
+.form-group input[type="email"][readonly] {
+    background-color: #f8f9fa;
+    border-color: #e9ecef;
+    color: #6c757d;
+    cursor: not-allowed;
+}
+
+.form-group input[type="email"][readonly]:focus {
+    border-color: #e9ecef;
+    box-shadow: none;
+}
+
 .login-button {
     width: 100%;
     padding: 0.75rem;
@@ -1156,6 +1179,20 @@ pre {
 .btn-secondary:hover {
     background: #5a6268;
 }
+
+.btn-favorite {
+    background: #ffc107;
+    color: white;
+}
+
+.btn-favorite:hover {
+    background: #e0a800;
+}
+
+.btn-favorite:hover {
+    background: #e0a800;
+}
+
 
 .btn-danger {
     background: #dc3545;
@@ -1709,6 +1746,24 @@ pre {
     background: #667eea;
     color: white;
     border-color: #667eea;
+}
+
+/* Favorite button specific styling in filter section */
+.filter-section .btn-favorite {
+    background: #ffc107;
+    color: white;
+    border-color: #ffc107;
+}
+
+.filter-section .btn-favorite:hover {
+    background: #e0a800;
+    border-color: #e0a800;
+}
+
+.filter-section .btn-favorite.active {
+    background: #e0a800;
+    color: white;
+    border-color: #e0a800;
 }
 
 .conversations-list {
