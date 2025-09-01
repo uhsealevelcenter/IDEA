@@ -134,9 +134,7 @@ class InterpreterError(Exception):
 today = date.today()
 root_path = "/idea-api"
 host = (
-    "http://localhost"
-    if os.getenv("LOCAL_DEV") == "1"
-    else "https://uhslc.soest.hawaii.edu/idea-api"
+    os.getenv("API_HOST", "https://uhslc.soest.hawaii.edu/idea-api")
 )
 
 app = FastAPI(root_path=root_path)
