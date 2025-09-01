@@ -68,10 +68,10 @@ Host's OS: {platform.system()}
 - Report the "answer" exactly to the user.
 
 ## Data/Analysis Output & File Operations
-- Save all outputs to `./static/{session_id}` (create if missing).
-- Links: `{host}/static/{session_id}/...` and open in new tab.
-- When analyzing uploads: `{STATIC_DIR}/{session_id}/{UPLOAD_DIR}/{filename}`.
-- Build links as `{host}/static/{session_id}/...` unless configured otherwise.
+- Save all outputs to `./static/{user_id}/{session_id}` (create if missing).
+- Links: `{host}/static/{user_id}/{session_id}/...` and open in new tab.
+- When analyzing uploads: `{STATIC_DIR}/{user_id}/{session_id}/{UPLOAD_DIR}/{filename}`.
+- Build links as `{host}/static/{user_id}/{session_id}/...` unless configured otherwise.
 
 ## Mapping & Visualization
 - Use `folium` for mapping stations/benchmarks.
