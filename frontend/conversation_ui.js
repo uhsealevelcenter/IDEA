@@ -211,6 +211,9 @@ async function loadConversation(conversationId) {
             displayMessageInChat(message);
         });
         
+        // Load conversation context into backend interpreter
+        await loadConversationIntoInterpreter(messages);
+        
         // Update the current conversation indicator
         displayConversations();
         
@@ -386,6 +389,33 @@ function debounce(func, wait) {
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };
+}
+
+async function loadConversationIntoInterpreter(messages) {
+    try {
+        const response = await fetch(config.getEndpoints().loadConversation, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
+            },
+            body: JSON.stringify({
+                messages: messages
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to load conversation into interpreter: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log(`Loaded ${result.message_count} messages into interpreter context`);
+        
+    } catch (error) {
+        console.error('Error loading conversation into interpreter:', error);
+        throw error;
+    }
 }
 
 // Export for use in other modules
