@@ -254,9 +254,9 @@ async def scan_file(file_path: Path) -> tuple[bool, str]:
     return True, "Virus scan skipped (ClamAV unavailable)"
 
 
-async def check_session_upload_limit(session_id: str) -> bool:
+async def check_session_upload_limit(user_id: str, session_id: str) -> bool:
     """Check if session has reached upload limit"""
-    session_dir = STATIC_DIR / session_id / UPLOAD_DIR
+    session_dir = STATIC_DIR / str(user_id) / session_id / UPLOAD_DIR
     if not session_dir.exists():
         return True
 
@@ -567,15 +567,20 @@ def clear_session(session_key: str):
         redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_key}")
         redis_client.delete(f"messages:{session_key}")
 
-        # Remove session directory and all its contents (only per UI session, not user-specific)
+        # Remove session directory and all its contents (user_id/session_id structure)
         try:
-            _, raw_session_id = session_key.split(":", 1)
+            user_id, raw_session_id = session_key.split(":", 1)
+            session_dir = STATIC_DIR / user_id / raw_session_id
+            if session_dir.exists():
+                import shutil
+                shutil.rmtree(session_dir)
         except ValueError:
+            # Fallback for old session keys without user_id
             raw_session_id = session_key
-        session_dir = STATIC_DIR / raw_session_id
-        if session_dir.exists():
-            import shutil
-            shutil.rmtree(session_dir)
+            session_dir = STATIC_DIR / raw_session_id
+            if session_dir.exists():
+                import shutil
+                shutil.rmtree(session_dir)
         logger.info(f"Cleared session {session_key}")
     except Exception as e:
         logger.error(f"Error clearing session {session_key}: {str(e)}")
@@ -707,6 +712,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         interpreter.custom_instructions = get_custom_instructions(
             today=today,
             host=host,
+            user_id=str(user.id),
             session_id=session_id,
             static_dir=STATIC_DIR,
             upload_dir=UPLOAD_DIR,
@@ -800,15 +806,19 @@ async def upload_file(
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
 
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
         # Check session upload limit
-        if not await check_session_upload_limit(session_id):
+        if not await check_session_upload_limit(str(user.id), session_id):
             raise HTTPException(
                 status_code=429,
                 detail=f"Upload limit reached. Maximum {MAX_UPLOADS_PER_SESSION} files per session"
             )
 
-        # Create session upload directory if it doesn't exist
-        session_dir = STATIC_DIR / session_id / UPLOAD_DIR
+        # Create user/session upload directory if it doesn't exist
+        session_dir = STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR
         session_dir.mkdir(parents=True, exist_ok=True)
 
         # Validate file extension
@@ -856,7 +866,7 @@ async def upload_file(
             return {
                 "filename": file.filename,
                 "size": file_size,
-                "path": str(final_path.relative_to(STATIC_DIR / session_id / UPLOAD_DIR)),
+                "path": str(final_path.relative_to(STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR)),
                 "scan_result": scan_result
             }
 
@@ -879,15 +889,19 @@ async def delete_file(filename: str, request: Request, token: str = Depends(get_
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
 
-        file_path = STATIC_DIR / session_id / UPLOAD_DIR / filename  # Removed "uploads" from path
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        file_path = STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR / filename
 
         # Ensure the file exists and is within the session directory
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
 
-        # Verify the file is in the correct session directory
+        # Verify the file is in the correct user/session directory
         try:
-            file_path.relative_to(STATIC_DIR / session_id / UPLOAD_DIR)
+            file_path.relative_to(STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR)
         except ValueError:
             raise HTTPException(status_code=403, detail="Access denied")
 
@@ -910,7 +924,11 @@ async def list_files(request: Request, token: str = Depends(get_auth_token)):
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
 
-        session_dir = STATIC_DIR / session_id / UPLOAD_DIR
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        session_dir = STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR
         if not session_dir.exists():
             return []
 
@@ -920,7 +938,7 @@ async def list_files(request: Request, token: str = Depends(get_auth_token)):
                 files.append({
                     "name": file_path.name,
                     "size": file_path.stat().st_size,
-                    "path": str(file_path.relative_to(STATIC_DIR / session_id / UPLOAD_DIR))
+                    "path": str(file_path.relative_to(STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR))
                 })
         return files
 
@@ -936,7 +954,11 @@ async def delete_all_files(request: Request, token: str = Depends(get_auth_token
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
 
-        session_dir = STATIC_DIR / session_id / UPLOAD_DIR
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        session_dir = STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR
         if session_dir.exists():
             # Delete all files in the session directory
             for file_path in session_dir.glob("*"):

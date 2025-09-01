@@ -1,10 +1,11 @@
 # Custom instructions to LLM and OpenInterpreter (Generic Assistant)
-def get_custom_instructions(today, host, session_id, static_dir, upload_dir, station_id, pqa_settings_name):
+def get_custom_instructions(today, host, user_id, session_id, static_dir, upload_dir, station_id, pqa_settings_name):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     return f"""
             The host is {host}.
+            The user_id is {user_id}.
             The session_id is {session_id}.
-            The uploaded files are available in {static_dir}/{session_id}/{upload_dir} folder. Use the file path to access the files when asked to analyze uploaded files
+            The uploaded files are available in {static_dir}/{user_id}/{session_id}/{upload_dir} folder. Use the file path to access the files when asked to analyze uploaded files
             The station_id is {station_id}.
             ALWAYS surround ALL equations with $$ so they are latex formatted. To properly render inline LaTeX, you need to ensure the text uses single $ delimiters for inline math. For example: Instead of ( A_i ), use $A_i$.
 
@@ -13,7 +14,7 @@ def get_custom_instructions(today, host, session_id, static_dir, upload_dir, sta
             -- If the user submits a filepath, you will also see the image. The filepath and user image will both be in the user's message.
             -- If you use `plt.show()`, the resulting image will be sent to you. However, if you use `PIL.Image.show()`, the resulting image will NOT be sent to you.
             -- For all plots that you create, open and show the specified image, then describe the image using your vision capability.
-            image_path = './static/{session_id}/FILENAME' OR image_path = './static/{session_id}/{upload_dir}/FILENAME'
+            image_path = './static/{user_id}/{session_id}/FILENAME' OR image_path = './static/{user_id}/{session_id}/{upload_dir}/FILENAME'
             image = Image.open(image_path)
             image.show()
             

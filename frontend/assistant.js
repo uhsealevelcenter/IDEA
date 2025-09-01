@@ -175,7 +175,7 @@ async function handleFiles(files) {
     for (const file of files) {
         try {
             const response = await uploadFile(file, progressElement);
-            const imagePath = response.path || `/uploads/${response.name}`;
+            const imagePath = response.path;
 
             if (file.type.startsWith('image')) {
                 // Show the image inline
@@ -1013,7 +1013,7 @@ function initializeFileUpload() {
                     progressBar.style.display = 'block';
                     try {
                         const response = await uploadFile(renamedFile, progressElement);
-                        const imagePath = response.path || `/uploads/${response.name}`;
+                        const imagePath = response.path;
 
                         // Show the image inline
                         const imageMessage = {
