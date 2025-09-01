@@ -207,7 +207,16 @@
                 <span class="close" id="closeAccountSettingsModal">&times;</span>
             </div>
             <div class="modal-body">
+                <div class="account-info-section">
+                    <h3>Account Information</h3>
+                    <div class="form-group">
+                        <label for="userEmailDisplay">Email</label>
+                        <input type="email" id="userEmailDisplay" readonly disabled>
+                    </div>
+                </div>
+                <hr>
                 <form id="accountSettingsForm">
+                    <h3>Change Password</h3>
                     <div class="form-group">
                         <label for="currentPasswordInput">Current Password</label>
                         <input type="password" id="currentPasswordInput" autocomplete="current-password" required>
@@ -250,7 +259,7 @@
                         </div>
                         <div class="filter-section">
                             <button id="showAllConversations" class="btn btn-primary active">All</button>
-                            <button id="showFavoriteConversations" class="btn btn-secondary">Favorites</button>
+                            <button id="showFavoriteConversations" class="btn btn-favorite">Favorites</button>
                         </div>
                     </div>
                     

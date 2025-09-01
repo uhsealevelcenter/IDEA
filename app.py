@@ -306,6 +306,32 @@ async def verify_auth(token: str = Depends(get_auth_token)):
     return {"authenticated": True, "message": "Token is valid"}
 
 
+@app.get("/users/me")
+async def get_current_user_profile(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Get current authenticated user's profile information"""
+    try:
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+            
+        # Re-fetch user from database to get latest info
+        db_user = crud.get_user_by_id(session=db, user_id=user.id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        return {
+            "id": str(db_user.id),
+            "email": db_user.email,
+            "full_name": db_user.full_name,
+            "is_active": db_user.is_active
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user profile: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get user profile")
+
+
 @app.get("/share/{share_token}")
 async def shared_conversation_page(share_token: str):
     """Serve the shared conversation page"""
