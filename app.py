@@ -721,6 +721,15 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         )
 
         redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+        
+        # Update interpreter messages from any loaded conversation
+        stored_messages = redis_client.get(f"messages:{session_key}")
+        if stored_messages:
+            try:
+                interpreter.messages = json.loads(stored_messages)
+                logger.info(f"Restored {len(interpreter.messages)} messages from Redis for session {session_key}")
+            except Exception as e:
+                logger.warning(f"Failed to restore messages from Redis: {str(e)}")
 
         def event_stream():
             try:
@@ -778,6 +787,79 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
     except Exception as e:
         logger.error(f"Unexpected error in clear_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/load-conversation")
+async def load_conversation_endpoint(request: Request, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Load a conversation's messages into the interpreter context"""
+    try:
+        session_id = request.headers.get("x-session-id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="x-session-id header is required")
+        
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+            
+        # Get request body
+        body = await request.json()
+        messages = body.get("messages", [])
+        
+        session_key = make_session_key(user.id, session_id)
+        
+        # Convert frontend message format to interpreter format
+        interpreter_messages = []
+        for msg in messages:
+            # Skip console messages with active_line format as they cause issues
+            if (msg.get("message_type") == "console" and 
+                msg.get("message_format") == "active_line"):
+                continue
+                
+            # Convert to format the interpreter expects (with required fields)
+            if msg.get("role") in ["user", "assistant"]:
+                # For user/assistant messages, use message type
+                interpreter_msg = {
+                    "role": msg.get("role"),
+                    "type": "message",
+                    "content": msg.get("content", "")
+                }
+                interpreter_messages.append(interpreter_msg)
+            elif msg.get("role") == "computer":
+                # For computer messages, convert to assistant with appropriate type
+                msg_type = msg.get("message_type", "message")
+                if msg_type == "console":
+                    # Skip console messages entirely as they're not needed for context
+                    continue
+                else:
+                    interpreter_msg = {
+                        "role": "assistant",
+                        "type": msg_type if msg_type in ["code", "message", "image"] else "message",
+                        "content": msg.get("content", "")
+                    }
+                    if msg.get("message_format"):
+                        interpreter_msg["format"] = msg.get("message_format")
+                    interpreter_messages.append(interpreter_msg)
+        
+        # Store messages in Redis - the interpreter will load them on next chat request
+        redis_client.set(
+            f"messages:{session_key}", json.dumps(interpreter_messages)
+        )
+        
+        # Clear any existing interpreter instance so it gets recreated with new messages
+        if session_key in interpreter_instances:
+            try:
+                interpreter_instances[session_key].reset()
+                del interpreter_instances[session_key]
+                logger.info(f"Cleared existing interpreter for session {session_key}")
+            except Exception as e:
+                logger.warning(f"Error clearing existing interpreter: {str(e)}")
+        
+        logger.info(f"Stored {len(interpreter_messages)} messages in Redis for session {session_key}")
+        return {"status": "Conversation loaded", "message_count": len(interpreter_messages)}
+        
+    except Exception as e:
+        logger.error(f"Error loading conversation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to load conversation: {str(e)}")
 
 
 async def has_executable_header(file_path: Path) -> bool:
