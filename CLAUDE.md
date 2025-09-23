@@ -57,7 +57,7 @@ docker logs -f <container_id>
 ### Environment Setup
 1. Copy `example.env` to `.env` and configure:
    - `OPENAI_API_KEY` - Required for AI functionality
-   - `AUTH_USERNAME` and `AUTH_PASSWORD` - Authentication credentials
+   - `FIRST_SUPERUSER` and `FIRST_SUPERUSER_PASSWORD` - Authentication credentials
    - `LOCAL_DEV=1` for development, `LOCAL_DEV=0` for production
 
 2. Configure frontend by copying `frontend/config.example.js` to `frontend/config.js`
