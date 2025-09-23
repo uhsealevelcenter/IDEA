@@ -1938,7 +1938,7 @@ pre {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    z-index: 1100;
+    z-index: 3001;
     transform: translateX(400px);
     opacity: 0;
     transition: all 0.3s ease;
