@@ -2,7 +2,7 @@
 
 # Step 1: Bring down the Docker Compose stack
 echo "Stopping Docker Compose stack..."
-docker compose down -v
+docker compose down
 
 # Step 2: Bring up the Docker Compose stack in detached mode
 echo "Starting Docker Compose stack..."

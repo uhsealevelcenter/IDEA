@@ -21,3 +21,4 @@ bash prestart.sh
 
 # Execute the main command
 exec "$@"
+
