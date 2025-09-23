@@ -12,16 +12,18 @@ const config = {
             transcribe: 'http://localhost/api/transcribe',
             login: 'http://localhost/api/login',
             logout: 'http://localhost/api/logout',
-            verify: 'http://localhost/api/auth/verify',
             changePassword: 'http://localhost/api/users/change-password',
+            verify: 'http://localhost/api/auth/verify',
+            userProfile: 'http://localhost/api/users/me',
             prompts: 'http://localhost/api/prompts',
             setActivePrompt: 'http://localhost/api/prompts/set-active',
             knowledgeBase: 'http://localhost/api/knowledge-base/papers',
             knowledgeBaseUpload: 'http://localhost/api/knowledge-base/papers/upload',
             knowledgeBaseStats: 'http://localhost/api/knowledge-base/stats',
-            conversations: 'http://localhost/conversations',
-            conversationMessages: 'http://localhost/conversations',
-            conversationShare: 'http://localhost/conversations'
+            conversations: 'http://localhost/api/conversations',
+            conversationMessages: 'http://localhost/api/conversations',
+            conversationShare: 'http://localhost/conversations',
+            loadConversation: 'http://localhost/api/load-conversation'
         },
         production: {
             chat: 'https://<your-domain>/chat',
