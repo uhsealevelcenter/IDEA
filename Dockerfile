@@ -56,10 +56,10 @@ RUN apt-get update && apt-get install -y \
     libexpat1-dev \
     curl \
     gdal-bin \
-    libgdal32 \
-    libproj25 \
-    libgeos-c1v5 \
-    libspatialite7 \
+    libgdal-dev \
+    libproj-dev \
+    libgeos-dev \
+    libspatialite-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set GDAL environment variables for runtime
