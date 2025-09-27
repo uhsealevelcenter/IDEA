@@ -35,6 +35,7 @@ const config = {
             login: 'https://<your-domain>/api/login',
             logout: 'https://<your-domain>/api/logout',
             verify: 'https://<your-domain>/api/auth/verify',
+            userProfile: 'https://<your-domain>/api/users/me',
             changePassword: 'https://<your-domain>/api/users/change-password',
             prompts: 'https://<your-domain>/api/prompts',
             setActivePrompt: 'https://<your-domain>/api/prompts/set-active',
@@ -43,7 +44,8 @@ const config = {
             knowledgeBaseStats: 'https://<your-domain>/api/knowledge-base/stats',
             conversations: 'https://<your-domain>/conversations',
             conversationMessages: 'https://<your-domain>/conversations',
-            conversationShare: 'https://<your-domain>/conversations'
+            conversationShare: 'https://<your-domain>/conversations',
+            loadConversation: 'https://<your-domain>/api/load-conversation'
         }
     },
 

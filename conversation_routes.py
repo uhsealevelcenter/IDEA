@@ -2,7 +2,7 @@ from typing import Any
 from uuid import UUID
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
 from auth import get_db, get_auth_token, get_current_user
@@ -313,6 +313,7 @@ def create_share_link(
     conversation_id: UUID,
     share_in: ConversationShareCreate,
     current_user: User = Depends(get_current_user_dependency),
+    request: Request,
 ) -> Any:
     """
     Create a shareable link for a conversation.
@@ -332,9 +333,13 @@ def create_share_link(
         session.commit()
         session.refresh(conversation)
     
+    # Build share URL that respects FastAPI root_path (e.g., /idea-api)
+    root_path = (request.scope.get("root_path", "") or "").rstrip("/")
+    share_path = f"{root_path}/share/{conversation.share_token}" if root_path else f"/share/{conversation.share_token}"
+
     return ConversationShareResponse(
         share_token=conversation.share_token,
-        share_url=f"/share/{conversation.share_token}"
+        share_url=share_path
     )
 
 
