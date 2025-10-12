@@ -102,6 +102,10 @@ body.login-page {
     font-size: 1.1rem;
 }
 
+.admin-only {
+    display: none;
+}
+
 /* Mobile navbar toggle */
 .navbar-toggle {
     display: none;
@@ -1209,6 +1213,12 @@ pre {
     font-size: 1rem;
 }
 
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
 .prompts-list {
     flex: 1;
     overflow-y: auto;
@@ -1284,6 +1294,101 @@ pre {
 
 .prompt-item:hover .prompt-item-actions {
     opacity: 1;
+}
+
+.user-management-container {
+    background-color: #ffffff;
+}
+
+.user-form {
+    padding: 2rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.user-item-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.status-badge.badge-superuser {
+    background: #3f51b5;
+    color: white;
+}
+
+.status-badge.badge-active {
+    background: #28a745;
+    color: white;
+}
+
+.status-badge.badge-inactive {
+    background: #dee2e6;
+    color: #495057;
+}
+
+.user-item-actions {
+    opacity: 1;
+    gap: 0.5rem;
+}
+
+.user-item-actions .btn {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+}
+
+.user-list .empty-state,
+.user-list .list-error {
+    margin: 1.5rem;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 0.9rem;
+}
+
+.user-list .empty-state {
+    background: #f8f9fa;
+    color: #555;
+}
+
+.user-list .list-error {
+    background: #fdecea;
+    color: #a71d2a;
+    border: 1px solid #f5c2c7;
+}
+
+.form-helper {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+    color: #333;
+}
+
+.checkbox-group input[type="checkbox"] {
+    width: auto;
+    height: auto;
+    accent-color: #667eea;
 }
 
 .prompt-editor-section {
@@ -1373,6 +1478,20 @@ pre {
     margin-top: 1rem;
     padding-top: 1rem;
     flex-shrink: 0;
+}
+
+.form-message {
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+    min-height: 1.1rem;
+}
+
+.form-message.error {
+    color: #dc3545;
+}
+
+.form-message.success {
+    color: #28a745;
 }
 
 /* Mobile responsiveness for prompt management */
