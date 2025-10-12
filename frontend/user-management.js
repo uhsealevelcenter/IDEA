@@ -124,6 +124,10 @@
             if (state.selectedUserId === user.id) {
                 item.classList.add('active');
             }
+            item.addEventListener('click', (event) => {
+                if (event.target.closest('button')) return;
+                selectUser(user.id);
+            });
 
             const content = document.createElement('div');
             content.className = 'prompt-item-content user-item-content';
