@@ -589,6 +589,39 @@ function appendMessage(message) {
     }
 }
 
+function appendExternalMessage({ role = 'assistant', content = '', type = 'message', format = null, recipient = null }) {
+    if (!content || !chatDisplay) return;
+    const id = generateId('msg');
+    const message = {
+        id,
+        role,
+        content,
+        type,
+        format,
+        recipient,
+        isComplete: true,
+    };
+    messages.push(message);
+    appendMessage(message);
+    try {
+        updateMessageContent(id, content);
+    } catch (err) {
+        console.warn('Unable to render external message:', err);
+    }
+
+    if (conversationManager) {
+        const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+        const messageType = validTypes.includes(type) ? type : 'message';
+        conversationManager
+            .addMessage(role, content, messageType, format, recipient)
+            .catch((error) => {
+                console.error('Failed to persist external message:', error);
+            });
+    }
+}
+
+window.appendExternalMessage = appendExternalMessage;
+
 // Modify updateMessageContent with better error handling
 function updateMessageContent(id, content) {
     try {
