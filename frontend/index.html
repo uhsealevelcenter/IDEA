@@ -28,6 +28,14 @@
                     <span class="material-icons">psychology</span>
                     Knowledge Base
                 </button>
+                <button id="mcpToolsButton" class="nav-btn">
+                    <span class="material-icons">hub</span>
+                    MCP Tools
+                </button>
+                <button id="mcpManagementButton" class="nav-btn admin-only" data-admin-display="inline-flex">
+                    <span class="material-icons">dns</span>
+                    MCP Admin
+                </button>
                 <button id="downloadButton" class="nav-btn">
                     <span class="material-icons">download</span>
                     Download
@@ -71,6 +79,14 @@
             <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
                 <span class="material-icons">psychology</span>
                 Knowledge Base
+            </button>
+            <button id="mcpToolsButtonMobile" class="nav-btn-mobile">
+                <span class="material-icons">hub</span>
+                MCP Tools
+            </button>
+            <button id="mcpManagementButtonMobile" class="nav-btn-mobile admin-only" data-admin-display="flex">
+                <span class="material-icons">dns</span>
+                MCP Admin
             </button>
             <button id="downloadButtonMobile" class="nav-btn-mobile">
                 <span class="material-icons">download</span>
@@ -310,6 +326,200 @@
         </div>
     </div>
 
+    <!-- MCP Management Modal -->
+    <div id="mcpManagementModal" class="modal">
+        <div class="modal-content extra-wide-modal">
+            <div class="modal-header">
+                <h2>MCP Connection Management</h2>
+                <span class="close" id="closeMcpManagementModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="mcp-management-container">
+                    <div class="mcp-list-section">
+                        <div class="section-header">
+                            <h3>Connections</h3>
+                            <button id="createMcpConnectionButton" class="btn btn-primary">
+                                <span class="material-icons">add</span>
+                                New Connection
+                            </button>
+                        </div>
+                        <div id="mcpConnectionList" class="prompts-list mcp-connection-list">
+                            <div class="loading">Loading connections...</div>
+                        </div>
+                    </div>
+                    <div class="mcp-form-section">
+                        <div class="mcp-form">
+                            <h3 id="mcpFormTitle">Create Connection</h3>
+                            <form id="mcpConnectionForm">
+                                <div class="form-group">
+                                    <label for="mcpName">Name</label>
+                                    <input type="text" id="mcpName" name="name" required maxlength="120">
+                                </div>
+                                <div class="form-group">
+                                    <label for="mcpDescription">Description</label>
+                                    <textarea id="mcpDescription" name="description" rows="2" placeholder="Optional description"></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="mcpTransport">Transport</label>
+                                    <select id="mcpTransport" name="transport" required>
+                                        <option value="streamable_http">Streamable HTTP</option>
+                                        <option value="sse">Server Sent Events</option>
+                                        <option value="stdio">Stdio / Proxy</option>
+                                    </select>
+                                </div>
+                                <div class="form-group transport-dependent" data-visible-for="streamable_http sse">
+                                    <label for="mcpEndpoint">Endpoint URL</label>
+                                    <input type="url" id="mcpEndpoint" name="endpoint" placeholder="https://example.com/mcp">
+                                </div>
+                                <div class="form-group transport-dependent" data-visible-for="stdio">
+                                    <label for="mcpCommand">Command</label>
+                                    <input type="text" id="mcpCommand" name="command" placeholder="npx mcp-remote">
+                                </div>
+                                <div class="form-group transport-dependent" data-visible-for="stdio">
+                                    <label for="mcpCommandArgs">Command Arguments (JSON array)</label>
+                                    <textarea id="mcpCommandArgs" name="command_args" rows="2" placeholder='["mcp-remote", "https://example.com"]'></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="mcpHeaders">Headers (JSON object)</label>
+                                    <textarea id="mcpHeaders" name="headers" rows="2" placeholder='{"Authorization": "Bearer ..."}'></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="mcpConfig">Advanced Config (JSON object)</label>
+                                    <textarea id="mcpConfig" name="config" rows="3" placeholder='{"timeout": 30, "token_env_var": "MCP_TOKEN"}'></textarea>
+                                    <p class="form-helper">Use for custom options like timeouts, working directory, or environment variables.</p>
+                                </div>
+                                <div class="form-group">
+                                    <label for="mcpAuthToken">Auth Token</label>
+                                    <input type="password" id="mcpAuthToken" name="auth_token" autocomplete="off" placeholder="Leave blank to keep existing token">
+                                </div>
+                                <div class="form-group checkbox-group">
+                                    <label>
+                                        <input type="checkbox" id="mcpClearToken">
+                                        <span>Clear stored token</span>
+                                    </label>
+                                </div>
+                                <div class="form-group checkbox-group">
+                                    <label>
+                                        <input type="checkbox" id="mcpIsActive" checked>
+                                        <span>Connection is active</span>
+                                    </label>
+                                </div>
+                                <div class="form-actions stacked-actions">
+                                    <div class="primary-actions">
+                                        <button type="submit" class="btn btn-success">Save</button>
+                                        <button type="button" id="cancelMcpEditBtn" class="btn btn-secondary">Cancel</button>
+                                        <button type="button" id="deleteMcpConnectionBtn" class="btn btn-danger" disabled>Delete</button>
+                                    </div>
+                                    <button type="button" id="testMcpConnectionBtn" class="btn btn-outline">Test Connection</button>
+                                </div>
+                                <div id="mcpFormMessage" class="form-message" aria-live="polite"></div>
+                                <div id="mcpConnectionMeta" class="mcp-connection-meta"></div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MCP Tools Modal -->
+    <div id="mcpToolsModal" class="modal">
+        <div class="modal-content ultra-wide-modal">
+            <div class="modal-header">
+                <h2>MCP Tools</h2>
+                <span class="close" id="closeMcpToolsModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="mcp-tools-container">
+                    <div class="mcp-tools-sidebar">
+                        <div class="section-header">
+                            <h3>Connections</h3>
+                            <button id="refreshMcpConnectionsBtn" class="btn btn-secondary btn-small">
+                                <span class="material-icons">refresh</span>
+                                Refresh
+                            </button>
+                        </div>
+                        <div id="mcpToolsConnectionList" class="prompts-list">
+                            <div class="loading">Loading available connections...</div>
+                        </div>
+                    </div>
+                    <div class="mcp-tools-main">
+                        <div class="mcp-tools-header">
+                            <div>
+                                <h3 id="mcpToolsSelectedName">Select a connection</h3>
+                                <p id="mcpToolsSelectedDetails" class="mcp-selected-details"></p>
+                            </div>
+                            <div class="mcp-tools-tabs" role="tablist">
+                                <button class="mcp-tab active" data-tab="tools" role="tab">Tools</button>
+                                <button class="mcp-tab" data-tab="resources" role="tab">Resources</button>
+                                <button class="mcp-tab" data-tab="prompts" role="tab">Prompts</button>
+                            </div>
+                        </div>
+                        <div class="mcp-tools-content">
+                            <div class="mcp-tab-panel active" data-tab="tools">
+                                <div id="mcpToolsList" class="mcp-items-list">
+                                    <div class="empty-state">Select a connection to load available tools.</div>
+                                </div>
+                            </div>
+                            <div class="mcp-tab-panel" data-tab="resources">
+                                <div id="mcpResourcesList" class="mcp-items-list">
+                                    <div class="empty-state">Select a connection to load resources.</div>
+                                </div>
+                            </div>
+                            <div class="mcp-tab-panel" data-tab="prompts">
+                                <div id="mcpPromptsList" class="mcp-items-list">
+                                    <div class="empty-state">Select a connection to load prompts.</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mcp-action-panel">
+                            <div class="mcp-action-section" data-panel="tools">
+                                <h4 id="mcpSelectedToolHeading">Tool Invocation</h4>
+                                <p id="mcpSelectedToolDescription" class="mcp-selected-description">Select a tool to view details.</p>
+                                <div class="form-group">
+                                    <label for="mcpToolArguments">Arguments (JSON)</label>
+                                    <textarea id="mcpToolArguments" rows="6" placeholder="{}" disabled></textarea>
+                                </div>
+                                <div class="form-actions">
+                                    <button id="runMcpToolBtn" class="btn btn-success" disabled>Run Tool</button>
+                                </div>
+                            </div>
+                            <div class="mcp-action-section hidden" data-panel="resources">
+                                <h4 id="mcpSelectedResourceHeading">Resource Viewer</h4>
+                                <p id="mcpSelectedResourceDescription" class="mcp-selected-description">Select a resource to preview its contents.</p>
+                                <div class="form-actions">
+                                    <button id="readMcpResourceBtn" class="btn btn-success" disabled>Read Resource</button>
+                                </div>
+                            </div>
+                            <div class="mcp-action-section hidden" data-panel="prompts">
+                                <h4 id="mcpSelectedPromptHeading">Prompt Viewer</h4>
+                                <p id="mcpSelectedPromptDescription" class="mcp-selected-description">Select a prompt to fetch its content.</p>
+                                <div class="form-group">
+                                    <label for="mcpPromptArguments">Prompt Arguments (JSON)</label>
+                                    <textarea id="mcpPromptArguments" rows="4" placeholder="{}" disabled></textarea>
+                                </div>
+                                <div class="form-actions">
+                                    <button id="runMcpPromptBtn" class="btn btn-success" disabled>Load Prompt</button>
+                                </div>
+                            </div>
+                            <div id="mcpResultContainer" class="mcp-result-container">
+                                <div class="section-header">
+                                    <h4>Result</h4>
+                                    <button id="sendMcpResultToChatBtn" class="btn btn-secondary btn-small" disabled>
+                                        <span class="material-icons">send</span>
+                                        Send to Chat
+                                    </button>
+                                </div>
+                                <div id="mcpResultMessage" class="form-message" aria-live="polite"></div>
+                                <pre id="mcpResultOutput" class="mcp-result-output"><code>(No result yet)</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Conversations Management Modal -->
     <div id="conversationsModal" class="modal">
         <div class="modal-content wide-modal">
@@ -410,6 +620,8 @@
     <script src="account-settings.js"></script>
     <script src="prompt-manager.js"></script>
     <script src="knowledge-base.js"></script>
+    <script src="mcp-manager.js"></script>
+    <script src="mcp-tools.js"></script>
     <script src="user-management.js"></script>
     <script src="conversation_ui.js"></script>
 </body>

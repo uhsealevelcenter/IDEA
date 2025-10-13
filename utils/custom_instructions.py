@@ -1,6 +1,11 @@
 # Custom instructions to LLM and OpenInterpreter (Generic Assistant)
-def get_custom_instructions(today, host, user_id, session_id, static_dir, upload_dir, station_id, pqa_settings_name):
+def get_custom_instructions(today, host, user_id, session_id, static_dir, upload_dir, station_id, pqa_settings_name, mcp_tools=None):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
+    mcp_tools = mcp_tools or []
+    mcp_section = ""
+    if mcp_tools:
+        mcp_section = "\n\n4. MCP TOOLS (Model Context Protocol):\nYou have access to the following MCP tools from external services:\n" + "\n".join(mcp_tools) + "\n\nThese are callable functions - use them directly when relevant to the user's query."
+
     return f"""
             The host is {host}.
             The user_id is {user_id}.
@@ -69,4 +74,5 @@ def get_custom_instructions(today, host, user_id, session_id, static_dir, upload
             plt.legend()
             plt.grid()
             plt.show()
+            {mcp_section}
         """

@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from time import time
 import logging
 from logging.handlers import RotatingFileHandler
-from typing import Dict, List
+from typing import Any, Dict, List
 import hashlib
 import secrets
 from uuid import UUID
@@ -26,6 +26,7 @@ import redis
 from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter
 from slowapi.errors import RateLimitExceeded
+import models
 from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, \
     PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate, UserCreate, UserPublic, GenericMessage, User
 import crud
@@ -36,7 +37,7 @@ from sqlalchemy.exc import IntegrityError
 
 ## Required for audio transcription 
 # from openai import OpenAI # Uncomment if using OpenAI Whisper API instead of LiteLLM
-from litellm import transcription  # LiteLLM for audio transcription
+from litellm import transcription, completion  # LiteLLM for audio transcription & tool planning
 from utils.transcription_prompt import \
     transcription_prompt  # Transcription prompt for Generic IDEA example (abbreviations, etc.)
 from utils.custom_instructions import get_custom_instructions  # Generic Assistant (Custom Instructions)
@@ -46,6 +47,7 @@ from utils.custom_instructions import get_custom_instructions  # Generic Assista
 from utils.prompt_manager import init_prompt_manager, get_prompt_manager
 from knowledge_base_routes import router as knowledge_base_router
 from conversation_routes import router as conversation_router
+from mcp_routes import router as mcp_router
 from sqlmodel import Session
 from auth import (
     generate_auth_token, verify_password, is_authenticated, get_auth_token,
@@ -54,6 +56,7 @@ from auth import (
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
 from utils.pqa_multi_tenant import ensure_user_pqa_settings, ensure_user_index_built
+from core.mcp_manager import mcp_manager
 
 import interpreter.core.llm.llm as llm_mod
 
@@ -106,6 +109,194 @@ def run_tool_calling_llm_with_reasoning(self, params):
 
 llm_mod.run_tool_calling_llm = run_tool_calling_llm_with_reasoning
 
+MCP_TOOL_PLANNER_PROMPT = (
+    "You are a routing assistant for the IDEA application. "
+    "Analyze the latest user message and decide whether calling one of the available MCP tools would help. "
+    "Only call a tool if it is likely to provide data needed to answer the user. "
+    "Otherwise, do not call any tool."
+)
+
+
+async def gather_available_mcp_tools(db: Session):
+    """Retrieve active MCP connections and their tool schemas."""
+    connections = crud.list_active_mcp_connections(session=db)
+    tool_defs = []
+    tool_lookup: dict[str, tuple[models.MCPConnection, dict[str, Any]]] = {}
+
+    for connection in connections:
+        if not connection.is_active:
+            continue
+        try:
+            tools_payload = await mcp_manager.list_tools(connection)
+        except Exception as exc:  # pragma: no cover - dependent service
+            logger.warning("Failed to list tools for connection %s: %s", connection.id, exc)
+            continue
+
+        tools = (
+            tools_payload.get("tools")
+            if isinstance(tools_payload, dict)
+            else tools_payload
+        ) or []
+
+        for tool in tools:
+            tool_name = tool.get("name")
+            if not tool_name:
+                continue
+            tool_id = f"mcp_{connection.id.hex}_{tool_name}".replace("-", "_")
+            raw_schema = (
+                tool.get("inputSchema")
+                or tool.get("input_schema")
+                or {"type": "object", "properties": {}}
+            )
+            parameters = (
+                raw_schema
+                if isinstance(raw_schema, dict)
+                else {"type": "object", "properties": {}}
+            )
+            tool_defs.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool_id,
+                        "description": f"[{connection.name}] {tool.get('description', '')}".strip(),
+                        "parameters": parameters,
+                    },
+                }
+            )
+            tool_lookup[tool_id] = (connection, tool)
+
+    return tool_defs, tool_lookup
+
+
+def _pretty_json(data: Any, max_length: int = 4000) -> str:
+    try:
+        text = json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception:  # pragma: no cover - fallback
+        text = str(data)
+    if len(text) > max_length:
+        return text[: max_length - 3] + "..."
+    return text
+
+
+async def _convert_mcp_tools_to_interpreter_functions(
+    tool_defs: list[dict],
+    tool_lookup: dict,
+    db: Session,
+) -> list[dict]:
+    """Convert MCP tool definitions to OpenInterpreter custom function format."""
+    functions = []
+
+    for tool_def in tool_defs:
+        func_spec = tool_def.get("function", {})
+        tool_id = func_spec.get("name")
+        if not tool_id or tool_id not in tool_lookup:
+            continue
+
+        connection, tool = tool_lookup[tool_id]
+
+        # Create a synchronous wrapper that runs async code
+        def make_mcp_wrapper(conn, t):
+            def call_mcp_tool(**kwargs):
+                # Run async MCP call in event loop
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                async def _call():
+                    try:
+                        result = await mcp_manager.call_tool(conn, t["name"], kwargs)
+                        return _pretty_json(result)
+                    except Exception as exc:
+                        logger.error(f"MCP tool {t['name']} execution failed: {exc}")
+                        return json.dumps({"error": str(exc)})
+
+                return loop.run_until_complete(_call())
+
+            return call_mcp_tool
+
+        # OpenInterpreter expects a specific function format
+        functions.append({
+            "name": tool_id,
+            "description": func_spec.get("description", ""),
+            "parameters": func_spec.get("parameters", {}),
+            "function": make_mcp_wrapper(connection, tool),
+        })
+
+    return functions
+
+
+async def plan_and_run_mcp_tools(
+    *,
+    interpreter: OpenInterpreter,
+    user_message: str,
+    db: Session,
+) -> list[dict[str, Any]]:
+    """Let an LLM decide whether to call MCP tools and execute them."""
+    if not user_message.strip():
+        return []
+
+    tool_defs, tool_lookup = await gather_available_mcp_tools(db)
+    if not tool_defs:
+        return []
+
+    try:
+        planner_response = await asyncio.to_thread(
+            completion,
+            model=interpreter.llm.model,
+            messages=[
+                {"role": "system", "content": MCP_TOOL_PLANNER_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            tools=tool_defs,
+            tool_choice="auto",
+        )
+    except Exception as exc:  # pragma: no cover - upstream failure
+        logger.warning("MCP tool planner failed: %s", exc)
+        return []
+
+    message = planner_response["choices"][0]["message"]
+    tool_calls = message.get("tool_calls") or []
+    if not tool_calls:
+        return []
+
+    executed_tools: list[dict[str, Any]] = []
+    for call in tool_calls:
+        fn = call.get("function") or {}
+        tool_id = fn.get("name")
+        if not tool_id or tool_id not in tool_lookup:
+            continue
+        connection, tool = tool_lookup[tool_id]
+        arguments_raw = fn.get("arguments") or "{}"
+        try:
+            arguments = json.loads(arguments_raw)
+        except json.JSONDecodeError:
+            arguments = {}
+
+        try:
+            result = await mcp_manager.call_tool(connection, tool["name"], arguments)
+        except Exception as exc:
+            logger.error("MCP tool %s execution failed: %s", tool_id, exc)
+            result = {"error": str(exc)}
+
+        executed_tools.append(
+            {
+                "connection": connection,
+                "tool": tool,
+                "arguments": arguments,
+                "result": result,
+            }
+        )
+
+        summary_text = (
+            f"MCP tool {tool['name']} from connection '{connection.name}' returned:\n"
+            f"{_pretty_json(result)}"
+        )
+        interpreter.messages.append({"role": "assistant", "content": summary_text})
+
+    return executed_tools
+
 IDLE_TIMEOUT = 3600  # 1 hour in seconds
 INTERPRETER_PREFIX = "interpreter:"
 LAST_ACTIVE_PREFIX = "last_active:"
@@ -150,6 +341,7 @@ init_prompt_manager()
 
 app.include_router(knowledge_base_router)
 app.include_router(conversation_router, prefix="/conversations", tags=["conversations"])
+app.include_router(mcp_router)
 
 # Get CORS origins from environment variable or use defaults
 cors_origins_env = os.getenv("CORS_ORIGINS", "")
@@ -662,6 +854,12 @@ async def start_periodic_cleanup():
     asyncio.create_task(periodic_cleanup())
 
 
+@app.on_event("shutdown")
+async def shutdown_resources():
+    """Cleanup long-lived resources as the application stops."""
+    await mcp_manager.close_all()
+
+
 def clear_session(session_key: str):
     """Clear all resources associated with a session"""
     try:
@@ -818,6 +1016,29 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         except Exception:
             pass
 
+        # Gather MCP tools first so we can include them in custom instructions
+        tool_defs = []
+        tool_lookup = {}
+        mcp_tool_descriptions = []
+        try:
+            tool_defs, tool_lookup = await gather_available_mcp_tools(db)
+            if tool_defs:
+                # Build descriptions for custom instructions
+                for tool_def in tool_defs:
+                    func_spec = tool_def.get("function", {})
+                    tool_id = func_spec.get("name")
+                    if tool_id and tool_id in tool_lookup:
+                        connection, tool = tool_lookup[tool_id]
+                        desc = func_spec.get("description", "No description")
+                        params = func_spec.get("parameters", {}).get("properties", {})
+                        param_list = ", ".join([f"{k} ({v.get('type', 'any')})" for k, v in params.items()])
+                        mcp_tool_descriptions.append(
+                            f"- {tool_id}({param_list}): {desc}"
+                        )
+                logger.info(f"Gathered {len(tool_defs)} MCP tools")
+        except Exception as exc:
+            logger.warning("Failed to gather MCP tools: %s", exc)
+
         station_id = '000'  # Placeholder
         interpreter.custom_instructions = get_custom_instructions(
             today=today,
@@ -827,12 +1048,13 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             static_dir=STATIC_DIR,
             upload_dir=UPLOAD_DIR,
             station_id=station_id,
-            pqa_settings_name=pqa_settings_name
+            pqa_settings_name=pqa_settings_name,
+            mcp_tools=mcp_tool_descriptions,
         )
 
         redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
-        
-        # Update interpreter messages from any loaded conversation
+
+        # Update interpreter messages from any loaded conversation FIRST
         stored_messages = redis_client.get(f"messages:{session_key}")
         if stored_messages:
             try:
@@ -841,8 +1063,44 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             except Exception as e:
                 logger.warning(f"Failed to restore messages from Redis: {str(e)}")
 
+        # Add MCP tools to interpreter so it can use them natively
+        if tool_defs:
+            try:
+                # Clear existing custom functions to avoid duplicates
+                interpreter.computer.custom_functions = []
+                # Convert MCP tools to OpenInterpreter's custom function format
+                mcp_functions = await _convert_mcp_tools_to_interpreter_functions(tool_defs, tool_lookup, db)
+                # Add MCP functions to interpreter
+                interpreter.computer.custom_functions.extend(mcp_functions)
+                logger.info(f"Added {len(mcp_functions)} MCP tools to interpreter: {[f['name'] for f in mcp_functions]}")
+            except Exception as exc:
+                logger.warning("Failed to load MCP tools: %s", exc)
+
+        # Legacy pre-planning approach (can be removed if native integration works)
+        tool_runs = []
+
         def event_stream():
             try:
+                if tool_runs:
+                    for run in tool_runs:
+                        connection = run["connection"]
+                        tool = run["tool"]
+                        arguments = run["arguments"]
+                        result_payload = run["result"]
+                        message_text = (
+                            f"🔧 MCP tool `{tool.get('name')}` from **{connection.name}**\n"
+                            f"Arguments: {_pretty_json(arguments, max_length=1000)}\n\n"
+                            f"Output:\n{_pretty_json(result_payload)}"
+                        )
+                        chunk = {
+                            "start": True,
+                            "end": True,
+                            "role": "computer",
+                            "type": "message",
+                            "content": message_text,
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+
                 for result in interpreter.chat(messages[-1], stream=True):
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
