@@ -35,9 +35,14 @@ from sqlalchemy.exc import IntegrityError
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
-## Required for audio transcription 
+## Required for audio transcription
 # from openai import OpenAI # Uncomment if using OpenAI Whisper API instead of LiteLLM
 from litellm import transcription, completion  # LiteLLM for audio transcription & tool planning
+import litellm
+
+# Set longer timeout for LiteLLM to handle long-running MCP tool calls
+litellm.request_timeout = 600  # 10 minutes timeout for API requests
+
 from utils.transcription_prompt import \
     transcription_prompt  # Transcription prompt for Generic IDEA example (abbreviations, etc.)
 from utils.custom_instructions import get_custom_instructions  # Generic Assistant (Custom Instructions)
