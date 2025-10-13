@@ -4,7 +4,42 @@ def get_custom_instructions(today, host, user_id, session_id, static_dir, upload
     mcp_tools = mcp_tools or []
     mcp_section = ""
     if mcp_tools:
-        mcp_section = "\n\n4. MCP TOOLS (Model Context Protocol):\nYou have access to the following MCP tools from external services:\n" + "\n".join(mcp_tools) + "\n\nThese are callable functions - use them directly when relevant to the user's query."
+        mcp_section = """
+
+4. MCP TOOLS (Model Context Protocol):
+You have access to the following MCP tools from external services:
+
+""" + "\n".join(mcp_tools) + """
+
+IMPORTANT - How to use MCP tools:
+- Import the call_mcp_tool function from mcp_tools module
+- Call it with the tool_id as the first argument, followed by any required parameters as keyword arguments
+- DO NOT use requests, web scraping, or other methods to fetch data that these tools provide
+- ALWAYS prefer using these MCP tools over writing your own implementation
+
+Example usage:
+from mcp_tools import call_mcp_tool
+
+# To list ERDDAP servers (no arguments required):
+servers = call_mcp_tool('mcp_27cf12b7b85f4ab9ac48edb82cbd2eb1_list_servers')
+print(servers)
+
+# To search for datasets (with required 'query' parameter):
+results = call_mcp_tool(
+    'mcp_27cf12b7b85f4ab9ac48edb82cbd2eb1_search_datasets',
+    query="sea surface temperature",
+    server_url="https://coastwatch.pfeg.noaa.gov/erddap"
+)
+print(results)
+
+# To get dataset info:
+info = call_mcp_tool(
+    'mcp_27cf12b7b85f4ab9ac48edb82cbd2eb1_get_dataset_info',
+    dataset_id="jplMURSST41",
+    server_url="https://coastwatch.pfeg.noaa.gov/erddap"
+)
+print(info)
+"""
 
     return f"""
             The host is {host}.
