@@ -61,6 +61,10 @@ from core.mcp_manager import mcp_manager
 import interpreter.core.llm.llm as llm_mod
 
 
+# mcp_tools.py is now a static module that queries the database directly
+# No code generation needed
+
+
 
 # LOG_DIR = Path("logs")
 # LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -178,14 +182,22 @@ def _pretty_json(data: Any, max_length: int = 4000) -> str:
     return text
 
 
-async def _convert_mcp_tools_to_interpreter_functions(
-    tool_defs: list[dict],
-    tool_lookup: dict,
-    db: Session,
-) -> list[dict]:
-    """Convert MCP tool definitions to OpenInterpreter custom function format."""
-    functions = []
+def _generate_mcp_wrapper_code(tool_defs: list[dict], tool_lookup: dict, db: Session) -> str:
+    """Generate Python code that defines MCP tool wrapper functions."""
+    imports = """
+import asyncio
+import json
+from uuid import UUID
+from core.mcp_manager import mcp_manager
+from models import MCPConnection
+from sqlmodel import Session
+from core.db import engine
 
+# MCP connection and tool lookup (connection_id, tool_name)
+_mcp_lookup = {}
+"""
+
+    functions_code = []
     for tool_def in tool_defs:
         func_spec = tool_def.get("function", {})
         tool_id = func_spec.get("name")
@@ -194,37 +206,69 @@ async def _convert_mcp_tools_to_interpreter_functions(
 
         connection, tool = tool_lookup[tool_id]
 
-        # Create a synchronous wrapper that runs async code
-        def make_mcp_wrapper(conn, t):
-            def call_mcp_tool(**kwargs):
-                # Run async MCP call in event loop
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+        # Store connection and tool info in a global dict
+        imports += f"_mcp_lookup['{tool_id}'] = ({connection.id!r}, {tool['name']!r})\n"
 
-                async def _call():
-                    try:
-                        result = await mcp_manager.call_tool(conn, t["name"], kwargs)
-                        return _pretty_json(result)
-                    except Exception as exc:
-                        logger.error(f"MCP tool {t['name']} execution failed: {exc}")
-                        return json.dumps({"error": str(exc)})
+        # Generate function signature from parameters
+        params = func_spec.get("parameters", {}).get("properties", {})
+        required = func_spec.get("parameters", {}).get("required", [])
 
-                return loop.run_until_complete(_call())
+        param_list = []
+        for param_name, param_spec in params.items():
+            if param_name in required:
+                param_list.append(param_name)
+            else:
+                default_val = param_spec.get("default", "None")
+                if isinstance(default_val, str):
+                    default_val = f"'{default_val}'"
+                param_list.append(f"{param_name}={default_val}")
 
-            return call_mcp_tool
+        params_str = ", ".join(param_list) if param_list else ""
 
-        # OpenInterpreter expects a specific function format
-        functions.append({
-            "name": tool_id,
-            "description": func_spec.get("description", ""),
-            "parameters": func_spec.get("parameters", {}),
-            "function": make_mcp_wrapper(connection, tool),
-        })
+        # Generate function code
+        func_code = f'''
+def {tool_id}({params_str}):
+    """
+    {func_spec.get("description", "MCP tool")}
+    """
+    conn_id, tool_name = _mcp_lookup['{tool_id}']
 
-    return functions
+    # Get connection from database
+    with Session(engine) as session:
+        connection = session.get(MCPConnection, conn_id)
+        if not connection:
+            return {{"error": "MCP connection not found"}}
+
+        # Build arguments dict
+        arguments = {{}}
+'''
+
+        # Add argument collection
+        for param_name in params.keys():
+            func_code += f'        if {param_name} is not None:\n'
+            func_code += f'            arguments["{param_name}"] = {param_name}\n'
+
+        func_code += f'''
+        # Run async call
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        async def _call():
+            result = await mcp_manager.call_tool(connection, tool_name, arguments)
+            return result
+
+        result = loop.run_until_complete(_call())
+        print(f"\\n🔧 Called MCP tool: {tool_id}")
+        print(f"Arguments: {{arguments}}")
+        print(f"Result: {{result}}\\n")
+        return result
+'''
+        functions_code.append(func_code)
+
+    return imports + "\n".join(functions_code)
 
 
 async def plan_and_run_mcp_tools(
@@ -1063,18 +1107,8 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             except Exception as e:
                 logger.warning(f"Failed to restore messages from Redis: {str(e)}")
 
-        # Add MCP tools to interpreter so it can use them natively
-        if tool_defs:
-            try:
-                # Clear existing custom functions to avoid duplicates
-                interpreter.computer.custom_functions = []
-                # Convert MCP tools to OpenInterpreter's custom function format
-                mcp_functions = await _convert_mcp_tools_to_interpreter_functions(tool_defs, tool_lookup, db)
-                # Add MCP functions to interpreter
-                interpreter.computer.custom_functions.extend(mcp_functions)
-                logger.info(f"Added {len(mcp_functions)} MCP tools to interpreter: {[f['name'] for f in mcp_functions]}")
-            except Exception as exc:
-                logger.warning("Failed to load MCP tools: %s", exc)
+        # MCP tools are now available via mcp_tools.py (generated at startup and when connections change)
+        # No need to regenerate on every chat request
 
         # Legacy pre-planning approach (can be removed if native integration works)
         tool_runs = []
