@@ -24,6 +24,7 @@ let isGenerating = false;
 let controller = null;
 let promptIdeasVisible = false;
 let currentMessageId = null;
+let workingIndicatorId = null;
 
 // Conversation manager instance
 let conversationManager;
@@ -383,6 +384,8 @@ async function sendRequest(msgOverride=null) {
         scrollToBottom();
         messageInput.value = '';
 
+        showWorkingIndicator();
+
         // Define parameters for the POST request
         const params = {
             messages
@@ -467,6 +470,7 @@ async function sendRequest(msgOverride=null) {
 
 // Function to reset send and stop buttons
 function resetButtons() {
+    removeWorkingIndicator();
     sendButton.disabled = false;
     stopButton.disabled = true;
     controller = null;
@@ -478,6 +482,7 @@ function processChunk(chunk) {
     let messageStarted = false;
     let messageEnded = false;
     return new Promise((resolve) => {
+        removeWorkingIndicator();
         if (chunk.start) {
             // Start of a new message
             const newMessage = {
@@ -772,6 +777,7 @@ function appendConfirmationChunk(chunk) {
 // Function to clear chat history
 async function clearChatHistory() {
     try {
+        removeWorkingIndicator();
         // Clear chat history
         const response = await fetch(config.getEndpoints().clear, {
             method: "POST",
@@ -843,6 +849,47 @@ function escapeHtml(text) {
 // Scroll to the bottom of the chat display
 function scrollToBottom() {
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+}
+
+function showWorkingIndicator() {
+    if (workingIndicatorId) {
+        return workingIndicatorId;
+    }
+
+    workingIndicatorId = generateId('thinking');
+
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'assistant', 'thinking');
+    messageElement.setAttribute('data-id', workingIndicatorId);
+
+    const contentElement = document.createElement('div');
+    contentElement.classList.add('content');
+    contentElement.innerHTML = `
+        <div class="thinking-content" role="status" aria-live="polite">
+            <span class="thinking-spinner" aria-hidden="true"></span>
+            <span>Thinking</span>
+            <span class="thinking-ellipsis" aria-hidden="true">
+                <span></span><span></span><span></span>
+            </span>
+        </div>
+    `;
+
+    messageElement.appendChild(contentElement);
+    chatDisplay.appendChild(messageElement);
+    scrollToBottom();
+
+    return workingIndicatorId;
+}
+
+function removeWorkingIndicator() {
+    if (!workingIndicatorId) return;
+
+    const indicator = chatDisplay.querySelector(`.message[data-id="${workingIndicatorId}"]`);
+    if (indicator) {
+        indicator.remove();
+    }
+
+    workingIndicatorId = null;
 }
 
 function addCopyButtons() {
