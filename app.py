@@ -77,7 +77,7 @@ _orig_completions = llm_mod.fixed_litellm_completions
 
 def fixed_litellm_completions_with_reasoning(**params):
     p = dict(params)
-    p.setdefault("reasoning_effort", "low")
+    p.setdefault("reasoning_effort", "minimal") # minimal | low | medium | high
     # Optionally: also enforce a cap on generated tokens for reasoning models
     p.setdefault("max_completion_tokens", 64000)
     yield from _orig_completions(**p)
@@ -89,7 +89,7 @@ _orig_text = llm_mod.run_text_llm
 
 def run_text_llm_with_reasoning(self, params):
     p = dict(params)
-    p.setdefault("reasoning_effort", "low")
+    p.setdefault("reasoning_effort", "minimal") # minimal | low | medium | high
     return _orig_text(self, p)
 
 llm_mod.run_text_llm = run_text_llm_with_reasoning
@@ -99,7 +99,7 @@ _orig_tool = llm_mod.run_tool_calling_llm
 
 def run_tool_calling_llm_with_reasoning(self, params):
     p = dict(params)
-    p.setdefault("reasoning_effort", "low")
+    p.setdefault("reasoning_effort", "minimal") # minimal | low | medium | high
     return _orig_tool(self, p)
 
 llm_mod.run_tool_calling_llm = run_tool_calling_llm_with_reasoning
