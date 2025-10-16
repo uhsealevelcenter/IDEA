@@ -734,15 +734,13 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         except Exception:
             pass
 
-        station_id = '000'  # Placeholder
+        #station_id = '000'  # Placeholder (do not use for IDEA)
         interpreter.custom_instructions = get_custom_instructions(
-            today=today,
             host=host,
             user_id=str(user.id),
             session_id=session_id,
             static_dir=STATIC_DIR,
             upload_dir=UPLOAD_DIR,
-            station_id=station_id,
             pqa_settings_name=pqa_settings_name
         )
 
