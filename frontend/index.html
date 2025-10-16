@@ -9,7 +9,7 @@
     <link href="prism.css" rel="stylesheet" />  <!-- Prism for code syntax highlighting -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"> <!-- Mic icon -->
 </head>
-<body class="main-app">
+<body class="main-app theme-light">
     <!-- Navigation Bar -->
     <nav class="navbar">
         <div class="navbar-container">
@@ -22,23 +22,23 @@
             <div class="navbar-menu">
                 <button id="systemPromptButton" class="nav-btn">
                     <span class="material-icons">settings</span>
-                    System Prompt
+                    Instructions
                 </button>
                 <button id="knowledgeBaseButton" class="nav-btn">
                     <span class="material-icons">psychology</span>
-                    Knowledge Base
+                    Knowledge
                 </button>
                 <button id="downloadButton" class="nav-btn">
                     <span class="material-icons">download</span>
                     Download
                 </button>
+                <button id="newMessagesButton" class="nav-btn">
+                    <span class="material-icons">refresh</span>
+                    Restart
+                </button>
                 <button id="conversationsButton" class="nav-btn">
                     <span class="material-icons">chat</span>
                     Conversations
-                </button>
-                <button id="newMessagesButton" class="nav-btn">
-                    <span class="material-icons">refresh</span>
-                    Start Over
                 </button>
                 <button id="accountSettingsButton" class="nav-btn">
                     <span class="material-icons">manage_accounts</span>
@@ -48,6 +48,14 @@
                     <span class="material-icons">logout</span>
                     Logout
                 </button>
+                <div class="theme-toggle">
+                    <input type="checkbox" id="themeToggleDesktop" data-theme-toggle aria-label="Toggle dark mode">
+                    <label class="theme-toggle-label" for="themeToggleDesktop">
+                        <span class="toggle-icon sun-icon" aria-hidden="true"></span>
+                        <span class="toggle-slider" aria-hidden="true"></span>
+                        <span class="toggle-icon moon-icon" aria-hidden="true"></span>
+                    </label>
+                </div>
             </div>
             
             <!-- Mobile Menu Toggle -->
@@ -84,6 +92,14 @@
                 <span class="material-icons">manage_accounts</span>
                 Account Settings
             </button>
+            <div class="theme-toggle">
+                <input type="checkbox" id="themeToggleMobile" data-theme-toggle aria-label="Toggle dark mode">
+                <label class="theme-toggle-label" for="themeToggleMobile">
+                    <span class="toggle-icon sun-icon" aria-hidden="true"></span>
+                    <span class="toggle-slider" aria-hidden="true"></span>
+                    <span class="toggle-icon moon-icon" aria-hidden="true"></span>
+                </label>
+            </div>
             <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
                 <span class="material-icons">logout</span>
                 Logout
