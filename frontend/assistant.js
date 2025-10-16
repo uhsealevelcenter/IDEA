@@ -75,49 +75,19 @@ function logout() {
    redirectToLogin();
 }
 
-function applyTheme(theme) {
-    const normalizedTheme = theme === 'dark' ? 'theme-dark' : 'theme-light';
-
+function applyTheme() {
     document.body.classList.remove('theme-light', 'theme-dark');
-    document.body.classList.add(normalizedTheme);
+    document.body.classList.add('theme-light');
 
     themeToggleInputs.forEach((input) => {
-        input.checked = normalizedTheme === 'theme-dark';
+        input.checked = false;
     });
 }
 
 function initializeTheme() {
     try {
-        const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-        const prefersDark =
-            typeof window.matchMedia === 'function' &&
-            window.matchMedia(COLOR_SCHEME_QUERY).matches;
-        const initialTheme = storedTheme || (prefersDark ? 'dark' : 'light');
-
-        applyTheme(initialTheme);
-
-        themeToggleInputs.forEach((input) => {
-            input.addEventListener('change', () => {
-                const nextTheme = input.checked ? 'dark' : 'light';
-                localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-                applyTheme(nextTheme);
-            });
-        });
-
-        if (!storedTheme && typeof window.matchMedia === 'function') {
-            const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY);
-            const handleSchemeChange = (event) => {
-                if (!localStorage.getItem(THEME_STORAGE_KEY)) {
-                    applyTheme(event.matches ? 'dark' : 'light');
-                }
-            };
-
-            if (typeof mediaQuery.addEventListener === 'function') {
-                mediaQuery.addEventListener('change', handleSchemeChange);
-            } else if (typeof mediaQuery.addListener === 'function') {
-                mediaQuery.addListener(handleSchemeChange);
-            }
-        }
+        localStorage.setItem(THEME_STORAGE_KEY, 'light');
+        applyTheme();
     } catch (error) {
         console.error('Failed to initialize theme:', error);
     }
@@ -219,7 +189,6 @@ const progressBar = document.getElementById('uploadProgress');
 const progressElement = progressBar ? progressBar.querySelector('.progress') : null;
 const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
 const THEME_STORAGE_KEY = 'idea-theme';
-const COLOR_SCHEME_QUERY = '(prefers-color-scheme: dark)';
 
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
