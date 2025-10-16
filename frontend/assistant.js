@@ -71,9 +71,59 @@ function getAuthHeaders() {
 
 function logout() {
     localStorage.removeItem('authToken');
-    authToken = null;
-    redirectToLogin();
+   authToken = null;
+   redirectToLogin();
 }
+
+function applyTheme(theme) {
+    const normalizedTheme = theme === 'dark' ? 'theme-dark' : 'theme-light';
+
+    document.body.classList.remove('theme-light', 'theme-dark');
+    document.body.classList.add(normalizedTheme);
+
+    themeToggleInputs.forEach((input) => {
+        input.checked = normalizedTheme === 'theme-dark';
+    });
+}
+
+function initializeTheme() {
+    try {
+        const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+        const prefersDark =
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia(COLOR_SCHEME_QUERY).matches;
+        const initialTheme = storedTheme || (prefersDark ? 'dark' : 'light');
+
+        applyTheme(initialTheme);
+
+        themeToggleInputs.forEach((input) => {
+            input.addEventListener('change', () => {
+                const nextTheme = input.checked ? 'dark' : 'light';
+                localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+                applyTheme(nextTheme);
+            });
+        });
+
+        if (!storedTheme && typeof window.matchMedia === 'function') {
+            const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY);
+            const handleSchemeChange = (event) => {
+                if (!localStorage.getItem(THEME_STORAGE_KEY)) {
+                    applyTheme(event.matches ? 'dark' : 'light');
+                }
+            };
+
+            if (typeof mediaQuery.addEventListener === 'function') {
+                mediaQuery.addEventListener('change', handleSchemeChange);
+            } else if (typeof mediaQuery.addListener === 'function') {
+                mediaQuery.addListener(handleSchemeChange);
+            }
+        }
+    } catch (error) {
+        console.error('Failed to initialize theme:', error);
+    }
+}
+
+initializeTheme();
 
 //// Math formatting helpers
 
@@ -166,7 +216,10 @@ const stopButton = document.getElementById('stopButton');
 const newMessagesButton = document.getElementById('newMessagesButton');
 const messageInput = document.getElementById('messageInput');
 const progressBar = document.getElementById('uploadProgress');
-const progressElement = progressBar.querySelector('.progress');
+const progressElement = progressBar ? progressBar.querySelector('.progress') : null;
+const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
+const THEME_STORAGE_KEY = 'idea-theme';
+const COLOR_SCHEME_QUERY = '(prefers-color-scheme: dark)';
 
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
@@ -214,27 +267,27 @@ function createPromptIdeas() {
     console.log("Creating prompt ideas");
     const prompts = [
         {
-            title: "Explore Popular Datasets",
+            title: "Explore data", // Explore Popular Datasets
             prompt: "Explore a popular dataset for me, such as global population, climate data, or economic indicators. Load the data, clean it, and provide summaries or visualizations like interactive maps, time-series plots, or bar charts to help me understand the data better."
         },
         {
-            title: "Perform Data Analysis",
+            title: "Analyze data", // Perform Data Analysis
             prompt: "Analyze a dataset for me. Calculate trends, perform statistical analysis, or apply machine learning models. Show me the code, results, and visualizations step-by-step."
         },
         {
-            title: "Create Interactive Maps",
+            title: "Create maps", // Create Interactive Maps
             prompt: "Create an interactive map for me using geospatial data. For example, map population density, weather patterns, or transportation networks. Fetch the data, process it, and generate a map I can interact with."
         },
         {
-            title: "Generate Insights from Files",
+            title: "Process files", // Generate Insights from Files
             prompt: "Process and analyze a file I upload, such as a CSV, Excel, or JSON file. Clean the data, extract insights, and create visualizations or reports for me."
         },
         {
-            title: "Brainstorm Research Ideas",
+            title: "Brainstorm ideas", // Brainstorm Research Ideas
             prompt: "Help me brainstorm research ideas using publicly available datasets. Suggest interesting questions, guide me through the initial analysis, and create visualizations to support the findings. If I don’t have a specific topic in mind, suggest one for me."
         },
         {
-            title: "Interact with APIs",
+            title: "Fetch data", // Interact with APIs
             prompt: "Fetch data from an API or scrape data from a website (ethically and within legal boundaries). For example, retrieve weather data, stock prices, or other real-time information and analyze it for me."
         }
     ];
