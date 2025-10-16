@@ -7,7 +7,19 @@
     <title>IDEA- Login</title>
     <link rel="stylesheet" href="styles.css">
 </head>
-<body class="login-page">
+<body class="login-page theme-light">
+    <script>
+        (function () {
+            const THEME_STORAGE_KEY = 'idea-theme';
+            document.body.classList.remove('theme-light', 'theme-dark');
+            document.body.classList.add('theme-light');
+            try {
+                localStorage.setItem(THEME_STORAGE_KEY, 'light');
+            } catch (error) {
+                console.warn('Unable to persist theme preference:', error);
+            }
+        })();
+    </script>
     <div class="login-container">
         <div class="login-header">
             <h1>IDEA</h1>

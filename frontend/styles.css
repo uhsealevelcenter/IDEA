@@ -9,6 +9,8 @@
 :root {
     color-scheme: light;
     font-size: 16px;
+    --nav-h: 60px;
+    --footer-h: 48px;
 }
 
 body.theme-light {
@@ -56,6 +58,10 @@ body.theme-light {
     --scroll-track: rgba(236, 241, 245, 0.9);
     --scroll-thumb: rgba(15, 51, 72, 0.45);
     --scroll-thumb-hover: rgba(15, 51, 72, 0.65);
+    --layout-top-offset: 12px;
+    --layout-bottom-offset: 12px;
+    --footer-h: 48px;
+    --nav-h: 60px;
 }
 
 body.theme-dark {
@@ -104,21 +110,124 @@ body.theme-dark {
     --scroll-track: rgba(4, 12, 22, 0.92);
     --scroll-thumb: rgba(122, 182, 255, 0.65);
     --scroll-thumb-hover: rgba(158, 204, 255, 0.85);
+    --layout-top-offset: 12px;
+    --layout-bottom-offset: 12px;
+    --footer-h: 48px;
+    --nav-h: 60px;
+}
+
+@media (max-width: 1024px) {
+    :root {
+        --layout-top-offset: 12px;
+        --layout-bottom-offset: 12px;
+        --footer-h: 48px;
+        --nav-h: 60px;
+    }
+}
+
+@media (max-width: 720px) {
+    :root {
+        --layout-top-offset: 12px;
+        --layout-bottom-offset: 12px;
+        --footer-h: 48px;
+        --nav-h: 6px;
+    }
+}
+
+@media (max-width: 480px) {
+    :root {
+        --layout-top-offset: 0;
+        --layout-bottom-offset: 12px;
+        --footer-h: 48px;
+        --nav-h: 6px;
+    }
+}
+
+html,
+body {
+    height: 100%;
 }
 
 body {
     font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
     background: var(--body-gradient);
     color: var(--text-primary);
-    min-height: 100vh;
+    min-height: 100%;
     line-height: 1.5;
     transition: background 0.6s ease, color 0.25s ease;
+    overflow: hidden;
 }
 
 body.main-app {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    min-height: 100%;
+    padding: 12px 0 12px 0;
+    gap: 4px;
+}
+
+.app {
+    flex: 1 1 auto;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(4px, 1vw, 8px);
+}
+
+.chat-header {
+    background: var(--header-gradient);
+    color: var(--header-button-text);
+    padding: clamp(18px, 4vw, 26px);
+    border-bottom: 1px solid var(--border);
+    border-top-left-radius: 24px;
+    border-top-right-radius: 24px;
+    width: 100%;
+}
+
+.header-content {
+    width: min(1200px, 100%);
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: clamp(16px, 4vw, 28px);
+}
+
+.header-brand {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.brand-abbrev {
+    font-size: clamp(1.5rem, 3vw, 1.8rem);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.brand-name {
+    font-size: clamp(0.75rem, 1.4vw, 0.9rem);
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.72);
+    letter-spacing: 0.12em;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: clamp(12px, 2.4vw, 20px);
+}
+
+.header-actions .navbar-menu {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: nowrap;
+    flex: 1 1 auto;
+    justify-content: flex-end;
 }
 
 /* Login page specific styles */
@@ -126,8 +235,9 @@ body.login-page {
     display: flex;
     justify-content: center;
     align-items: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--header-gradient);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: auto;
 }
 
 /* Navbar Styles */
@@ -396,9 +506,14 @@ body.theme-dark .toggle-slider {
 
 .chat-container {
     width: min(1200px, 100%);
-    height: clamp(540px, calc(100vh - 120px), 960px);
-    max-height: calc(100vh - 120px);
-    margin: 110px auto 32px;
+    height: clamp(
+        540px,
+        calc(100dvh - var(--footer-h) - var(--layout-top-offset) - var(--layout-bottom-offset)),
+        960px
+    );
+    max-height: calc(100dvh - var(--footer-h) - var(--layout-top-offset) - var(--layout-bottom-offset));
+    min-height: 280px;
+    margin: 0 auto;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 24px;
@@ -448,18 +563,12 @@ body.theme-dark .toggle-slider {
 .chat-footer {
     display: flex;
     flex-wrap: wrap;
-    gap: 16px;
+    gap: 14px;
     padding: 18px 18px 22px;
     background: var(--surface);
     border-top: 1px solid var(--border);
     align-items: stretch;
 }
-
-#sendButton,
-#stopButton {
-    align-self: center;
-}
-
 
 /* .chat-footer input {
     flex: 1;
@@ -502,6 +611,11 @@ body.theme-dark .toggle-slider {
 
 #messageInput::placeholder {
     color: var(--input-placeholder);
+}
+
+#messageInput:focus,
+#messageInput:focus-visible {
+    outline: none;
 }
 
 .chat-footer button {
@@ -710,6 +824,19 @@ pre {
     text-decoration: underline;
 }
 
+@media (max-width: 720px) {
+    .disclaimer-text {
+        padding: 10px 14px;
+    }
+}
+
+@media (max-width: 480px) {
+    .disclaimer-text {
+        padding: 8px 12px;
+        font-size: 11px;
+    }
+}
+
 #myselect2{
     margin-top: 5px;
     max-width: 100%;
@@ -717,11 +844,12 @@ pre {
 
 #promptIdeasContainer {
     width: 100%;
+    flex: 0 0 auto;
 }
 
 .prompt-ideas {
-    margin: 6px;
-    padding: 14px;
+    margin: 4px;
+    padding: 12px;
     background: var(--pill-bg);
     border: 1px solid var(--pill-border);
     border-radius: 16px;
@@ -840,17 +968,19 @@ pre {
     width: 100%;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     color: var(--text-muted);
     font-size: 13px;
+    flex: 0 0 auto;
 }
 
 .prompt-row {
     display: flex;
-    align-items: center;
+    align-items: stretch;
     gap: 12px;
     width: 100%;
     flex-wrap: nowrap;
+    flex: 1 1 auto;
 }
 
 .prompt-row .input-container {
@@ -864,16 +994,34 @@ pre {
     gap: 8px;
     flex: 0 0 auto;
     align-items: stretch;
+    min-width: 112px;
 }
 
 .prompt-actions button {
     padding: 0 16px;
-    min-width: 72px;
+    min-width: 0;
     height: 40px;
     box-shadow: 0 10px 24px -18px rgba(15, 51, 72, 0.75);
+    width: 100%;
 }
 
 @media (max-width: 1024px) {
+    .header-content {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 16px;
+    }
+
+    .header-actions {
+        justify-content: space-between;
+        width: 100%;
+    }
+
+    .header-actions .navbar-menu {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+
     .chat-container {
         border-radius: 20px;
     }
@@ -889,15 +1037,21 @@ pre {
 
 @media (max-width: 720px) {
     body.main-app {
-        padding: 0 6px;
+        gap: 12px;
+    }
+
+    .header-actions {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .header-actions .navbar-menu {
+        display: none;
     }
 
     .navbar-container {
         padding: 0.75rem 1rem;
-    }
-
-    .navbar-menu {
-        display: none;
     }
 
     .navbar-toggle {
@@ -907,7 +1061,6 @@ pre {
     .chat-container {
         width: 100%;
         border-radius: 18px;
-        margin: 96px auto 24px;
     }
 
     .chat-display {
@@ -918,22 +1071,23 @@ pre {
         flex-direction: column;
         align-items: stretch;
         gap: 12px;
+        padding: 16px 14px 18px;
     }
 
     .prompt-row {
-        flex-direction: column;
+        flex-direction: row;
         align-items: stretch;
         gap: 10px;
     }
 
     .prompt-actions {
-        flex-direction: row;
-        justify-content: flex-end;
-        gap: 10px;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 100px;
     }
 
     .prompt-actions button {
-        min-width: 64px;
+        min-width: 0;
         height: 40px;
     }
 
@@ -951,9 +1105,16 @@ pre {
 }
 
 @media (max-width: 480px) {
+    body.main-app {
+        gap: 10px;
+    }
+
+    .header-actions .navbar-menu {
+        justify-content: flex-start;
+    }
+
     .chat-container {
         border-radius: 16px;
-        margin: 92px auto 20px;
     }
 
     .chat-display {
@@ -962,6 +1123,10 @@ pre {
 
     .chat-footer button {
         font-size: 14px;
+    }
+
+    .chat-footer {
+        padding: 14px 12px 16px;
     }
 }
 
@@ -1012,9 +1177,14 @@ pre {
     opacity: 1;
 }
 
+.input-container button:focus,
+.input-container button:focus-visible {
+    outline: none;
+}
+
 
 .uploaded-files-list {
-    max-height: 150px;
+    max-height: min(120px, 18vh);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -1169,12 +1339,15 @@ pre {
 
 /* Login Page Styles */
 .login-container {
-    background: white;
+    background: var(--surface);
+    color: var(--text-primary);
     padding: 2rem;
-    border-radius: 10px;
-    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
     width: 100%;
-    max-width: 400px;
+    max-width: 420px;
+    border: 1px solid var(--border);
+    transition: background 0.3s ease, color 0.3s ease;
 }
 
 .login-header {
@@ -1183,13 +1356,15 @@ pre {
 }
 
 .login-header h1 {
-    color: #333;
-    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+    margin-bottom: 0.35rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 
 .login-header p {
-    color: #666;
-    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-size: 0.95rem;
 }
 
 .form-group {
@@ -1199,7 +1374,7 @@ pre {
 .form-group label {
     display: block;
     margin-bottom: 0.5rem;
-    color: #333;
+    color: var(--text-primary);
     font-weight: 500;
 }
 
@@ -1207,8 +1382,10 @@ pre {
 .form-group input[type="password"] {
     width: 100%;
     padding: 0.75rem;
-    border: 2px solid #e1e1e1;
-    border-radius: 5px;
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    background: var(--input-bg);
+    color: var(--input-text);
     font-size: 1rem;
     transition: border-color 0.3s ease;
     box-sizing: border-box;
@@ -1217,7 +1394,7 @@ pre {
 .form-group input[type="text"]:focus, 
 .form-group input[type="password"]:focus {
     outline: none;
-    border-color: #667eea;
+    border-color: var(--input-focus);
 }
 
 /* Account Settings Styles */
@@ -1246,7 +1423,7 @@ pre {
 .login-button {
     width: 100%;
     padding: 0.75rem;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--header-gradient);
     color: white;
     border: none;
     border-radius: 5px;
@@ -1334,10 +1511,16 @@ pre {
         font-size: 0.7rem;
     }
     
+    body.main-app {
+        /* padding-top: var(--nav-h); */
+        /* padding-bottom: var(--footer-h); */
+    }
+    
     .chat-container {
-        margin: 70px 10px 10px;
-        height: calc(100vh - 90px - 45px); /* Account for navbar and disclaimer */
-        border-radius: 5px;
+        margin: 10px;
+        height: calc(100svh - var(--nav-h) - var(--footer-h));
+        max-height: calc(100svh - var(--nav-h) - var(--footer-h));
+        border-radius: 18px;
     }
     
     .login-container {
@@ -1360,8 +1543,10 @@ pre {
     }
     
     .chat-container {
-        margin: 60px 5px 5px;
-        height: calc(100vh - 75px - 45px); /* Account for navbar and disclaimer */
+        margin: 5px;
+        height: calc(100svh - var(--nav-h) - var(--footer-h));
+        max-height: calc(100svh - var(--nav-h) - var(--footer-h));
+        border-radius: 16px;
     }
 }
 
@@ -1398,7 +1583,7 @@ pre {
     justify-content: space-between;
     align-items: center;
     padding: 1.5rem 2rem;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--header-gradient);
     color: white;
     border-radius: 12px 12px 0 0;
 }
@@ -1472,7 +1657,7 @@ pre {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--header-gradient);
     color: white;
 }
 
