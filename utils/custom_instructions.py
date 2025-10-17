@@ -97,4 +97,7 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
                 print(results)
             -- After web_search returns, summarize each unique item with title/topic, a brief summary, and a link.
 
+            CRITICAL:
+            -- Always attempt to execute code, unless the user explicitly requested otherwise (e.g., "show me example code").
+
         """
