@@ -15,6 +15,7 @@ const config = {
             changePassword: 'http://localhost/api/users/change-password',
             verify: 'http://localhost/api/auth/verify',
             userProfile: 'http://localhost/api/users/me',
+            users: 'http://localhost/api/users',
             prompts: 'http://localhost/api/prompts',
             setActivePrompt: 'http://localhost/api/prompts/set-active',
             knowledgeBase: 'http://localhost/api/knowledge-base/papers',
@@ -35,6 +36,8 @@ const config = {
             login: 'https://<your-domain>/api/login',
             logout: 'https://<your-domain>/api/logout',
             verify: 'https://<your-domain>/api/auth/verify',
+            userProfile: 'https://<your-domain>/api/users/me',
+            users: 'https://<your-domain>/api/users',
             changePassword: 'https://<your-domain>/api/users/change-password',
             prompts: 'https://<your-domain>/api/prompts',
             setActivePrompt: 'https://<your-domain>/api/prompts/set-active',
@@ -43,7 +46,8 @@ const config = {
             knowledgeBaseStats: 'https://<your-domain>/api/knowledge-base/stats',
             conversations: 'https://<your-domain>/conversations',
             conversationMessages: 'https://<your-domain>/conversations',
-            conversationShare: 'https://<your-domain>/conversations'
+            conversationShare: 'https://<your-domain>/conversations',
+            loadConversation: 'https://<your-domain>/api/load-conversation'
         }
     },
 

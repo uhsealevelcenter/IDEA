@@ -9,6 +9,7 @@ from logging.handlers import RotatingFileHandler
 from typing import Dict, List
 import hashlib
 import secrets
+from uuid import UUID
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -26,9 +27,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter
 from slowapi.errors import RateLimitExceeded
 from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, \
-    PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate
+    PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate, UserCreate, UserPublic, GenericMessage, User
 import crud
 from core.security import verify_password as verify_password_hash
+from sqlalchemy.exc import IntegrityError
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
@@ -141,6 +143,8 @@ app = FastAPI(root_path=root_path)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static")
+# Serve frontend assets (CSS/JS) for shared pages under a stable, prefixed path
+app.mount('/assets', StaticFiles(directory='frontend'), name='assets')
 
 init_prompt_manager()
 
@@ -323,7 +327,8 @@ async def get_current_user_profile(token: str = Depends(get_auth_token), db: Ses
             "id": str(db_user.id),
             "email": db_user.email,
             "full_name": db_user.full_name,
-            "is_active": db_user.is_active
+            "is_active": db_user.is_active,
+            "is_superuser": db_user.is_superuser,
         }
     except HTTPException:
         raise
@@ -370,6 +375,85 @@ async def change_password(payload: UpdatePassword, token: str = Depends(get_auth
     except Exception as e:
         logger.error(f"Error changing password: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to change password")
+
+
+def _ensure_superuser(token: str) -> User:
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    return user
+
+
+@app.get("/users", response_model=List[UserPublic])
+async def list_users(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """List all users (superuser only)"""
+    try:
+        _ensure_superuser(token)
+        users = crud.list_users(session=db)
+        return [UserPublic.model_validate(user, from_attributes=True) for user in users]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing users: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list users")
+
+
+@app.post("/users", response_model=UserPublic, status_code=201)
+async def create_user_admin(user_in: UserCreate, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Create a new user (superuser only)"""
+    try:
+        _ensure_superuser(token)
+        try:
+            db_user = crud.create_user(session=db, user_create=user_in)
+        except IntegrityError:
+            raise HTTPException(status_code=400, detail="A user with this email already exists")
+        return UserPublic.model_validate(db_user, from_attributes=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating user: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to create user")
+
+
+@app.put("/users/{user_id}", response_model=UserPublic)
+async def update_user_admin(user_id: UUID, user_in: UserUpdate, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Update an existing user (superuser only)"""
+    try:
+        _ensure_superuser(token)
+        db_user = crud.get_user_by_id(session=db, user_id=user_id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        try:
+            updated_user = crud.update_user(session=db, db_user=db_user, user_in=user_in)
+        except IntegrityError:
+            raise HTTPException(status_code=400, detail="A user with this email already exists")
+        return UserPublic.model_validate(updated_user, from_attributes=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update user")
+
+
+@app.delete("/users/{user_id}", response_model=GenericMessage)
+async def delete_user_admin(user_id: UUID, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Delete a user (superuser only)"""
+    try:
+        admin = _ensure_superuser(token)
+        if admin.id == user_id:
+            raise HTTPException(status_code=400, detail="Superusers cannot delete their own account")
+        db_user = crud.get_user_by_id(session=db, user_id=user_id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        crud.delete_user(session=db, db_user=db_user)
+        return GenericMessage(message="User deleted successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete user")
 
 
 # Prompt Management Endpoints

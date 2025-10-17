@@ -40,6 +40,10 @@
                                 <span class="material-icons">chat</span>
                                 Conversations
                             </button>
+                            <button id="userManagementButton" class="nav-btn admin-only" data-admin-display="inline-flex">
+                                <span class="material-icons">group</span>
+                                Users
+                            </button>
                             <button id="accountSettingsButton" class="nav-btn">
                                 <span class="material-icons">manage_accounts</span>
                                 Account
@@ -78,6 +82,10 @@
                 <button id="conversationsButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">chat</span>
                     Conversations
+                </button>
+                <button id="userManagementButtonMobile" class="nav-btn-mobile admin-only" data-admin-display="flex">
+                    <span class="material-icons">group</span>
+                    Users
                 </button>
                 <button id="accountSettingsButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">manage_accounts</span>
@@ -281,6 +289,69 @@
         </div>
     </div>
 
+    <!-- User Management Modal -->
+    <div id="userManagementModal" class="modal">
+        <div class="modal-content wide-modal">
+            <div class="modal-header">
+                <h2>User Management</h2>
+                <span class="close" id="closeUserManagementModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="prompt-management-container user-management-container">
+                    <div class="prompt-list-section user-list-section">
+                        <div class="section-header">
+                            <h3>Users</h3>
+                            <button id="createUserButton" class="btn btn-primary">
+                                <span class="material-icons">add</span>
+                                New User
+                            </button>
+                        </div>
+                        <div id="userList" class="prompts-list user-list">
+                            <div class="loading">Loading users...</div>
+                        </div>
+                    </div>
+                    <div class="prompt-editor-section user-form-section">
+                        <div class="user-form">
+                            <h3 id="userFormTitle">Create User</h3>
+                            <form id="userForm">
+                                <div class="form-group">
+                                    <label for="userFullName">Full Name</label>
+                                    <input type="text" id="userFullName" name="full_name" autocomplete="name">
+                                </div>
+                                <div class="form-group">
+                                    <label for="userEmail">Email</label>
+                                    <input type="email" id="userEmail" name="email" autocomplete="email" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="userPassword">Password</label>
+                                    <input type="password" id="userPassword" name="password" autocomplete="new-password" required>
+                                    <p class="form-helper" id="userPasswordHelper">Password must be 8-40 characters.</p>
+                                </div>
+                                <div class="form-group checkbox-group">
+                                    <label>
+                                        <input type="checkbox" id="userIsSuperuser">
+                                        <span>Grant superuser access</span>
+                                    </label>
+                                </div>
+                                <div class="form-group checkbox-group">
+                                    <label>
+                                        <input type="checkbox" id="userIsActive" checked>
+                                        <span>User is active</span>
+                                    </label>
+                                </div>
+                                <div class="form-actions">
+                                    <button type="submit" class="btn btn-success">Save</button>
+                                    <button type="button" id="cancelUserEditBtn" class="btn btn-secondary">Cancel</button>
+                                </div>
+                                <div id="userFormMessage" class="form-message" aria-live="polite"></div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Conversations Management Modal -->
     <div id="conversationsModal" class="modal">
         <div class="modal-content wide-modal">
@@ -342,6 +413,7 @@
     <script src="account-settings.js"></script>
     <script src="prompt-manager.js"></script>
     <script src="knowledge-base.js"></script>
+    <script src="user-management.js"></script>
     <script src="conversation_ui.js"></script>
 </body>
 </html>

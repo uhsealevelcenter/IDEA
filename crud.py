@@ -49,6 +49,15 @@ def get_user_by_id(*, session: Session, user_id: Any) -> User | None:
     return session.get(User, user_id)
 
 
+def list_users(*, session: Session) -> List[User]:
+    return session.exec(select(User).order_by(User.created_at.desc())).all()
+
+
+def delete_user(*, session: Session, db_user: User) -> None:
+    session.delete(db_user)
+    session.commit()
+
+
 # SystemPrompt helpers (optional service layer)
 
 def list_system_prompts(*, session: Session, user_id: Any) -> List[SystemPrompt]:
