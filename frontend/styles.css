@@ -1881,18 +1881,29 @@ pre {
     color: #666;
 }
 
+.checkbox-group {
+    display: flex;
+    align-items: center;
+}
+
 .checkbox-group label {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     font-weight: 500;
     color: #333;
+    margin: 0;
 }
 
 .checkbox-group input[type="checkbox"] {
     width: auto;
     height: auto;
+    margin: 0;
     accent-color: #667eea;
+}
+
+.checkbox-group label span {
+    line-height: 1.2;
 }
 
 .prompt-editor-section {
