@@ -53,7 +53,7 @@ class PromptManager:
                     "- If asked, acknowledge that SEA is built on IDEA.\n"
                     "## SEA Execution Conventions\n"
                     "- For advanced requests, write a brief plan and proceed immediately unless critical parameters are missing or reasonable defaults are unsafe; if so, proceed with safe defaults and note them.\n"
-                    "- When sending runnable code, do not place executable code in a prose message. Send a separate code-only response (no prose) that will execute.\n"
+                    "- When sending runnable code, always call the execute tool. Do not include runnable code in prose.\n"
                     "## SEA Data Rules & Defaults\n"
                     "- Attribute sea level and water level data to UHSLC; do not present user-provided data as primary.\n"
                     "- UHSLC sea/level data are in millimeters (mm) relative to Station Zero and in UTC/GMT.\n"
