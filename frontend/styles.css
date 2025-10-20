@@ -178,7 +178,7 @@ body.main-app {
 .chat-header {
     background: var(--header-gradient);
     color: var(--header-button-text);
-    padding: clamp(18px, 4vw, 26px);
+    padding: clamp(8px, 2.4vw, 16px);
     border-bottom: 1px solid var(--border);
     border-top-left-radius: 24px;
     border-top-right-radius: 24px;
@@ -191,7 +191,7 @@ body.main-app {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: clamp(16px, 4vw, 28px);
+    gap: clamp(14px, 3.2vw, 24px);
 }
 
 .header-brand {
@@ -201,7 +201,7 @@ body.main-app {
 }
 
 .brand-abbrev {
-    font-size: clamp(1.5rem, 3vw, 1.8rem);
+    font-size: clamp(1.35rem, 2.6vw, 1.6rem);
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -209,7 +209,7 @@ body.main-app {
 }
 
 .brand-name {
-    font-size: clamp(0.75rem, 1.4vw, 0.9rem);
+    font-size: clamp(0.7rem, 1.2vw, 0.85rem);
     font-weight: 500;
     color: rgba(255, 255, 255, 0.72);
     letter-spacing: 0.12em;
@@ -1009,21 +1009,25 @@ pre {
     width: 100%;
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1200px) {
     .header-content {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 16px;
+        flex-direction: row;
+        align-items: center;
+        gap: 12px;
     }
 
     .header-actions {
-        justify-content: space-between;
+        justify-content: flex-end;
         width: 100%;
+        gap: 12px;
     }
 
     .header-actions .navbar-menu {
-        flex-wrap: wrap;
-        justify-content: flex-start;
+        display: none;
+    }
+
+    .navbar-toggle {
+        display: flex;
     }
 
     .chat-container {
