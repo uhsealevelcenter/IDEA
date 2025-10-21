@@ -1339,6 +1339,8 @@ async function createSelfContainedHTML() {
             margin: 0 auto;
             padding: 20px;
             background: #fff;
+            overflow-y: auto !important;
+            overflow-x: hidden;
         }
         
         .export-header {
