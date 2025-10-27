@@ -6,6 +6,9 @@ import numpy as np
 import requests
 from io import StringIO
 from datetime import datetime, timedelta, timezone
+from litellm import completion 
+from utils.station_list_appendix import station_list_appendix # Station List Appendix (id and name)
+import os
 
 def get_datetime():
     now_utc = datetime.now(timezone.utc)
@@ -24,6 +27,18 @@ def fractional_year_to_datetime(year):
     start_of_year = datetime(year_int, 1, 1)
     days_in_year = (datetime(year_int + 1, 1, 1) - start_of_year).days
     return start_of_year + timedelta(days=fraction * days_in_year)
+
+def get_station_info(station_query):
+    # LiteLLM 
+    station_query_response = completion(
+        model="gpt-5-mini",
+        messages=[
+            {"role": "system", "content": station_list_appendix},
+            {"role": "user", "content": station_query}
+        ],
+        stream=False
+    )
+    return {"station_query_response": station_query_response.choices[0].message.content}
 
 def get_climate_index(climate_index_name):
     # Parameters:
@@ -139,4 +154,15 @@ def get_climate_index(climate_index_name):
         return data[["time", "value"]]
     raise ValueError(f"Unhandled climate index: {climate_index_name}")
 
+def web_search(web_query):
+    # LiteLLM 
+    web_query_response = completion(
+        model="gpt-4o-search-preview",
+        messages=[
+            {"role": "system", "content": "You are a concise research assistant."},
+            {"role": "user", "content": web_query}
+        ],
+        stream=False
+    )
+    return {"web_query_response": web_query_response.choices[0].message.content}    
 """

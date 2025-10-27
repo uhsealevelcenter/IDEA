@@ -601,9 +601,7 @@ networkx==3.5
     #   intake
     #   scikit-image
 nltk==3.9.1
-    # via
-    #   idea
-    #   open-interpreter
+    # via idea
 numcodecs==0.14.1
     # via
     #   idea
@@ -640,7 +638,7 @@ numpy==1.26.4
     #   xarray
     #   yfinance
     #   zarr
-open-interpreter==0.4.3
+open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@07ab829ddf6668117236dbfcf2c3692f9561ad54
     # via idea
 openai==1.102.0
     # via

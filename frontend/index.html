@@ -9,114 +9,156 @@
     <link href="prism.css" rel="stylesheet" />  <!-- Prism for code syntax highlighting -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"> <!-- Mic icon -->
 </head>
-<body class="main-app">
-    <!-- Navigation Bar -->
-    <nav class="navbar">
-        <div class="navbar-container">
-            <div class="navbar-brand">
-                <h1>IDEA</h1>
-                <span class="navbar-subtitle">Intelligent Data Exploring Assistant</span>
-            </div>
-            
-            <!-- Desktop Navigation -->
-            <div class="navbar-menu">
-                <button id="systemPromptButton" class="nav-btn">
+<body class="main-app theme-light">
+    <div class="app">
+        <div class="chat-container">
+            <header class="chat-header">
+                <div class="header-content">
+                    <div class="header-brand">
+                        <span class="brand-abbrev">IDEA</span>
+                        <span class="brand-name">Intelligent Data Exploring Assistant</span>
+                    </div>
+                    <div class="header-actions">
+                        <div class="navbar-menu" id="headerMenu">
+                            <button id="systemPromptButton" class="nav-btn">
+                                <span class="material-icons">settings</span>
+                                Instructions
+                            </button>
+                            <button id="knowledgeBaseButton" class="nav-btn">
+                                <span class="material-icons">psychology</span>
+                                Knowledge
+                            </button>
+                            <button id="mcpToolsButton" class="nav-btn">
+                                <span class="material-icons">hub</span>
+                                MCP Tools
+                            </button>
+                            <button id="mcpManagementButton" class="nav-btn admin-only" data-admin-display="inline-flex">
+                                <span class="material-icons">dns</span>
+                                MCP Admin
+                            </button>
+                            <button id="downloadButton" class="nav-btn">
+                                <span class="material-icons">download</span>
+                                Download
+                            </button>
+                            <button id="newMessagesButton" class="nav-btn">
+                                <span class="material-icons">refresh</span>
+                                Restart
+                            </button>
+                            <button id="conversationsButton" class="nav-btn">
+                                <span class="material-icons">chat</span>
+                                Conversations
+                            </button>
+                            <button id="userManagementButton" class="nav-btn admin-only" data-admin-display="inline-flex">
+                                <span class="material-icons">group</span>
+                                Users
+                            </button>
+                            <button id="accountSettingsButton" class="nav-btn">
+                                <span class="material-icons">manage_accounts</span>
+                                Account
+                            </button>
+                            <button id="logoutButton" class="nav-btn logout-btn">
+                                <span class="material-icons">logout</span>
+                                Logout
+                            </button>
+                        </div>
+                        <button class="navbar-toggle" id="navbarToggle" aria-label="Toggle menu" aria-controls="navbarMobileMenu" aria-expanded="false">
+                            <span class="hamburger-line"></span>
+                            <span class="hamburger-line"></span>
+                            <span class="hamburger-line"></span>
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <div class="navbar-mobile-menu" id="navbarMobileMenu">
+                <button id="systemPromptButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">settings</span>
-                    System Prompt
+                    Instructions
                 </button>
-                <button id="knowledgeBaseButton" class="nav-btn">
+                <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">psychology</span>
-                    Knowledge Base
+                    Knowledge
                 </button>
-                <button id="mcpToolsButton" class="nav-btn">
+                <button id="mcpToolsButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">hub</span>
                     MCP Tools
                 </button>
-                <button id="mcpManagementButton" class="nav-btn admin-only" data-admin-display="inline-flex">
+                <button id="mcpManagementButtonMobile" class="nav-btn-mobile admin-only" data-admin-display="flex">
                     <span class="material-icons">dns</span>
                     MCP Admin
                 </button>
-                <button id="downloadButton" class="nav-btn">
+                <button id="downloadButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">download</span>
                     Download
                 </button>
-                <button id="conversationsButton" class="nav-btn">
+                <button id="newMessagesButtonMobile" class="nav-btn-mobile">
+                    <span class="material-icons">refresh</span>
+                    Restart
+                </button>
+                <button id="conversationsButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">chat</span>
                     Conversations
                 </button>
-                <button id="newMessagesButton" class="nav-btn">
-                    <span class="material-icons">refresh</span>
-                    Start Over
-                </button>
-                <button id="userManagementButton" class="nav-btn admin-only" data-admin-display="inline-flex">
+                <button id="userManagementButtonMobile" class="nav-btn-mobile admin-only" data-admin-display="flex">
                     <span class="material-icons">group</span>
                     Users
                 </button>
-                <button id="accountSettingsButton" class="nav-btn">
+                <button id="accountSettingsButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">manage_accounts</span>
                     Account
                 </button>
-                <button id="logoutButton" class="nav-btn logout-btn">
+                <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
                     <span class="material-icons">logout</span>
                     Logout
                 </button>
             </div>
-            
-            <!-- Mobile Menu Toggle -->
-            <button class="navbar-toggle" id="navbarToggle">
-                <span class="hamburger-line"></span>
-                <span class="hamburger-line"></span>
-                <span class="hamburger-line"></span>
-            </button>
-        </div>
-        
-        <!-- Mobile Navigation Menu -->
-        <div class="navbar-mobile-menu" id="navbarMobileMenu">
-            <button id="systemPromptButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">settings</span>
-                System Prompt
-            </button>
-            <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">psychology</span>
-                Knowledge Base
-            </button>
-            <button id="mcpToolsButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">hub</span>
-                MCP Tools
-            </button>
-            <button id="mcpManagementButtonMobile" class="nav-btn-mobile admin-only" data-admin-display="flex">
-                <span class="material-icons">dns</span>
-                MCP Admin
-            </button>
-            <button id="downloadButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">download</span>
-                Download conversation
-            </button>
-            <button id="conversationsButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">chat</span>
-                Conversations
-            </button>
-            <button id="newMessagesButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">refresh</span>
-                Start over
-            </button>
-            <button id="userManagementButtonMobile" class="nav-btn-mobile admin-only" data-admin-display="flex">
-                <span class="material-icons">group</span>
-                Users
-            </button>
-            <button id="accountSettingsButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">manage_accounts</span>
-                Account Settings
-            </button>
-            <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
-                <span class="material-icons">logout</span>
-                Logout
-            </button>
-        </div>
-    </nav>
 
-    <!-- Mobile overlay -->
-    <div class="mobile-overlay" id="mobileOverlay"></div>
+            <div class="mobile-overlay" id="mobileOverlay"></div>
+
+            <div id="chatDisplay" class="chat-display"></div>
+            <footer class="chat-footer">
+                <div class="file-upload-section">
+                    <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xlsx, .jpg, .png, .pdf" style="display: none">
+                    <div id="uploadProgress" class="progress-bar" style="display: none">
+                        <div class="progress"></div>
+                    </div>
+                    <div id="uploadedFiles" class="uploaded-files-list"></div>
+                </div>
+                <div class="prompt-row">
+                    <div class="input-container">
+                        <button id="uploadButton" title="Max file size: 10MB">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M21.44 11.05l-9.19 9.19a6.003 6.003 0 01-8.49-8.49l9.19-9.19a4.002 4.002 0 015.66 5.66l-9.2 9.19a2.001 2.001 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                        
+                        <textarea id="messageInput" placeholder="Type your message, click mic to dictate, or attach/drop a file..." autocomplete="off" rows="1"></textarea>
+
+                        <button id="micButton" title="Dictate" class="icon-button">
+                            <i class="material-icons">mic</i>
+                        </button>
+
+                        <!-- Drop overlay -->
+                        <div id="dropOverlay" class="drop-overlay">
+                            <p>Drop files or screenshots here</p>
+                        </div>
+                    </div>
+                    <div class="prompt-actions">
+                        <button id="sendButton">Send</button>
+                        <button id="stopButton" disabled>Stop</button>
+                    </div>
+                </div>
+                <input type="file" id="fileUpload" multiple style="display: none">
+            </footer>
+
+            <div id="promptIdeasContainer"></div>
+        </div>
+
+        <div class="disclaimer-text">
+            <span>IDEA can make mistakes — check important results. Inputs may be used to improve services by UHSLC and/or LLM providers.</span>
+            <a href="https://github.com/uhsealevelcenter/IDEA"> [More info]</a>
+        </div>
+    </div>
 
     <!-- Knowledge Base Management Modal -->
     <div id="knowledgeBaseModal" class="modal">
@@ -553,45 +595,6 @@
         </div>
     </div>
 
-    <div class="chat-container">
-        <div id="chatDisplay" class="chat-display"></div>
-        <footer class="chat-footer">
-            <div class="file-upload-section">
-                <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xlsx, .jpg, .png, .pdf" style="display: none">
-                <div id="uploadProgress" class="progress-bar" style="display: none">
-                    <div class="progress"></div>
-                </div>
-                <div id="uploadedFiles" class="uploaded-files-list"></div>
-            </div>
-            <div class="input-container">
-                <button id="uploadButton" title="Max file size: 10MB">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M21.44 11.05l-9.19 9.19a6.003 6.003 0 01-8.49-8.49l9.19-9.19a4.002 4.002 0 015.66 5.66l-9.2 9.19a2.001 2.001 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </button>
-                
-                <textarea id="messageInput" placeholder="Type your message, click mic to dictate, or attach/drop a file..." autocomplete="off" rows="1"></textarea>
-
-                <button id="micButton" title="Dictate" class="icon-button">
-                    <i class="material-icons">mic</i>
-                </button>
-
-                <!-- Drop overlay -->
-                <div id="dropOverlay" class="drop-overlay">
-                    <p>Drop files or screenshots here</p>
-                </div>
-            </div>
-            <button id="sendButton">Send</button>
-            <button id="stopButton" disabled>Stop</button>
-            <input type="file" id="fileUpload" multiple style="display: none">
-        </footer>
-
-        <div id="promptIdeasContainer"></div>
-    </div>
-    <div class="disclaimer-text">
-        <span>IDEA can make mistakes — check important results. Inputs may be used to improve services by UHSLC and/or LLM providers.</span>
-        <a href="https://github.com/uhsealevelcenter/IDEA"> [More info]</a>
-    </div>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <!-- DOMPurify for sanitizing HTML -->

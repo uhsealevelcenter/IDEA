@@ -10,6 +10,11 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <style>
         /* Override styles for shared view */
+        html, body.shared-view {
+            overflow-y: auto !important;
+            overflow-x: hidden;
+        }
+
         .shared-view {
             padding: 20px;
             max-width: 1200px;
