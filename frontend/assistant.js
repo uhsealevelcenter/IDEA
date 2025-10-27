@@ -24,6 +24,7 @@ let isGenerating = false;
 let controller = null;
 let promptIdeasVisible = false;
 let currentMessageId = null;
+let workingIndicatorId = null;
 
 // Conversation manager instance
 let conversationManager;
@@ -70,9 +71,29 @@ function getAuthHeaders() {
 
 function logout() {
     localStorage.removeItem('authToken');
-    authToken = null;
-    redirectToLogin();
+   authToken = null;
+   redirectToLogin();
 }
+
+function applyTheme() {
+    document.body.classList.remove('theme-light', 'theme-dark');
+    document.body.classList.add('theme-light');
+
+    themeToggleInputs.forEach((input) => {
+        input.checked = false;
+    });
+}
+
+function initializeTheme() {
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, 'light');
+        applyTheme();
+    } catch (error) {
+        console.error('Failed to initialize theme:', error);
+    }
+}
+
+initializeTheme();
 
 //// Math formatting helpers
 
@@ -165,7 +186,9 @@ const stopButton = document.getElementById('stopButton');
 const newMessagesButton = document.getElementById('newMessagesButton');
 const messageInput = document.getElementById('messageInput');
 const progressBar = document.getElementById('uploadProgress');
-const progressElement = progressBar.querySelector('.progress');
+const progressElement = progressBar ? progressBar.querySelector('.progress') : null;
+const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
+const THEME_STORAGE_KEY = 'idea-theme';
 
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
@@ -213,27 +236,27 @@ function createPromptIdeas() {
     console.log("Creating prompt ideas");
     const prompts = [
         {
-            title: "Explore Popular Datasets",
+            title: "Explore data", // Explore Popular Datasets
             prompt: "Explore a popular dataset for me, such as global population, climate data, or economic indicators. Load the data, clean it, and provide summaries or visualizations like interactive maps, time-series plots, or bar charts to help me understand the data better."
         },
         {
-            title: "Perform Data Analysis",
+            title: "Analyze data", // Perform Data Analysis
             prompt: "Analyze a dataset for me. Calculate trends, perform statistical analysis, or apply machine learning models. Show me the code, results, and visualizations step-by-step."
         },
         {
-            title: "Create Interactive Maps",
+            title: "Create maps", // Create Interactive Maps
             prompt: "Create an interactive map for me using geospatial data. For example, map population density, weather patterns, or transportation networks. Fetch the data, process it, and generate a map I can interact with."
         },
         {
-            title: "Generate Insights from Files",
+            title: "Process files", // Generate Insights from Files
             prompt: "Process and analyze a file I upload, such as a CSV, Excel, or JSON file. Clean the data, extract insights, and create visualizations or reports for me."
         },
         {
-            title: "Brainstorm Research Ideas",
+            title: "Brainstorm ideas", // Brainstorm Research Ideas
             prompt: "Help me brainstorm research ideas using publicly available datasets. Suggest interesting questions, guide me through the initial analysis, and create visualizations to support the findings. If I don’t have a specific topic in mind, suggest one for me."
         },
         {
-            title: "Interact with APIs",
+            title: "Fetch data", // Interact with APIs
             prompt: "Fetch data from an API or scrape data from a website (ethically and within legal boundaries). For example, retrieve weather data, stock prices, or other real-time information and analyze it for me."
         }
     ];
@@ -383,6 +406,8 @@ async function sendRequest(msgOverride=null) {
         scrollToBottom();
         messageInput.value = '';
 
+        showWorkingIndicator();
+
         // Define parameters for the POST request
         const params = {
             messages
@@ -467,6 +492,7 @@ async function sendRequest(msgOverride=null) {
 
 // Function to reset send and stop buttons
 function resetButtons() {
+    removeWorkingIndicator();
     sendButton.disabled = false;
     stopButton.disabled = true;
     controller = null;
@@ -478,6 +504,7 @@ function processChunk(chunk) {
     let messageStarted = false;
     let messageEnded = false;
     return new Promise((resolve) => {
+        removeWorkingIndicator();
         if (chunk.start) {
             // Start of a new message
             const newMessage = {
@@ -805,6 +832,7 @@ function appendConfirmationChunk(chunk) {
 // Function to clear chat history
 async function clearChatHistory() {
     try {
+        removeWorkingIndicator();
         // Clear chat history
         const response = await fetch(config.getEndpoints().clear, {
             method: "POST",
@@ -876,6 +904,47 @@ function escapeHtml(text) {
 // Scroll to the bottom of the chat display
 function scrollToBottom() {
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+}
+
+function showWorkingIndicator() {
+    if (workingIndicatorId) {
+        return workingIndicatorId;
+    }
+
+    workingIndicatorId = generateId('thinking');
+
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'assistant', 'thinking');
+    messageElement.setAttribute('data-id', workingIndicatorId);
+
+    const contentElement = document.createElement('div');
+    contentElement.classList.add('content');
+    contentElement.innerHTML = `
+        <div class="thinking-content" role="status" aria-live="polite">
+            <span class="thinking-spinner" aria-hidden="true"></span>
+            <span>Thinking</span>
+            <span class="thinking-ellipsis" aria-hidden="true">
+                <span></span><span></span><span></span>
+            </span>
+        </div>
+    `;
+
+    messageElement.appendChild(contentElement);
+    chatDisplay.appendChild(messageElement);
+    scrollToBottom();
+
+    return workingIndicatorId;
+}
+
+function removeWorkingIndicator() {
+    if (!workingIndicatorId) return;
+
+    const indicator = chatDisplay.querySelector(`.message[data-id="${workingIndicatorId}"]`);
+    if (indicator) {
+        indicator.remove();
+    }
+
+    workingIndicatorId = null;
 }
 
 function addCopyButtons() {
@@ -1303,6 +1372,8 @@ async function createSelfContainedHTML() {
             margin: 0 auto;
             padding: 20px;
             background: #fff;
+            overflow-y: auto !important;
+            overflow-x: hidden;
         }
         
         .export-header {
