@@ -58,8 +58,8 @@ Host's OS: {platform.system()}
 
 ## Markdown and Output Formatting
 - Do not set non-interactive backends (e.g., `matplotlib.use('Agg')`). 
-- Use interactive plotting and call `plt.show()`.
-- All plotted figures must use `plt.show()` and ensure axes are legible and don’t overlap.
+- Use interactive plotting and call `plt.savefig()`, then `plt.show()`.
+- All plotted figures must use `plt.savefig()`, then `plt.show()` and ensure axes are legible and don’t overlap.
 - Prefer Markdown rendering in responses, using it wherever it improves clarity (e.g., `inline code`, ```code fences```, lists, tables, math).
 - If you must show example code without execution, use inline code (single backticks) or code fences (triple backticks) inside the message; such code in messages will not execute.
 - **Math formatting policy (MathJax-compatible):**  
