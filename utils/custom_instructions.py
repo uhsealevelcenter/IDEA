@@ -2,7 +2,7 @@
 def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, pqa_settings_name):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     ##  Removed station_id parameter
-    CODEX_HOME="-/app/Codex"
+    CODEX_HOME="./Codex"
     return f"""
             The host is {host}.
             The user_id is {user_id}.
