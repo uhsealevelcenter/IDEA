@@ -53,14 +53,23 @@ ENV PYTHONUNBUFFERED=1
 # Install runtime dependencies including GDAL
 RUN apt-get update && apt-get install -y \
     wget \
+    ca-certificates \
     libexpat1-dev \
     curl \
+    gnupg \
     gdal-bin \
     libgdal-dev \
     libproj-dev \
     libgeos-dev \
     libspatialite-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js and Codex CLI
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get update && apt-get install -y nodejs git && \
+    npm install -g @openai/codex && \
+    npm cache clean --force && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set GDAL environment variables for runtime
 ENV GDAL_CONFIG /usr/bin/gdal-config

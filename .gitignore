@@ -193,6 +193,9 @@ data/**
 # Ignore outputs
 outputs
 
+# Codex CLI workspace
+Codex/
+
 # Ignore frontend config file
 /frontend/config.js
 
