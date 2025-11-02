@@ -2,7 +2,8 @@
 def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, pqa_settings_name):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     ##  Removed station_id parameter
-    CODEX_HOME="./Codex"
+    CODEX_HOME="./.codex"
+    CODEX_SANDBOX="./Codex_Sandbox"
     return f"""
             The host is {host}.
             The user_id is {user_id}.
@@ -32,18 +33,20 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
 
             2. You have access to a command line coding agent called Codex.
             Codex can explore, summarize, edit, and run code in the local workspace.
-                - Use it by first authenticating using the environment variable: printenv OPENAI_API_KEY | codex login --with-api-key
+                - cd to the Codex_Sandbox: cd ${CODEX_SANDBOX}
                 - Then call: codex exec "<instruction>"
-            Use it when:
+                - Login happens automatically using an authentication file: codex login WILL NOT WORK in this environment.
+            Use Codex when:
                 - The user requests a code explanation, refactor, or improvement.
                 - You need to summarize, analyze, or document a repository.
                 - You want to generate or modify source code in an existing project.
                 - You need to identify where specific functionality is implemented.
             Rules:
                 - Always run Codex in exec mode (e.g., codex exec "Summarize this repository").
-                - Work only within ${CODEX_HOME}:
-                    * Repositories: ${CODEX_HOME}/repos
-                    * Temporary files: ${CODEX_HOME}/tmp
+                - Work only within ${CODEX_SANDBOX}:
+                    * Repositories: ${CODEX_SANDBOX}/repos
+                    * Temporary files: ${CODEX_SANDBOX}/tmp
+                - Configuration and authentication files are in ${CODEX_HOME}.
                 - Do not modify files outside these paths.
                 - Keep commands clear and descriptive to guide Codex effectively.
                 - Remind the user that Codex operations may take time.
