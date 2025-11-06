@@ -499,6 +499,54 @@ function resetButtons() {
     isGenerating = false;
 }
 
+function shouldStartNewBase64Image(message, chunk) {
+    if (!message || message.type !== 'image') return false;
+    const hasExistingContent = typeof message.content === 'string' && message.content.length > 0;
+    if (!hasExistingContent) return false;
+
+    const formatHint = chunk.format || message.format || '';
+    if (!formatHint.startsWith('base64.')) return false;
+    if (chunk.start) return false;
+
+    const chunkContent = (chunk.content || '').trimStart();
+    if (!chunkContent) return false;
+
+    const pngHeader = 'iVBORw0KGgo';
+    const jpegHeader = '/9j/';
+    return chunkContent.startsWith(pngHeader) || chunkContent.startsWith(jpegHeader);
+}
+
+function saveCompletedAssistantMessage(message) {
+    if (!conversationManager || !(message.role === 'assistant' || message.role === 'computer')) {
+        return;
+    }
+    const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+    const messageType = validTypes.includes(message.type) ? message.type : 'message';
+
+    conversationManager.addMessage(
+        message.role,
+        message.content,
+        messageType,
+        message.format,
+        message.recipient
+    ).catch(error => {
+        console.error('Failed to save completed message to conversation:', error);
+    });
+}
+
+function createImageMessageFromChunk(chunk, fallbackMessage) {
+    return {
+        id: generateId('msg'),
+        role: chunk.role || (fallbackMessage && fallbackMessage.role) || 'assistant',
+        type: chunk.type || (fallbackMessage && fallbackMessage.type) || 'image',
+        content: '',
+        format: chunk.format || (fallbackMessage && fallbackMessage.format) || undefined,
+        recipient: chunk.recipient || (fallbackMessage && fallbackMessage.recipient) || undefined,
+        created_at: new Date().toISOString(),
+        isComplete: false,
+    };
+}
+
 // Function to process each chunk of the stream and create messages
 function processChunk(chunk) {
     let messageStarted = false;
@@ -536,31 +584,29 @@ function processChunk(chunk) {
         // }
 
         // Append content to the message with the current ID
-        const message = messages.find(msg => msg.id === currentMessageId);
+        let message = messages.find(msg => msg.id === currentMessageId);
         if (message) {
+            if (shouldStartNewBase64Image(message, chunk)) {
+                message.isComplete = true;
+                updateMessageContent(message.id, message.content);
+                saveCompletedAssistantMessage(message);
+
+                const newMessage = createImageMessageFromChunk(chunk, message);
+                messages.push(newMessage);
+                appendMessage(newMessage);
+                currentMessageId = newMessage.id;
+                message = newMessage;
+            }
+
             if (chunk.end) {
                 message.isComplete = true;  // Mark message as complete
                 // console.log(`Message ${currentMessageId} completed`);
-                
+
                 // Save the completed message to conversation if it's from assistant or computer
-                if (conversationManager && (message.role === 'assistant' || message.role === 'computer')) {
-                    // Validate message type against backend enums
-                    const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
-                    const messageType = validTypes.includes(message.type) ? message.type : 'message';
-                    
-                    conversationManager.addMessage(
-                        message.role, 
-                        message.content, 
-                        messageType,
-                        message.format,
-                        message.recipient
-                    ).catch(error => {
-                        console.error('Failed to save completed message to conversation:', error);
-                    });
-                }
+                saveCompletedAssistantMessage(message);
             }
-            message.format = chunk.format || undefined;
-            message.recipient = chunk.recipient || undefined;
+            message.format = chunk.format || message.format || undefined;
+            message.recipient = chunk.recipient || message.recipient || undefined;
             if (chunk.format == 'active_line') {
                 message.content = chunk.content || '';
             }else{
@@ -745,9 +791,17 @@ function updateMessageContent(id, content) {
             // 6) Typeset math (don’t wait for message.isComplete)
             typeset(contentDiv);
         } else if (message.type === 'image') {
-            if (message.format === 'base64.png') {
-                contentDiv.innerHTML = `<img src="data:image/png;base64,${content}" alt="Image">`;
+            if (message.format && message.format.startsWith('base64.')) {
+                const mime = message.format.replace('base64.', 'image/');
+                if (message.isComplete) {
+                    contentDiv.innerHTML =
+                        `<img src="data:${mime};base64,${content}" alt="Image">`;
+                } else {
+                    // still streaming, don't try to render partial base64
+                    contentDiv.innerHTML = `<div class="image-placeholder"> Generating image… </div>`;
+                }
             } else if (message.format === 'path') {
+                // path-based images are usually already usable
                 contentDiv.innerHTML = `<img src="${content}" alt="Image">`;
             }
         } else if (message.type === 'code') {

@@ -50,7 +50,7 @@ from utils.custom_instructions import get_custom_instructions  # Generic Assista
 
 # Import prompt manager
 from utils.prompt_manager import init_prompt_manager, get_prompt_manager
-from knowledge_base_routes import router as knowledge_base_router
+from knowledge_base_routes import router as knowledge_base_router, MAX_PAPER_SIZE
 from conversation_routes import router as conversation_router
 from mcp_routes import router as mcp_router
 from sqlmodel import Session
@@ -422,15 +422,30 @@ else:
 # Add request size limit middleware
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        #if request.method == "POST":
-        if request.method == "POST" and request.url.path.endswith("/upload"): # Limits to uploads, so images in chat are unlimited
-
+        if request.method == "POST":
+            path = request.url.path
             content_length = request.headers.get("content-length")
-            if content_length and int(content_length) > MAX_FILE_SIZE:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Request too large"}
-                )
+
+            if content_length:
+                try:
+                    request_size = int(content_length)
+                except ValueError:
+                    request_size = None
+
+                if request_size is not None:
+                    # Allow larger files for knowledge-base uploads while keeping chat uploads constrained
+                    if path.endswith("/knowledge-base/papers/upload"):
+                        max_size = MAX_PAPER_SIZE
+                    elif path.endswith("/upload"):
+                        max_size = MAX_FILE_SIZE
+                    else:
+                        max_size = None
+
+                    if max_size and request_size > max_size:
+                        return JSONResponse(
+                            status_code=413,
+                            content={"detail": "Request too large"}
+                        )
         return await call_next(request)
 
 
