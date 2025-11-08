@@ -1406,13 +1406,33 @@ function renderMessageContentForExport(message) {
     return message.content || '';
 }
 
+function getMessageDataForExport(messageId) {
+    if (!messageId) return null;
+    
+    if (Array.isArray(messages)) {
+        const inSession = messages.find(msg => msg.id === messageId);
+        if (inSession) {
+            return inSession;
+        }
+    }
+    
+    if (conversationManager && Array.isArray(conversationManager.currentMessages)) {
+        const fromConversation = conversationManager.currentMessages.find(msg => msg.id === messageId);
+        if (fromConversation) {
+            return fromConversation;
+        }
+    }
+    
+    return null;
+}
+
 function prepareChatCloneForExport() {
     const chatClone = chatDisplay.cloneNode(true);
     const messageElements = Array.from(chatClone.querySelectorAll('.message'));
     
     messageElements.forEach(element => {
         const messageId = element.getAttribute('data-id');
-        const messageData = messages.find(msg => msg.id === messageId);
+        const messageData = getMessageDataForExport(messageId);
         if (!messageData) {
             return;
         }
@@ -1430,6 +1450,10 @@ function prepareChatCloneForExport() {
         contentEl.setAttribute('data-type', messageData.type || messageData.message_type || 'message');
         contentEl.innerHTML = renderMessageContentForExport(messageData);
     });
+    
+    if (window.Prism && Prism.highlightAllUnder) {
+        Prism.highlightAllUnder(chatClone);
+    }
     
     return chatClone;
 }
@@ -1497,6 +1521,24 @@ async function createSelfContainedHTML() {
             justify-content: space-between;
             align-items: flex-start;
             gap: clamp(12px, 3vw, 24px);
+        }
+
+        .export-view .message .content pre {
+            background: rgba(1, 4, 5, 0.9);
+            color: #e2e8f0;
+            padding: 14px;
+            border-radius: 12px;
+            overflow-x: auto;
+            position: relative;
+        }
+
+        body.theme-light.export-view .message .content pre {
+            background: #0f172a;
+        }
+
+        .export-view .message .content code {
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+            font-size: 0.92em;
         }
 
         .export-meta {
