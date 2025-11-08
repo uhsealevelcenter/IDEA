@@ -1366,14 +1366,95 @@ async function downloadConversation() {
     }
 }
 
+function shouldIncludeMessageInExport(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type;
+    if (msgType === 'console') {
+        if (message.format === 'active_line') {
+            return false;
+        }
+        const text = typeof message.content === 'string' ? message.content.trim() : '';
+        return text.length > 0;
+    }
+    return true;
+}
+
+function renderMessageContentForExport(message) {
+    const msgType = message.type || message.message_type || 'message';
+    const format = message.format || message.message_format || '';
+    if (msgType === 'message') {
+        return marked ? marked.parse(message.content || '') : (message.content || '');
+    }
+    if (msgType === 'image') {
+        if (format === 'base64.png') {
+            return `<img src="data:image/png;base64,${message.content}" alt="Image">`;
+        }
+        return `<img src="${message.content}" alt="Image">`;
+    }
+    if (msgType === 'code') {
+        if (format === 'html') {
+            return message.content || '';
+        }
+        return `<pre><code class="language-${format || ''}">${escapeHtml(message.content || '')}</code></pre>`;
+    }
+    if (msgType === 'console') {
+        return `<pre>${escapeHtml(message.content || '')}</pre>`;
+    }
+    if (msgType === 'file') {
+        return `<a href="${message.content}" download>Download File</a>`;
+    }
+    return message.content || '';
+}
+
+function prepareChatCloneForExport() {
+    const chatClone = chatDisplay.cloneNode(true);
+    const messageElements = Array.from(chatClone.querySelectorAll('.message'));
+    
+    messageElements.forEach(element => {
+        const messageId = element.getAttribute('data-id');
+        const messageData = messages.find(msg => msg.id === messageId);
+        if (!messageData) {
+            return;
+        }
+        
+        if (!shouldIncludeMessageInExport(messageData)) {
+            element.remove();
+            return;
+        }
+        
+        const contentEl = element.querySelector('.content');
+        if (!contentEl) {
+            return;
+        }
+        
+        contentEl.setAttribute('data-type', messageData.type || messageData.message_type || 'message');
+        contentEl.innerHTML = renderMessageContentForExport(messageData);
+    });
+    
+    return chatClone;
+}
+
 async function createSelfContainedHTML() {
     // Get all CSS from the current page
     const allCSS = await extractAllCSS();
     
-    // Clone the chat display and process images
-    const chatClone = chatDisplay.cloneNode(true);
-    removeEmptyConsoleMessages(chatClone);
-    await processImagesInElement(chatClone);
+    // Prepare export chat content
+    const exportChat = prepareChatCloneForExport();
+    await processImagesInElement(exportChat);
+    
+    const generatedOn = new Date();
+    const generatedDate = generatedOn.toLocaleDateString();
+    const generatedTimestamp = generatedOn.toLocaleString();
+    const downloadedDisplay = generatedOn.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        second: 'numeric',
+        hour12: true,
+        timeZoneName: 'short'
+    });
     
     // Create the complete HTML document
     const htmlTemplate = `<!DOCTYPE html>
@@ -1381,98 +1462,145 @@ async function createSelfContainedHTML() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IDEA Conversation - ${new Date().toLocaleDateString()}</title>
+    <title>IDEA Conversation - ${generatedDate}</title>
     <style>
         ${allCSS}
         
-        /* Additional styles for the exported conversation */
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #fff;
+        body.export-view {
+            background: var(--body-gradient);
+            min-height: 100vh;
+            padding: clamp(16px, 5vw, 40px);
             overflow-y: auto !important;
             overflow-x: hidden;
         }
-        
-        .export-header {
+
+        .export-view .chat-container {
+            height: auto;
+            max-height: none;
+        }
+
+        .export-view .chat-display {
+            max-height: none;
+            overflow: visible;
+        }
+
+        .export-chat-panel {
+            flex: 1;
+            display: flex;
+            padding: clamp(18px, 4vw, 32px);
+            background: var(--surface-alt);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .export-header .header-content {
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: clamp(12px, 3vw, 24px);
+        }
+
+        .export-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: right;
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .export-title {
+            font-size: 0.95rem;
+        }
+
+        .export-meta-text {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .export-brand-link {
+            color: rgba(255, 255, 255, 0.72);
+            text-decoration: underline;
+        }
+
+        .export-brand-link:visited {
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .export-footer {
+            margin-top: 18px;
             text-align: center;
-            margin-bottom: 40px;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 20px;
+            color: var(--text-muted);
+            font-size: 0.9rem;
         }
-        
-        .export-header h1 {
-            color: #2c3e50;
-            margin-bottom: 10px;
+
+        .export-footer p {
+            margin: 0.25rem 0;
         }
-        
-        .export-header p {
-            color: #7f8c8d;
-            margin: 5px 0;
-        }
-        
-        .chat-display {
-            max-height: none !important;
-            overflow: visible !important;
-        }
-        
-        /* Ensure code blocks are properly styled */
-        pre {
-            background-color: #000000 !important;
-            border-radius: 6px !important;
-            padding: 16px !important;
-            overflow-x: auto !important;
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
-        }
-        
-        code {
-            font-family: 'Courier New', Courier, monospace !important;
-            font-size: 0.9em !important;
-        }
-        
-        /* Ensure images are responsive */
-        img {
-            max-width: 100% !important;
-            height: auto !important;
-            border-radius: 8px !important;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-        }
-        
-        /* Print styles */
+
         @media print {
-            .export-header {
-                break-inside: avoid;
+            body.export-view {
+                padding: 0;
             }
-            
-            .message {
-                break-inside: avoid;
-                margin-bottom: 1em;
+
+            .chat-container {
+                box-shadow: none !important;
             }
-            
-            pre {
-                break-inside: avoid;
+
+            .export-chat-panel {
+                padding: 18px 24px;
+            }
+
+            .export-footer {
+                display: none;
             }
         }
     </style>
 </head>
-<body>
-    <div class="export-header">
-        <h1>IDEA Conversation</h1>
-        <h2><a href="https://github.com/uhsealevelcenter/IDEA" target="_blank">Intelligent Data Exploring Assistant</a></h2>
-        <p>Generated on: ${new Date().toLocaleString()}</p>
-        <p>Total messages: ${messages.length}</p>
-        <p>(Note: equations not displayed)</p>
+<body class="main-app theme-light export-view">
+    <div class="app">
+        <div class="chat-container export-chat-container">
+            <header class="chat-header export-header">
+                <div class="header-content">
+                    <div class="header-brand">
+                        <span class="brand-abbrev">IDEA</span>
+                        <a class="brand-name export-brand-link" href="https://uhslc.soest.hawaii.edu/research/IDEA" target="_blank" rel="noreferrer noopener">Intelligent Data Exploring Assistant</a>
+                    </div>
+                    <div class="export-meta">
+                        <span class="export-title">Conversation downloaded</span>
+                        <span class="export-meta-text">${downloadedDisplay}</span>
+                        <span class="export-meta-text">(Equation rendering requires internet.)</span>
+                    </div>
+                </div>
+            </header>
+            
+            <div class="export-chat-panel">
+                <div class="chat-display">
+                    ${exportChat.innerHTML}
+                </div>
+            </div>
+        </div>
+        <div class="export-footer">
+            <p>
+                IDEA can make mistakes — check important results.
+                <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noreferrer noopener">[More info]</a>
+            </p>
+        </div>
     </div>
     
-    <div class="chat-display">
-        ${chatClone.innerHTML}
-    </div>
-    
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea']
+            },
+            svg: { fontCache: 'global' }
+        };
+    </script>
+    <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
     <script>
         // Add some interactivity for the exported file
         document.addEventListener('DOMContentLoaded', function() {
@@ -1529,6 +1657,15 @@ async function createSelfContainedHTML() {
                     });
                 }
             });
+
+            const typesetMath = () => {
+                if (window.MathJax && MathJax.typesetPromise) {
+                    MathJax.typesetPromise().catch(err => console.warn('MathJax typeset error:', err));
+                } else if (!(window.MathJax && MathJax.typesetPromise)) {
+                    setTimeout(typesetMath, 150);
+                }
+            };
+            typesetMath();
         });
     </script>
 </body>
@@ -1616,23 +1753,6 @@ function convertImageToDataURL(img) {
         } catch (e) {
             console.warn('Error in convertImageToDataURL:', e);
             resolve(null);
-        }
-    });
-}
-
-function removeEmptyConsoleMessages(element) {
-    if (!element) return;
-    
-    const consoleBlocks = element.querySelectorAll('.message .content[data-type="console"]');
-    consoleBlocks.forEach(block => {
-        const textContent = (block.textContent || '').trim();
-        if (!textContent.length) {
-            const parentMessage = block.closest('.message');
-            if (parentMessage) {
-                parentMessage.remove();
-            } else {
-                block.remove();
-            }
         }
     });
 }
