@@ -201,3 +201,6 @@ node_modules/
 
 # Example Output
 Example_Output/
+
+# Untracked system prompts (legacy; pre-prompt management)
+utils/untracked_system_prompts/
