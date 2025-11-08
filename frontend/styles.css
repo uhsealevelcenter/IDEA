@@ -27,7 +27,7 @@ body.theme-light {
     --assistant-bg: rgba(15, 51, 72, 0.08);
     --assistant-border: rgba(15, 51, 72, 0.16);
     --assistant-text: #0d2b3d;
-    --user-bg: #10344a;
+    --user-bg: #0d6ea7;
     --user-border: rgba(15, 50, 71, 0.28);
     --user-text: #f3f7fa;
     --system-bg: rgba(253, 186, 58, 0.18);
@@ -79,7 +79,7 @@ body.theme-dark {
     --assistant-bg: rgba(76, 167, 255, 0.12);
     --assistant-border: rgba(76, 167, 255, 0.28);
     --assistant-text: #d3e7ff;
-    --user-bg: #0f3348;
+    --user-bg: #0d6ea7;
     --user-border: rgba(59, 115, 157, 0.42);
     --user-text: #ecf6ff;
     --system-bg: rgba(245, 158, 11, 0.2);
