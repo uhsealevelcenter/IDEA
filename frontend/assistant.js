@@ -1517,6 +1517,12 @@ async function createSelfContainedHTML() {
             border-bottom: 1px solid var(--border);
         }
 
+        .export-view .disclaimer-text {
+            position: static;
+            margin: 0 auto;
+            width: min(1200px, 100%);
+        }
+
         .export-header .header-content {
             justify-content: space-between;
             align-items: flex-start;
@@ -1592,7 +1598,10 @@ async function createSelfContainedHTML() {
             }
 
             .export-footer {
-                display: none;
+                display: block !important;
+                margin-top: 16px;
+                font-size: 0.85rem;
+                color: #444;
             }
         }
     </style>
@@ -1623,7 +1632,7 @@ async function createSelfContainedHTML() {
         <div class="export-footer">
             <p>
                 IDEA can make mistakes — check important results.
-                <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noreferrer noopener">[More info]</a>
+                <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noreferrer noopener">[More info on GitHub]</a>
             </p>
         </div>
     </div>
