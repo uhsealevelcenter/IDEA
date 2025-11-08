@@ -1372,6 +1372,7 @@ async function createSelfContainedHTML() {
     
     // Clone the chat display and process images
     const chatClone = chatDisplay.cloneNode(true);
+    removeEmptyConsoleMessages(chatClone);
     await processImagesInElement(chatClone);
     
     // Create the complete HTML document
@@ -1615,6 +1616,23 @@ function convertImageToDataURL(img) {
         } catch (e) {
             console.warn('Error in convertImageToDataURL:', e);
             resolve(null);
+        }
+    });
+}
+
+function removeEmptyConsoleMessages(element) {
+    if (!element) return;
+    
+    const consoleBlocks = element.querySelectorAll('.message .content[data-type="console"]');
+    consoleBlocks.forEach(block => {
+        const textContent = (block.textContent || '').trim();
+        if (!textContent.length) {
+            const parentMessage = block.closest('.message');
+            if (parentMessage) {
+                parentMessage.remove();
+            } else {
+                block.remove();
+            }
         }
     });
 }
