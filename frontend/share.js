@@ -139,17 +139,12 @@ function showChat() {
 // Update conversation info in header
 function updateConversationInfo(conversation) {
     const conversationInfo = document.getElementById('conversationInfo');
+    if (!conversationInfo) return;
     
-    const title = conversation.title || 'Untitled Conversation';
     const createdDate = formatDate(conversation.created_at);
-    const messageCount = conversation.messages ? conversation.messages.length : 0;
     
     conversationInfo.innerHTML = `
-        <div class="shared-conversation-title">${escapeHtml(title)}</div>
-        <div>
-            <span><strong>Created:</strong> ${createdDate}</span>
-            <span><strong>Messages:</strong> ${messageCount}</span>
-        </div>
+        <span><strong>Created:</strong> ${createdDate} UTC</span>
     `;
 }
 

@@ -1616,7 +1616,7 @@ async function createSelfContainedHTML() {
                         <a class="brand-name export-brand-link" href="https://uhslc.soest.hawaii.edu/research/IDEA" target="_blank" rel="noreferrer noopener">Intelligent Data Exploring Assistant</a>
                     </div>
                     <div class="export-meta">
-                        <span class="export-title">Conversation downloaded</span>
+                        <span class="export-title">Downloaded conversation</span>
                         <span class="export-meta-text">${downloadedDisplay}</span>
                         <span class="export-meta-text">(Equation rendering requires internet.)</span>
                     </div>
