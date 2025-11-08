@@ -10,8 +10,31 @@ function getShareTokenFromUrl() {
     return matches ? matches[1] : null;
 }
 
+// Determine whether a shared message should be rendered
+function shouldDisplaySharedMessage(message) {
+    if (!message) return false;
+    
+    if (message.message_type === 'console') {
+        if (message.message_format === 'active_line') {
+            return false;
+        }
+        
+        if (typeof message.content === 'string') {
+            return message.content.trim().length > 0;
+        }
+        
+        return Boolean(message.content);
+    }
+    
+    return true;
+}
+
 // Display message in chat (similar to conversation_ui.js but simplified for read-only)
 function displayMessageInChat(message) {
+    if (!shouldDisplaySharedMessage(message)) {
+        return;
+    }
+    
     const chatDisplay = document.getElementById('chatDisplay');
     
     const messageDiv = document.createElement('div');
@@ -173,9 +196,11 @@ async function loadSharedConversation() {
         }
         
         // Display messages
-        conversation.messages.forEach(message => {
-            displayMessageInChat(message);
-        });
+        conversation.messages
+            .filter(shouldDisplaySharedMessage)
+            .forEach(message => {
+                displayMessageInChat(message);
+            });
         
         // Show chat container
         showChat();
