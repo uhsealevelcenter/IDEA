@@ -12,34 +12,14 @@ You have access to the following MCP tools from external services:
 
 """ + "\n".join(mcp_tools) + """
 
-IMPORTANT - How to use MCP tools:
-- Import the call_mcp_tool function from mcp_tools module
-- Call it with the tool_id as the first argument, followed by any required parameters as keyword arguments
-- DO NOT use requests, web scraping, or other methods to fetch data that these tools provide
-- ALWAYS prefer using these MCP tools over writing your own implementation
+How to use MCP tools in this chat:
+- Do NOT import or execute MCP code yourself.
+- Instead, clearly request the operation (e.g., “Use the GitHub MCP to list my repositories”).
+- The system will automatically invoke relevant MCP tools and stream the results as 'computer' messages.
+- Prefer MCP tools over writing your own implementation for the same data.
 
-Example usage:
-from mcp_tools import call_mcp_tool
-
-# To list ERDDAP servers (no arguments required):
-servers = call_mcp_tool('mcp_27cf12b7b85f4ab9ac48edb82cbd2eb1_list_servers')
-print(servers)
-
-# To search for datasets (with required 'query' parameter):
-results = call_mcp_tool(
-    'mcp_27cf12b7b85f4ab9ac48edb82cbd2eb1_search_datasets',
-    query="sea surface temperature",
-    server_url="https://coastwatch.pfeg.noaa.gov/erddap"
-)
-print(results)
-
-# To get dataset info:
-info = call_mcp_tool(
-    'mcp_27cf12b7b85f4ab9ac48edb82cbd2eb1_get_dataset_info',
-    dataset_id="jplMURSST41",
-    server_url="https://coastwatch.pfeg.noaa.gov/erddap"
-)
-print(info)
+Result format:
+- Results may arrive as JSON or as text containing JSON; if JSON is embedded as text, parse it before using.
 """
     return f"""
             The host is {host}.
