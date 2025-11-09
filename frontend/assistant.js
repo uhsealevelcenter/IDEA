@@ -765,7 +765,19 @@ function updateMessageContent(id, content) {
         }
         
         // Handle different message types (more robust Math rendering)
-        if (message.type === 'message') {
+        if (message.format === 'tool_status') {
+            // Render a compact tool-status line with spinner/check
+            const isDone = !!message.isComplete;
+            const text = content || message.content || '';
+            const statusHtml = `
+                <div class="tool-status">
+                    <span class="${isDone ? 'tool-check' : 'thinking-spinner'}" aria-hidden="true"></span>
+                    <span class="tool-status-text">${escapeHtml(text)}</span>
+                </div>
+            `;
+            contentDiv.innerHTML = statusHtml;
+            return;
+        } else if (message.type === 'message') {
             // 1) Start from the raw content
             let raw = content;
 
