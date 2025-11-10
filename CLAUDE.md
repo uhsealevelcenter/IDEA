@@ -70,7 +70,7 @@ docker logs -f <container_id>
 - Single-user design - multiple simultaneous users will interfere with each other
 
 ### File Upload System
-- Supports: `.csv`, `.txt`, `.json`, `.nc`, `.xlsx`, `.mat`, `.tif`, `.png`, `.jpg`
+- Supports: `.csv`, `.txt`, `.json`, `.nc`, `.xls`, `.xlsx`, `.doc`, `.docx`, `.ppt`, `.pptx`, `.pdf`, `.md`, `.mat`, `.tif`, `.png`, `.jpg`
 - Maximum file size: 10MB
 - Files stored in session-specific directories under `static/`
 - Rate limited to 5 uploads per minute, 10 files per session

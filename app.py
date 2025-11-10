@@ -115,7 +115,24 @@ CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
 STATIC_DIR = Path("static")
 UPLOAD_DIR = Path("uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.mat', '.tif', '.png', '.jpg'}  # Added PNG, JPG. & MAT
+ALLOWED_EXTENSIONS = {
+    '.csv',
+    '.txt',
+    '.json',
+    '.nc',
+    '.xls',
+    '.xlsx',
+    '.doc',
+    '.docx',
+    '.ppt',
+    '.pptx',
+    '.pdf',
+    '.md',
+    '.mat',
+    '.tif',
+    '.png',
+    '.jpg'
+}  # Office docs + data/image formats
 
 # Rate limiting
 UPLOAD_RATE_LIMIT = "5/minute"
