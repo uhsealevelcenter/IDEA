@@ -1,3 +1,30 @@
+/* Compact UI for MCP tool status messages */
+.message.tool-status-message {
+  font-size: 0.9em;
+  opacity: 0.9;
+  padding: 6px 8px;
+  margin: 4px 0;
+  background: transparent;
+  box-shadow: none;
+}
+.message.tool-status-message .tool-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.message.tool-status-message .thinking-spinner {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+.message.tool-status-message .tool-check::before {
+  content: "✓";
+  color: #2e7d32; /* green */
+  font-weight: 700;
+}
+.message.tool-status-message .tool-status-text {
+  color: #666;
+}
 /* styles.css */
 
 * {
