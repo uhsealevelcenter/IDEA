@@ -10,8 +10,32 @@ function getShareTokenFromUrl() {
     return matches ? matches[1] : null;
 }
 
+// Determine whether a shared message should be rendered
+function shouldDisplaySharedMessage(message) {
+    if (!message) return false;
+    
+    if (message.message_type === 'console') {
+        // if (message.message_format === 'active_line') {
+        //     return false;
+        // }
+        
+        // if (typeof message.content === 'string') {
+        //     return message.content.trim().length > 0;
+        // }
+        
+        // return Boolean(message.content);
+        return false; // Do not display console messages in shared view
+    }
+    
+    return true;
+}
+
 // Display message in chat (similar to conversation_ui.js but simplified for read-only)
 function displayMessageInChat(message) {
+    if (!shouldDisplaySharedMessage(message)) {
+        return;
+    }
+    
     const chatDisplay = document.getElementById('chatDisplay');
     
     const messageDiv = document.createElement('div');
@@ -116,17 +140,12 @@ function showChat() {
 // Update conversation info in header
 function updateConversationInfo(conversation) {
     const conversationInfo = document.getElementById('conversationInfo');
+    if (!conversationInfo) return;
     
-    const title = conversation.title || 'Untitled Conversation';
     const createdDate = formatDate(conversation.created_at);
-    const messageCount = conversation.messages ? conversation.messages.length : 0;
     
     conversationInfo.innerHTML = `
-        <div class="shared-conversation-title">${escapeHtml(title)}</div>
-        <div>
-            <span><strong>Created:</strong> ${createdDate}</span>
-            <span><strong>Messages:</strong> ${messageCount}</span>
-        </div>
+        <span><strong>Created:</strong> ${createdDate} UTC</span>
     `;
 }
 
@@ -173,9 +192,11 @@ async function loadSharedConversation() {
         }
         
         // Display messages
-        conversation.messages.forEach(message => {
-            displayMessageInChat(message);
-        });
+        conversation.messages
+            .filter(shouldDisplaySharedMessage)
+            .forEach(message => {
+                displayMessageInChat(message);
+            });
         
         // Show chat container
         showChat();

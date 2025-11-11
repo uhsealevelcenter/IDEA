@@ -25,6 +25,10 @@ let controller = null;
 let promptIdeasVisible = false;
 let currentMessageId = null;
 let workingIndicatorId = null;
+let pendingUploads = [];
+
+const THEME_STORAGE_KEY = 'idea-theme';
+const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
 
 // Conversation manager instance
 let conversationManager;
@@ -187,44 +191,103 @@ const newMessagesButton = document.getElementById('newMessagesButton');
 const messageInput = document.getElementById('messageInput');
 const progressBar = document.getElementById('uploadProgress');
 const progressElement = progressBar ? progressBar.querySelector('.progress') : null;
-const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
-const THEME_STORAGE_KEY = 'idea-theme';
 
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
 
     hidePromptIdeas(); 
-    progressBar.style.display = 'block';
+    if (progressBar) {
+        progressBar.style.display = 'block';
+    }
     for (const file of files) {
         try {
             const response = await uploadFile(file, progressElement);
-            const imagePath = response.path;
-
-            if (file.type.startsWith('image')) {
-                // Show the image inline
-                const imageMessage = {
-                    id: generateId('msg'),
-                    role: 'user',
-                    type: 'image',
-                    format: 'path',
-                    content: imagePath,
-                    isComplete: true
-                };
-                // Append image visually and store in conversation
-                //appendMessage(imageMessage); // Commenting this out to avoid double messages
-                messages.push(imageMessage);
-                scrollToBottom();
-
-                // Send clean user message about the upload
-                await sendRequest(`Please describe this image that I uploaded (${file.name})`);
-            } else {
-                sendRequest(`I uploaded ${file.name}`);
-            }
+            queuePendingUpload(file, response);
         } catch (error) {
             appendSystemMessage(`Error uploading ${file.name}: ${error.message}`);
         }
     }
-    progressBar.style.display = 'none';
+    if (progressBar) {
+        progressBar.style.display = 'none';
+    }
+}
+
+function queuePendingUpload(file, uploadResponse = {}) {
+    const storedName = uploadResponse.filename || uploadResponse.name || file.name;
+    const storagePath = uploadResponse.path || storedName;
+    const isImage = (file.type || '').startsWith('image/');
+
+    const attachment = {
+        id: generateId('upload'),
+        name: file.name,
+        storedName,
+        path: storagePath,
+        size: file.size,
+        mimeType: file.type,
+        messageType: isImage ? 'image' : 'file',
+        messageFormat: isImage ? 'path' : null
+    };
+
+    pendingUploads.push(attachment);
+    renderPendingUploads();
+}
+
+function renderPendingUploads() {
+    const uploadedFiles = document.getElementById('uploadedFiles');
+    if (!uploadedFiles) return;
+
+    uploadedFiles.innerHTML = '';
+
+    if (pendingUploads.length === 0) {
+        uploadedFiles.classList.remove('active');
+        return;
+    }
+
+    uploadedFiles.classList.add('active');
+
+    pendingUploads.forEach((attachment) => {
+        const fileElement = document.createElement('span');
+        fileElement.className = 'attached-file';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'attached-file-name';
+        nameSpan.textContent = attachment.name;
+        fileElement.appendChild(nameSpan);
+
+        const removeButton = document.createElement('button');
+        removeButton.className = 'remove-attachment';
+        removeButton.setAttribute('aria-label', `Remove ${attachment.name}`);
+        removeButton.textContent = '×';
+        removeButton.addEventListener('click', () => removePendingAttachment(attachment.id));
+        fileElement.appendChild(removeButton);
+
+        uploadedFiles.appendChild(fileElement);
+    });
+}
+
+async function removePendingAttachment(attachmentId) {
+    const attachment = pendingUploads.find(att => att.id === attachmentId);
+    if (!attachment) return;
+
+    try {
+        const response = await fetch(`${config.getEndpoints().files}/${encodeURIComponent(attachment.storedName)}`, {
+            method: 'DELETE',
+            headers: {
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
+            }
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || 'Delete failed');
+        }
+
+        pendingUploads = pendingUploads.filter(att => att.id !== attachmentId);
+        renderPendingUploads();
+    } catch (error) {
+        appendSystemMessage(`Error deleting file: ${error.message}`);
+    }
 }
 
 function createPromptIdeas() {
@@ -306,7 +369,7 @@ function resetTextareaHeight() {
 
 // Event listeners
 sendButton.addEventListener('click', () => {
-    if (messageInput.value.trim() === '') return;
+    if (messageInput.value.trim() === '' && pendingUploads.length === 0) return;
     sendRequest();
     hidePromptIdeas();
     resetTextareaHeight();
@@ -384,10 +447,62 @@ function safeGetElement(id) {
     return element;
 }
 
+function buildAttachmentInstruction(attachments = []) {
+    if (!attachments.length) return '';
+    const basePath = `./static/{user_id}/${sessionId}/uploads`;
+    const lines = attachments.map(att => {
+        const relPath = att.path || att.storedName || att.name;
+        const mimeType = att.mimeType ? ` (${att.mimeType})` : '';
+        return `- ${att.name}${mimeType}${relPath ? ` | relative path: ${relPath}` : ''}`;
+    }).join('\n');
+    return `Files uploaded in this message:\nSession ID: ${sessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.`;
+}
+
+function serializeMessagesForRequest(messageList = []) {
+    return messageList.map(msg => {
+        const { llmContent, attachments, userText, storageContent, ...rest } = msg;
+        const serialized = { ...rest };
+        if (llmContent) {
+            serialized.content = llmContent;
+        }
+        return serialized;
+    });
+}
+
 // Modify sendRequest to use better error handling
 async function sendRequest(msgOverride=null) {
-    const userInput = msgOverride ? msgOverride : messageInput.value.trim();
-    if (!userInput) return;
+    const attachmentsToSend = pendingUploads.map(att => ({ ...att }));
+    const rawInput = msgOverride !== null ? msgOverride : messageInput.value;
+    const trimmedInput = rawInput ? rawInput.trim() : '';
+    if (!trimmedInput && attachmentsToSend.length === 0) return;
+
+    const attachmentSummaries = attachmentsToSend.map(att => ({
+        name: att.name,
+        path: att.path,
+        size: att.size,
+        mimeType: att.mimeType
+    }));
+
+    const llmInstruction = buildAttachmentInstruction(attachmentsToSend);
+    const llmContentParts = [];
+    if (trimmedInput) {
+        llmContentParts.push(trimmedInput);
+    }
+    if (llmInstruction) {
+        llmContentParts.push(llmInstruction);
+    }
+    const llmContent = llmContentParts.join('\n\n');
+
+    const displaySegments = [];
+    if (trimmedInput) {
+        displaySegments.push(trimmedInput);
+    }
+    if (attachmentSummaries.length) {
+        const attachmentLabel = formatAttachmentLabel(attachmentSummaries.length);
+        const fileNames = attachmentSummaries.map(att => att.name).join(', ');
+        displaySegments.push(`**${attachmentLabel}:** ${fileNames}`);
+    }
+    const displayContent = displaySegments.join('\n\n');
 
     try {
         // Input validation
@@ -399,18 +514,23 @@ async function sendRequest(msgOverride=null) {
             id: generateId('msg'),
             role: 'user',
             type: 'message',
-            content: userInput
+            content: displayContent || trimmedInput,
+            userText: trimmedInput,
+            attachments: attachmentSummaries,
+            llmContent: llmContent || trimmedInput
         };
         messages.push(userMessage);
         appendMessage(userMessage);
         scrollToBottom();
         messageInput.value = '';
+        pendingUploads = [];
+        renderPendingUploads();
 
         showWorkingIndicator();
 
         // Define parameters for the POST request
         const params = {
-            messages
+            messages: serializeMessagesForRequest(messages)
         };
 
         // Initialize AbortController to handle cancellation
@@ -637,7 +757,64 @@ function appendMessage(message) {
     const contentElement = document.createElement('div');
     contentElement.classList.add('content');
     contentElement.setAttribute('data-type', message.type);
-    contentElement.innerHTML = message.content; 
+    if (message.role === 'user' && message.type === 'message') {
+        const userContentWrapper = document.createElement('div');
+        userContentWrapper.classList.add('user-message-wrapper');
+
+        let attachmentNames = null;
+        let textSource = typeof message.userText === 'string' ? message.userText : null;
+        let parsedContentAttachments = null;
+
+        if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+            attachmentLabel = formatAttachmentLabel(message.attachments.length);
+            attachmentNames = message.attachments.map(att => att.name).join(', ');
+        } else if (typeof message.content === 'string') {
+            parsedContentAttachments = extractAttachmentInfoFromContent(message.content);
+            if (parsedContentAttachments) {
+                attachmentLabel = parsedContentAttachments.label || null;
+                attachmentNames = parsedContentAttachments.names;
+                if (textSource === null) {
+                    textSource = parsedContentAttachments.remaining;
+                }
+            }
+        }
+
+        const fallbackText = parsedContentAttachments ? parsedContentAttachments.remaining : (message.content || '');
+        const textToShow = (textSource !== null ? textSource : fallbackText || '').trim();
+        if (textToShow) {
+            const textBlock = document.createElement('div');
+            textBlock.textContent = textToShow;
+            userContentWrapper.appendChild(textBlock);
+        }
+
+        if (attachmentNames) {
+            const attachmentLine = document.createElement('div');
+            attachmentLine.className = 'user-attachment-line';
+            const fallbackCount = (attachmentNames.match(/,/g) || []).length + 1;
+            const label = attachmentLabel || formatAttachmentLabel(fallbackCount);
+            attachmentLine.innerHTML = `<strong>${label}:</strong> ${escapeHtml(attachmentNames)}`;
+            userContentWrapper.appendChild(attachmentLine);
+        }
+
+        contentElement.appendChild(userContentWrapper);
+    } else if (message.type === 'image' && message.format === 'path') {
+        const imageSrc = escapeHtml(message.content || '');
+        const imageAlt = escapeHtml(message.filename || 'Uploaded image');
+        contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview">`;
+    } else if (message.type === 'file') {
+        const displayName = escapeHtml(message.filename || message.name || message.content || 'Attachment');
+        const filePath = escapeHtml(message.content || '');
+        contentElement.classList.add('file-attachment');
+        contentElement.innerHTML = `
+            <span class="material-icons attachment-icon">attach_file</span>
+            <div class="attachment-details">
+                <span class="attachment-name">${displayName}</span>
+                <span class="attachment-path">${filePath}</span>
+            </div>
+        `;
+    } else {
+        contentElement.innerHTML = message.content; 
+    }
 
     messageElement.appendChild(contentElement);
     chatDisplay.appendChild(messageElement);
@@ -890,10 +1067,8 @@ async function clearChatHistory() {
         chatDisplay.innerHTML = '';
         
         // Clear uploaded files list in UI
-        const uploadedFiles = document.getElementById('uploadedFiles');
-        if (uploadedFiles) {
-            uploadedFiles.innerHTML = '';
-        }
+        pendingUploads = [];
+        renderPendingUploads();
 
         appendSystemMessage("Begin a new conversation.");
         showPromptIdeas();
@@ -920,6 +1095,28 @@ function escapeHtml(text) {
         "'": '&#039;',
     };
     return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+function formatAttachmentLabel(count) {
+    return count === 1 ? 'File' : 'Files';
+}
+
+function extractAttachmentInfoFromContent(content) {
+    if (typeof content !== 'string') return null;
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        const match = trimmed.match(/^(?:\*\*)?(File|Files):(?:\*\*)?\s*(.+)$/i);
+        if (match && i === 0) {
+            const remaining = [...lines.slice(0, i), ...lines.slice(i + 1)].join('\n').trim();
+            return {
+                label: match[1].toLowerCase() === 'file' ? 'File' : 'Files',
+                names: match[2].trim(),
+                remaining
+            };
+        }
+    }
+    return null;
 }
 
 // Scroll to the bottom of the chat display
@@ -1133,29 +1330,18 @@ function initializeFileUpload() {
                     const uniqueName = `pasted-${Date.now()}-${Math.floor(Math.random() * 1000)}.${extension}`;
                     const renamedFile = new File([originalFile], uniqueName, { type: originalFile.type });
 
-                    progressBar.style.display = 'block';
+                    if (progressBar) {
+                        progressBar.style.display = 'block';
+                    }
                     try {
                         const response = await uploadFile(renamedFile, progressElement);
-                        const imagePath = response.path;
-
-                        // Show the image inline
-                        const imageMessage = {
-                            id: generateId('msg'),
-                            role: 'user',
-                            type: 'image',
-                            format: 'path',
-                            content: imagePath,
-                            isComplete: true
-                        };
-                        //appendMessage(imageMessage); // Commenting this out to avoid double messages
-                        messages.push(imageMessage);
-                        scrollToBottom();
-
-                        await sendRequest(`Please describe this screenshot that I uploaded (${renamedFile.name})`);
+                        queuePendingUpload(renamedFile, response);
                     } catch (error) {
                         appendSystemMessage(`Error uploading pasted image: ${error.message}`);
                     } finally {
-                        progressBar.style.display = 'none';
+                        if (progressBar) {
+                            progressBar.style.display = 'none';
+                        }
                     }
                 }
             }
@@ -1266,8 +1452,6 @@ async function uploadFile(file, progressElement) {
         }
 
         const data = await response.json();
-        appendSystemMessage(`Successfully uploaded ${file.name}`);
-        //sendRequest(`I uploaded ${file.name}`); // Commenting this out to avoid double messages
         return data;
 
     } catch (error) {
@@ -1276,68 +1460,8 @@ async function uploadFile(file, progressElement) {
     }
 }
 
-async function updateFilesList() {
-    try {
-        const response = await fetch(config.getEndpoints().files, {
-            headers: {
-                'X-Session-Id': sessionId,
-                ...getAuthHeaders()
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to fetch files list');
-        }
-
-        const files = await response.json();
-        const uploadedFiles = document.getElementById('uploadedFiles');
-        uploadedFiles.innerHTML = '';
-
-        files.forEach(file => {
-            const fileElement = document.createElement('div');
-            fileElement.className = 'uploaded-file';
-            fileElement.innerHTML = `
-                <span>${file.name} (${formatFileSize(file.size)})</span>
-                <button class="delete-file" data-filename="${file.name}">×</button>
-            `;
-
-            // Add delete button event listener
-            const deleteButton = fileElement.querySelector('.delete-file');
-            deleteButton.addEventListener('click', async () => {
-                try {
-                    const filename = deleteButton.getAttribute('data-filename');
-                    const response = await fetch(`${config.getEndpoints().files}/${encodeURIComponent(filename)}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'X-Session-Id': sessionId,
-                            ...getAuthHeaders()
-                        }
-                    });
-
-                    if (!response.ok) {
-                        const error = await response.json();
-                        throw new Error(error.detail || 'Delete failed');
-                    }
-
-                    // Remove the file element from the UI
-                    fileElement.remove();
-                    appendSystemMessage(`Successfully deleted ${filename}`);
-                } catch (error) {
-                    appendSystemMessage(`Error deleting file: ${error.message}`);
-                }
-            });
-
-            uploadedFiles.appendChild(fileElement);
-        });
-    } catch (error) {
-        console.error('Error updating files list:', error);
-    }
-}
-
-function formatFileSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+function updateFilesList() {
+    renderPendingUploads();
 }
 
 async function downloadConversation() {
@@ -1366,13 +1490,129 @@ async function downloadConversation() {
     }
 }
 
+function shouldIncludeMessageInExport(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type;
+    if (msgType === 'console') {
+        if (message.format === 'active_line') {
+            return false;
+        }
+        const text = typeof message.content === 'string' ? message.content.trim() : '';
+        return text.length > 0;
+    }
+    return true;
+}
+
+function renderMessageContentForExport(message) {
+    const msgType = message.type || message.message_type || 'message';
+    const format = message.format || message.message_format || '';
+    if (msgType === 'message') {
+        const baseSource = message.content || message.userText || '';
+        const rendered = marked ? marked.parse(baseSource) : baseSource;
+        if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+            const alreadyPresent = /<strong>(?:file|files):<\/strong>/i.test(rendered);
+            const attachmentList = message.attachments
+                .map(att => escapeHtml(att.name))
+                .join(', ');
+            const label = formatAttachmentLabel(message.attachments.length);
+            const prefix = alreadyPresent ? '' : `<p><strong>${label}:</strong> ${attachmentList}</p>`;
+            return `${prefix}${rendered}`;
+        }
+        return rendered;
+    }
+    if (msgType === 'image') {
+        if (format === 'base64.png') {
+            return `<img src="data:image/png;base64,${message.content}" alt="Image">`;
+        }
+        return `<img src="${message.content}" alt="Image">`;
+    }
+    if (msgType === 'code') {
+        if (format === 'html') {
+            return message.content || '';
+        }
+        return `<pre><code class="language-${format || ''}">${escapeHtml(message.content || '')}</code></pre>`;
+    }
+    if (msgType === 'console') {
+        return `<pre>${escapeHtml(message.content || '')}</pre>`;
+    }
+    if (msgType === 'file') {
+        return `<a href="${message.content}" download>Download File</a>`;
+    }
+    return message.content || '';
+}
+
+function getMessageDataForExport(messageId) {
+    if (!messageId) return null;
+    
+    if (Array.isArray(messages)) {
+        const inSession = messages.find(msg => msg.id === messageId);
+        if (inSession) {
+            return inSession;
+        }
+    }
+    
+    if (conversationManager && Array.isArray(conversationManager.currentMessages)) {
+        const fromConversation = conversationManager.currentMessages.find(msg => msg.id === messageId);
+        if (fromConversation) {
+            return fromConversation;
+        }
+    }
+    
+    return null;
+}
+
+function prepareChatCloneForExport() {
+    const chatClone = chatDisplay.cloneNode(true);
+    const messageElements = Array.from(chatClone.querySelectorAll('.message'));
+    
+    messageElements.forEach(element => {
+        const messageId = element.getAttribute('data-id');
+        const messageData = getMessageDataForExport(messageId);
+        if (!messageData) {
+            return;
+        }
+        
+        if (!shouldIncludeMessageInExport(messageData)) {
+            element.remove();
+            return;
+        }
+        
+        const contentEl = element.querySelector('.content');
+        if (!contentEl) {
+            return;
+        }
+        
+        contentEl.setAttribute('data-type', messageData.type || messageData.message_type || 'message');
+        contentEl.innerHTML = renderMessageContentForExport(messageData);
+    });
+    
+    if (window.Prism && Prism.highlightAllUnder) {
+        Prism.highlightAllUnder(chatClone);
+    }
+    
+    return chatClone;
+}
+
 async function createSelfContainedHTML() {
     // Get all CSS from the current page
     const allCSS = await extractAllCSS();
     
-    // Clone the chat display and process images
-    const chatClone = chatDisplay.cloneNode(true);
-    await processImagesInElement(chatClone);
+    // Prepare export chat content
+    const exportChat = prepareChatCloneForExport();
+    await processImagesInElement(exportChat);
+    
+    const generatedOn = new Date();
+    const generatedDate = generatedOn.toLocaleDateString();
+    const generatedTimestamp = generatedOn.toLocaleString();
+    const downloadedDisplay = generatedOn.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: true,
+        timeZoneName: 'short'
+    });
     
     // Create the complete HTML document
     const htmlTemplate = `<!DOCTYPE html>
@@ -1380,98 +1620,172 @@ async function createSelfContainedHTML() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IDEA Conversation - ${new Date().toLocaleDateString()}</title>
+    <title>IDEA Conversation - ${generatedDate}</title>
     <style>
         ${allCSS}
         
-        /* Additional styles for the exported conversation */
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #fff;
+        body.export-view {
+            background: var(--body-gradient);
+            min-height: 100vh;
+            padding: clamp(16px, 5vw, 40px);
             overflow-y: auto !important;
             overflow-x: hidden;
         }
-        
-        .export-header {
+
+        .export-view .chat-container {
+            height: auto;
+            max-height: none;
+        }
+
+        .export-view .chat-display {
+            max-height: none;
+            overflow: visible;
+        }
+
+        .export-chat-panel {
+            flex: 1;
+            display: flex;
+            padding: clamp(18px, 4vw, 32px);
+            background: var(--surface-alt);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .export-view .disclaimer-text {
+            position: static;
+            margin: 0 auto;
+            width: min(1200px, 100%);
+        }
+
+        .export-header .header-content {
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: clamp(12px, 3vw, 24px);
+        }
+
+        .export-view .message .content pre {
+            background: rgba(1, 4, 5, 0.9);
+            color: #e2e8f0;
+            padding: 14px;
+            border-radius: 12px;
+            overflow-x: auto;
+            position: relative;
+        }
+
+        body.theme-light.export-view .message .content pre {
+            background: #0f172a;
+        }
+
+        .export-view .message .content code {
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+            font-size: 0.92em;
+        }
+
+        .export-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: right;
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .export-title {
+            font-size: 0.95rem;
+        }
+
+        .export-meta-text {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .export-brand-link {
+            color: rgba(255, 255, 255, 0.72);
+            text-decoration: underline;
+        }
+
+        .export-brand-link:visited {
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .export-footer {
+            margin-top: 18px;
             text-align: center;
-            margin-bottom: 40px;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 20px;
+            color: var(--text-muted);
+            font-size: 0.9rem;
         }
-        
-        .export-header h1 {
-            color: #2c3e50;
-            margin-bottom: 10px;
+
+        .export-footer p {
+            margin: 0.25rem 0;
         }
-        
-        .export-header p {
-            color: #7f8c8d;
-            margin: 5px 0;
-        }
-        
-        .chat-display {
-            max-height: none !important;
-            overflow: visible !important;
-        }
-        
-        /* Ensure code blocks are properly styled */
-        pre {
-            background-color: #000000 !important;
-            border-radius: 6px !important;
-            padding: 16px !important;
-            overflow-x: auto !important;
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
-        }
-        
-        code {
-            font-family: 'Courier New', Courier, monospace !important;
-            font-size: 0.9em !important;
-        }
-        
-        /* Ensure images are responsive */
-        img {
-            max-width: 100% !important;
-            height: auto !important;
-            border-radius: 8px !important;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-        }
-        
-        /* Print styles */
+
         @media print {
-            .export-header {
-                break-inside: avoid;
+            body.export-view {
+                padding: 0;
             }
-            
-            .message {
-                break-inside: avoid;
-                margin-bottom: 1em;
+
+            .chat-container {
+                box-shadow: none !important;
             }
-            
-            pre {
-                break-inside: avoid;
+
+            .export-chat-panel {
+                padding: 18px 24px;
+            }
+
+            .export-footer {
+                display: block !important;
+                margin-top: 16px;
+                font-size: 0.85rem;
+                color: #444;
             }
         }
     </style>
 </head>
-<body>
-    <div class="export-header">
-        <h1>IDEA Conversation</h1>
-        <h2><a href="https://github.com/uhsealevelcenter/IDEA" target="_blank">Intelligent Data Exploring Assistant</a></h2>
-        <p>Generated on: ${new Date().toLocaleString()}</p>
-        <p>Total messages: ${messages.length}</p>
-        <p>(Note: equations not displayed)</p>
+<body class="main-app theme-light export-view">
+    <div class="app">
+        <div class="chat-container export-chat-container">
+            <header class="chat-header export-header">
+                <div class="header-content">
+                    <div class="header-brand">
+                        <span class="brand-abbrev">IDEA</span>
+                        <a class="brand-name export-brand-link" href="https://uhslc.soest.hawaii.edu/research/IDEA" target="_blank" rel="noreferrer noopener">Intelligent Data Exploring Assistant</a>
+                    </div>
+                    <div class="export-meta">
+                        <span class="export-title">Downloaded conversation</span>
+                        <span class="export-meta-text">${downloadedDisplay}</span>
+                        <span class="export-meta-text">(Equation rendering requires internet.)</span>
+                    </div>
+                </div>
+            </header>
+            
+            <div class="export-chat-panel">
+                <div class="chat-display">
+                    ${exportChat.innerHTML}
+                </div>
+            </div>
+        </div>
+        <div class="export-footer">
+            <p>
+                IDEA can make mistakes — check important results.
+                <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noreferrer noopener">[More info on GitHub]</a>
+            </p>
+        </div>
     </div>
     
-    <div class="chat-display">
-        ${chatClone.innerHTML}
-    </div>
-    
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea']
+            },
+            svg: { fontCache: 'global' }
+        };
+    </script>
+    <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
     <script>
         // Add some interactivity for the exported file
         document.addEventListener('DOMContentLoaded', function() {
@@ -1528,6 +1842,15 @@ async function createSelfContainedHTML() {
                     });
                 }
             });
+
+            const typesetMath = () => {
+                if (window.MathJax && MathJax.typesetPromise) {
+                    MathJax.typesetPromise().catch(err => console.warn('MathJax typeset error:', err));
+                } else if (!(window.MathJax && MathJax.typesetPromise)) {
+                    setTimeout(typesetMath, 150);
+                }
+            };
+            typesetMath();
         });
     </script>
 </body>

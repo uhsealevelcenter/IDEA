@@ -115,7 +115,24 @@ CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
 STATIC_DIR = Path("static")
 UPLOAD_DIR = Path("uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.mat', '.tif', '.png', '.jpg'}  # Added PNG, JPG. & MAT
+ALLOWED_EXTENSIONS = {
+    '.csv',
+    '.txt',
+    '.json',
+    '.nc',
+    '.xls',
+    '.xlsx',
+    '.doc',
+    '.docx',
+    '.ppt',
+    '.pptx',
+    '.pdf',
+    '.md',
+    '.mat',
+    '.tif',
+    '.png',
+    '.jpg'
+}  # Office docs + data/image formats
 
 # Rate limiting
 UPLOAD_RATE_LIMIT = "5/minute"
@@ -192,7 +209,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
                     request_size = None
 
                 if request_size is not None:
-                    # Allow larger knowledge-base uploads while keeping chat uploads constrained
+                    # Allow larger files for knowledge-base uploads while keeping chat uploads constrained
                     if path.endswith("/knowledge-base/papers/upload"):
                         max_size = MAX_PAPER_SIZE
                     elif path.endswith("/upload"):
