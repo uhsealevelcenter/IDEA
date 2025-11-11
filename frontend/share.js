@@ -15,16 +15,16 @@ function shouldDisplaySharedMessage(message) {
     if (!message) return false;
     
     if (message.message_type === 'console') {
-        if (message.message_format === 'active_line') {
-            return false;
-        }
+        // if (message.message_format === 'active_line') {
+        //     return false;
+        // }
         
-        if (typeof message.content === 'string') {
-            return message.content.trim().length > 0;
-        }
+        // if (typeof message.content === 'string') {
+        //     return message.content.trim().length > 0;
+        // }
         
-        return Boolean(message.content);
-        //return false; // Do not display console messages in shared view
+        // return Boolean(message.content);
+        return false; // Do not display console messages in shared view
     }
     
     return true;
