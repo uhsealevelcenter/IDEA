@@ -1291,13 +1291,13 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                             "content": f"🔧 Using {connection.name} • {tool.get('name')}",
                         }
                         yield f"data: {json.dumps(start_chunk)}\n\n"
-                        # End: mark completed (no raw JSON)
+                        # End: mark completed (no raw JSON, no duplicate text)
                         end_chunk = {
                             "end": True,
                             "role": "computer",
                             "type": "message",
                             "format": "tool_status",
-                            "content": " — done",
+                            "content": "",
                         }
                         yield f"data: {json.dumps(end_chunk)}\n\n"
 

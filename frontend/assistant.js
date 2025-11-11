@@ -639,6 +639,12 @@ function appendMessage(message) {
     contentElement.setAttribute('data-type', message.type);
     contentElement.innerHTML = message.content; 
 
+    // Tool-status messages: add compact UI classes
+    if (message.format === 'tool_status') {
+        messageElement.classList.add('tool-status-message');
+        contentElement.classList.add('tool-status-content');
+    }
+
     messageElement.appendChild(contentElement);
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
@@ -766,9 +772,11 @@ function updateMessageContent(id, content) {
         
         // Handle different message types (more robust Math rendering)
         if (message.format === 'tool_status') {
+            messageElement.classList.add('tool-status-message');
+            contentDiv.classList.add('tool-status-content');
             // Render a compact tool-status line with spinner/check
             const isDone = !!message.isComplete;
-            const text = content || message.content || '';
+            const text = (content && content.trim()) ? content : message.content || '';
             const statusHtml = `
                 <div class="tool-status">
                     <span class="${isDone ? 'tool-check' : 'thinking-spinner'}" aria-hidden="true"></span>
