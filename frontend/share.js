@@ -24,6 +24,7 @@ function shouldDisplaySharedMessage(message) {
         }
         
         return Boolean(message.content);
+        //return false; // Do not display console messages in shared view
     }
     
     return true;
