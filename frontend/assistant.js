@@ -27,6 +27,9 @@ let currentMessageId = null;
 let workingIndicatorId = null;
 let pendingUploads = [];
 
+const THEME_STORAGE_KEY = 'idea-theme';
+const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
+
 // Conversation manager instance
 let conversationManager;
 
@@ -188,8 +191,6 @@ const newMessagesButton = document.getElementById('newMessagesButton');
 const messageInput = document.getElementById('messageInput');
 const progressBar = document.getElementById('uploadProgress');
 const progressElement = progressBar ? progressBar.querySelector('.progress') : null;
-const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
-const THEME_STORAGE_KEY = 'idea-theme';
 
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
