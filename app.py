@@ -281,6 +281,64 @@ def _summarize_mcp_result(result: Any) -> str:
         return "done"
 
 
+def _extract_json_payload(result: Any) -> Any:
+    """
+    Try to extract a JSON object from typical MCP result wrappers.
+    Returns dict/list when possible, else returns original result.
+    """
+    if isinstance(result, dict):
+        # Structured content path
+        structured = result.get("structuredContent")
+        if structured is not None:
+            return structured
+        # Content text path
+        content = result.get("content")
+        if isinstance(content, list) and content:
+            item = content[0] if isinstance(content[0], dict) else {}
+            txt = item.get("text") if isinstance(item, dict) else None
+            if isinstance(txt, str):
+                s = txt.strip()
+                if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+                    try:
+                        return json.loads(s)
+                    except Exception:
+                        pass
+    return result
+
+
+def _render_repo_table(repos_payload: Any, max_rows: int = 20) -> str:
+    """
+    Render a concise table for GitHub repositories from a typical search_repositories payload.
+    Columns: name, visibility, updated_at, url, description (<=80 chars).
+    """
+    data = _extract_json_payload(repos_payload)
+    items = []
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        items = data["items"]
+    elif isinstance(data, list):
+        items = data
+
+    def get(row: dict, key: str, default=""):
+        return row.get(key, default) if isinstance(row, dict) else default
+
+    def visibility(row: dict) -> str:
+        if "private" in row:
+            return "private" if row.get("private") else "public"
+        return get(row, "visibility", "")
+
+    lines = ["Your repositories (page 1)", "", "name\tvisibility\tupdated_at (ISO)\thtml_url\tdescription"]
+    for r in items[:max_rows]:
+        name = get(r, "name")
+        vis = visibility(r)
+        updated = get(r, "updated_at")
+        url = get(r, "html_url")
+        desc = (get(r, "description") or "").replace("\n", " ")[:80]
+        lines.append(f"{name}\t{vis}\t{updated}\t{url}\t{desc}")
+    if not items:
+        lines.append("(no repositories found)")
+    return "\n".join(lines)
+
+
 def _generate_mcp_wrapper_code(tool_defs: list[dict], tool_lookup: dict, db: Session) -> str:
     """Generate Python code that defines MCP tool wrapper functions."""
     imports = """
@@ -376,7 +434,7 @@ async def plan_and_run_mcp_tools(
     user_message: str,
     db: Session,
 ) -> list[dict[str, Any]]:
-    """Let an LLM decide whether to call MCP tools and execute them."""
+    """Let an LLM decide whether to call MCP tools and execute them (iteratively)."""
     if not user_message.strip():
         return []
 
@@ -384,85 +442,110 @@ async def plan_and_run_mcp_tools(
     if not tool_defs:
         return []
 
-    try:
-        planner_response = await asyncio.to_thread(
-            completion,
-            model=interpreter.llm.model,
-            messages=[
-                {"role": "system", "content": MCP_TOOL_PLANNER_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            tools=tool_defs,
-            tool_choice="auto",
-        )
-    except Exception as exc:  # pragma: no cover - upstream failure
-        logger.warning("MCP tool planner failed: %s", exc)
-        return []
-
-    message = planner_response["choices"][0]["message"]
-    tool_calls = message.get("tool_calls") or []
-    if not tool_calls:
-        return []
-
     executed_tools: list[dict[str, Any]] = []
-    # Deduplicate planned calls by (connection_id, tool_name, args)
     seen_calls: set[str] = set()
-    calls_to_execute: list[tuple[Any, dict[str, Any], dict[str, Any]]] = []
 
-    for call in tool_calls:
-        fn = call.get("function") or {}
-        tool_id = fn.get("name")
-        if not tool_id or tool_id not in tool_lookup:
-            continue
-        connection, tool = tool_lookup[tool_id]
-        arguments_raw = fn.get("arguments") or "{}"
+    # Allow up to 3 planning rounds (e.g., get_me -> search_repositories)
+    for _ in range(3):
+        # Build planning context with minimal summaries of previous runs
+        planning_messages = [{"role": "system", "content": MCP_TOOL_PLANNER_PROMPT}]
+        if executed_tools:
+            summaries = []
+            for run in executed_tools:
+                try:
+                    conn = run["connection"]
+                    tool = run["tool"]
+                    hint = _summarize_mcp_result(run["result"])
+                    summaries.append(f"- {conn.name} • {tool.get('name')}: {hint}")
+                except Exception:
+                    continue
+            if summaries:
+                planning_messages.append(
+                    {
+                        "role": "system",
+                        "content": "Previously executed MCP tools:\n" + "\n".join(summaries),
+                    }
+                )
+        planning_messages.append({"role": "user", "content": user_message})
+
         try:
-            arguments = json.loads(arguments_raw)
-        except json.JSONDecodeError:
-            arguments = {}
-        key = json.dumps(
-            {"cid": str(connection.id), "tool": tool.get("name"), "args": arguments},
-            sort_keys=True,
-        )
-        if key in seen_calls:
-            continue
-        seen_calls.add(key)
-        calls_to_execute.append((connection, tool, arguments))
+            planner_response = await asyncio.to_thread(
+                completion,
+                model=interpreter.llm.model,
+                messages=planning_messages,
+                tools=tool_defs,
+                tool_choice="auto",
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("MCP tool planner failed: %s", exc)
+            break
 
-    for connection, tool, arguments in calls_to_execute:
-        try:
-            result = await mcp_manager.call_tool(connection, tool["name"], arguments)
-        except Exception as exc:
-            logger.error("MCP tool %s execution failed: %s", tool.get("name"), exc)
-            result = {"error": str(exc)}
+        message = planner_response["choices"][0]["message"]
+        tool_calls = message.get("tool_calls") or []
 
-        executed_tools.append(
-            {
-                "connection": connection,
-                "tool": tool,
-                "arguments": arguments,
-                "result": result,
-            }
-        )
+        # Collect new tool calls only
+        calls_to_execute: list[tuple[Any, dict[str, Any], dict[str, Any]]] = []
+        for call in tool_calls:
+            fn = call.get("function") or {}
+            tool_id = fn.get("name")
+            if not tool_id or tool_id not in tool_lookup:
+                continue
+            connection, tool = tool_lookup[tool_id]
+            arguments_raw = fn.get("arguments") or "{}"
+            try:
+                arguments = json.loads(arguments_raw)
+            except json.JSONDecodeError:
+                arguments = {}
+            key = json.dumps(
+                {"cid": str(connection.id), "tool": tool.get("name"), "args": arguments},
+                sort_keys=True,
+            )
+            if key in seen_calls:
+                continue
+            seen_calls.add(key)
+            calls_to_execute.append((connection, tool, arguments))
 
-        # Provide the LLM with the full result (not streamed to user here)
-        # Prefer passing raw JSON if embedded in content[0].text, else pretty dict
-        raw_json_text = None
-        if isinstance(result, dict):
-            content_items = result.get("content")
-            if isinstance(content_items, list) and content_items:
-                first = content_items[0] if isinstance(content_items[0], dict) else {}
-                txt = first.get("text") if isinstance(first, dict) else None
-                if isinstance(txt, str):
-                    raw_json_text = txt
-        internal_payload = raw_json_text if raw_json_text is not None else _pretty_json(result)
-        internal_message = (
-            f"(internal) MCP result from '{connection.name}' • {tool['name']}:\n"
-            f"{internal_payload}"
-        )
-        interpreter.messages.append({"role": "assistant", "content": internal_message})
+        if not calls_to_execute:
+            break
 
-    # No targeted follow-ups: allow the LLM to plan subsequent calls if needed
+        # Execute planned calls
+        for connection, tool, arguments in calls_to_execute:
+            try:
+                result = await mcp_manager.call_tool(connection, tool["name"], arguments)
+            except Exception as exc:
+                logger.error("MCP tool %s execution failed: %s", tool.get("name"), exc)
+                result = {"error": str(exc)}
+
+            executed_tools.append(
+                {
+                    "connection": connection,
+                    "tool": tool,
+                    "arguments": arguments,
+                    "result": result,
+                }
+            )
+
+            # Provide model-only context for final summarization (not streamed to user)
+            raw_json_text = None
+            if isinstance(result, dict):
+                content_items = result.get("content")
+                if isinstance(content_items, list) and content_items:
+                    first = content_items[0] if isinstance(content_items[0], dict) else {}
+                    txt = first.get("text") if isinstance(first, dict) else None
+                    if isinstance(txt, str):
+                        raw_json_text = txt
+            internal_payload = raw_json_text if raw_json_text is not None else _pretty_json(result)
+            interpreter.messages.append(
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        f"CONTEXT (do not expose directly): MCP {connection.name} • {tool['name']} ->\n"
+                        f"{internal_payload}\n"
+                        "Instruction: Do NOT output raw JSON; provide a concise human-readable answer only."
+                    ),
+                }
+            )
 
     return executed_tools
 
@@ -1271,6 +1354,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             try:
                 if tool_runs:
                     streamed_keys: set[str] = set()
+                    repos_summary = None
                     for run in tool_runs:
                         connection = run["connection"]
                         tool = run["tool"]
@@ -1291,6 +1375,12 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                             "content": f"🔧 Using {connection.name} • {tool.get('name')}",
                         }
                         yield f"data: {json.dumps(start_chunk)}\n\n"
+                        # If this is a GitHub repo search, prepare a compact summary to stream after completion
+                        if tool.get("name") == "search_repositories":
+                            try:
+                                repos_summary = _render_repo_table(run["result"])
+                            except Exception:
+                                repos_summary = None
                         # End: mark completed (no raw JSON, no duplicate text)
                         end_chunk = {
                             "end": True,
@@ -1300,6 +1390,16 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                             "content": "",
                         }
                         yield f"data: {json.dumps(end_chunk)}\n\n"
+                    # If we prepared a repo summary, stream it as a single computer message
+                    if repos_summary:
+                        chunk = {
+                            "start": True,
+                            "end": True,
+                            "role": "computer",
+                            "type": "message",
+                            "content": repos_summary,
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
 
                 for result in interpreter.chat(messages[-1], stream=True):
                     data = json.dumps(result) if isinstance(result, dict) else result

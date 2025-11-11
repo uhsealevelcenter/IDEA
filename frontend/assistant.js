@@ -520,6 +520,10 @@ function saveCompletedAssistantMessage(message) {
     if (!conversationManager || !(message.role === 'assistant' || message.role === 'computer')) {
         return;
     }
+    // Do not persist transient tool-status lines
+    if (message.format === 'tool_status') {
+        return;
+    }
     const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
     const messageType = validTypes.includes(message.type) ? message.type : 'message';
 
