@@ -25,6 +25,7 @@ let controller = null;
 let promptIdeasVisible = false;
 let currentMessageId = null;
 let workingIndicatorId = null;
+let pendingUploads = [];
 
 // Conversation manager instance
 let conversationManager;
@@ -194,37 +195,98 @@ async function handleFiles(files) {
     if (!files || files.length === 0) return;
 
     hidePromptIdeas(); 
-    progressBar.style.display = 'block';
+    if (progressBar) {
+        progressBar.style.display = 'block';
+    }
     for (const file of files) {
         try {
             const response = await uploadFile(file, progressElement);
-            const imagePath = response.path;
-
-            if (file.type.startsWith('image')) {
-                // Show the image inline
-                const imageMessage = {
-                    id: generateId('msg'),
-                    role: 'user',
-                    type: 'image',
-                    format: 'path',
-                    content: imagePath,
-                    isComplete: true
-                };
-                // Append image visually and store in conversation
-                //appendMessage(imageMessage); // Commenting this out to avoid double messages
-                messages.push(imageMessage);
-                scrollToBottom();
-
-                // Send clean user message about the upload
-                await sendRequest(`Please describe this image that I uploaded (${file.name})`);
-            } else {
-                sendRequest(`I uploaded ${file.name}`);
-            }
+            queuePendingUpload(file, response);
         } catch (error) {
             appendSystemMessage(`Error uploading ${file.name}: ${error.message}`);
         }
     }
-    progressBar.style.display = 'none';
+    if (progressBar) {
+        progressBar.style.display = 'none';
+    }
+}
+
+function queuePendingUpload(file, uploadResponse = {}) {
+    const storedName = uploadResponse.filename || uploadResponse.name || file.name;
+    const storagePath = uploadResponse.path || storedName;
+    const isImage = (file.type || '').startsWith('image/');
+
+    const attachment = {
+        id: generateId('upload'),
+        name: file.name,
+        storedName,
+        path: storagePath,
+        size: file.size,
+        mimeType: file.type,
+        messageType: isImage ? 'image' : 'file',
+        messageFormat: isImage ? 'path' : null
+    };
+
+    pendingUploads.push(attachment);
+    renderPendingUploads();
+}
+
+function renderPendingUploads() {
+    const uploadedFiles = document.getElementById('uploadedFiles');
+    if (!uploadedFiles) return;
+
+    uploadedFiles.innerHTML = '';
+
+    if (pendingUploads.length === 0) {
+        uploadedFiles.classList.remove('active');
+        return;
+    }
+
+    uploadedFiles.classList.add('active');
+
+    pendingUploads.forEach((attachment) => {
+        const fileElement = document.createElement('span');
+        fileElement.className = 'attached-file';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'attached-file-name';
+        nameSpan.textContent = attachment.name;
+        fileElement.appendChild(nameSpan);
+
+        const removeButton = document.createElement('button');
+        removeButton.className = 'remove-attachment';
+        removeButton.setAttribute('aria-label', `Remove ${attachment.name}`);
+        removeButton.textContent = '×';
+        removeButton.addEventListener('click', () => removePendingAttachment(attachment.id));
+        fileElement.appendChild(removeButton);
+
+        uploadedFiles.appendChild(fileElement);
+    });
+}
+
+async function removePendingAttachment(attachmentId) {
+    const attachment = pendingUploads.find(att => att.id === attachmentId);
+    if (!attachment) return;
+
+    try {
+        const response = await fetch(`${config.getEndpoints().files}/${encodeURIComponent(attachment.storedName)}`, {
+            method: 'DELETE',
+            headers: {
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
+            }
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || 'Delete failed');
+        }
+
+        pendingUploads = pendingUploads.filter(att => att.id !== attachmentId);
+        renderPendingUploads();
+    } catch (error) {
+        appendSystemMessage(`Error deleting file: ${error.message}`);
+    }
 }
 
 function createPromptIdeas() {
@@ -306,7 +368,7 @@ function resetTextareaHeight() {
 
 // Event listeners
 sendButton.addEventListener('click', () => {
-    if (messageInput.value.trim() === '') return;
+    if (messageInput.value.trim() === '' && pendingUploads.length === 0) return;
     sendRequest();
     hidePromptIdeas();
     resetTextareaHeight();
@@ -384,10 +446,62 @@ function safeGetElement(id) {
     return element;
 }
 
+function buildAttachmentInstruction(attachments = []) {
+    if (!attachments.length) return '';
+    const basePath = `./static/{user_id}/${sessionId}/uploads`;
+    const lines = attachments.map(att => {
+        const relPath = att.path || att.storedName || att.name;
+        const mimeType = att.mimeType ? ` (${att.mimeType})` : '';
+        return `- ${att.name}${mimeType}${relPath ? ` | relative path: ${relPath}` : ''}`;
+    }).join('\n');
+    return `Files uploaded in this message:\nSession ID: ${sessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.`;
+}
+
+function serializeMessagesForRequest(messageList = []) {
+    return messageList.map(msg => {
+        const { llmContent, attachments, userText, storageContent, ...rest } = msg;
+        const serialized = { ...rest };
+        if (llmContent) {
+            serialized.content = llmContent;
+        }
+        return serialized;
+    });
+}
+
 // Modify sendRequest to use better error handling
 async function sendRequest(msgOverride=null) {
-    const userInput = msgOverride ? msgOverride : messageInput.value.trim();
-    if (!userInput) return;
+    const attachmentsToSend = pendingUploads.map(att => ({ ...att }));
+    const rawInput = msgOverride !== null ? msgOverride : messageInput.value;
+    const trimmedInput = rawInput ? rawInput.trim() : '';
+    if (!trimmedInput && attachmentsToSend.length === 0) return;
+
+    const attachmentSummaries = attachmentsToSend.map(att => ({
+        name: att.name,
+        path: att.path,
+        size: att.size,
+        mimeType: att.mimeType
+    }));
+
+    const llmInstruction = buildAttachmentInstruction(attachmentsToSend);
+    const llmContentParts = [];
+    if (trimmedInput) {
+        llmContentParts.push(trimmedInput);
+    }
+    if (llmInstruction) {
+        llmContentParts.push(llmInstruction);
+    }
+    const llmContent = llmContentParts.join('\n\n');
+
+    const displaySegments = [];
+    if (trimmedInput) {
+        displaySegments.push(trimmedInput);
+    }
+    if (attachmentSummaries.length) {
+        const attachmentLabel = formatAttachmentLabel(attachmentSummaries.length);
+        const fileNames = attachmentSummaries.map(att => att.name).join(', ');
+        displaySegments.push(`**${attachmentLabel}:** ${fileNames}`);
+    }
+    const displayContent = displaySegments.join('\n\n');
 
     try {
         // Input validation
@@ -399,18 +513,23 @@ async function sendRequest(msgOverride=null) {
             id: generateId('msg'),
             role: 'user',
             type: 'message',
-            content: userInput
+            content: displayContent || trimmedInput,
+            userText: trimmedInput,
+            attachments: attachmentSummaries,
+            llmContent: llmContent || trimmedInput
         };
         messages.push(userMessage);
         appendMessage(userMessage);
         scrollToBottom();
         messageInput.value = '';
+        pendingUploads = [];
+        renderPendingUploads();
 
         showWorkingIndicator();
 
         // Define parameters for the POST request
         const params = {
-            messages
+            messages: serializeMessagesForRequest(messages)
         };
 
         // Initialize AbortController to handle cancellation
@@ -637,7 +756,64 @@ function appendMessage(message) {
     const contentElement = document.createElement('div');
     contentElement.classList.add('content');
     contentElement.setAttribute('data-type', message.type);
-    contentElement.innerHTML = message.content; 
+    if (message.role === 'user' && message.type === 'message') {
+        const userContentWrapper = document.createElement('div');
+        userContentWrapper.classList.add('user-message-wrapper');
+
+        let attachmentNames = null;
+        let textSource = typeof message.userText === 'string' ? message.userText : null;
+        let parsedContentAttachments = null;
+
+        if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+            attachmentLabel = formatAttachmentLabel(message.attachments.length);
+            attachmentNames = message.attachments.map(att => att.name).join(', ');
+        } else if (typeof message.content === 'string') {
+            parsedContentAttachments = extractAttachmentInfoFromContent(message.content);
+            if (parsedContentAttachments) {
+                attachmentLabel = parsedContentAttachments.label || null;
+                attachmentNames = parsedContentAttachments.names;
+                if (textSource === null) {
+                    textSource = parsedContentAttachments.remaining;
+                }
+            }
+        }
+
+        const fallbackText = parsedContentAttachments ? parsedContentAttachments.remaining : (message.content || '');
+        const textToShow = (textSource !== null ? textSource : fallbackText || '').trim();
+        if (textToShow) {
+            const textBlock = document.createElement('div');
+            textBlock.textContent = textToShow;
+            userContentWrapper.appendChild(textBlock);
+        }
+
+        if (attachmentNames) {
+            const attachmentLine = document.createElement('div');
+            attachmentLine.className = 'user-attachment-line';
+            const fallbackCount = (attachmentNames.match(/,/g) || []).length + 1;
+            const label = attachmentLabel || formatAttachmentLabel(fallbackCount);
+            attachmentLine.innerHTML = `<strong>${label}:</strong> ${escapeHtml(attachmentNames)}`;
+            userContentWrapper.appendChild(attachmentLine);
+        }
+
+        contentElement.appendChild(userContentWrapper);
+    } else if (message.type === 'image' && message.format === 'path') {
+        const imageSrc = escapeHtml(message.content || '');
+        const imageAlt = escapeHtml(message.filename || 'Uploaded image');
+        contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview">`;
+    } else if (message.type === 'file') {
+        const displayName = escapeHtml(message.filename || message.name || message.content || 'Attachment');
+        const filePath = escapeHtml(message.content || '');
+        contentElement.classList.add('file-attachment');
+        contentElement.innerHTML = `
+            <span class="material-icons attachment-icon">attach_file</span>
+            <div class="attachment-details">
+                <span class="attachment-name">${displayName}</span>
+                <span class="attachment-path">${filePath}</span>
+            </div>
+        `;
+    } else {
+        contentElement.innerHTML = message.content; 
+    }
 
     messageElement.appendChild(contentElement);
     chatDisplay.appendChild(messageElement);
@@ -890,10 +1066,8 @@ async function clearChatHistory() {
         chatDisplay.innerHTML = '';
         
         // Clear uploaded files list in UI
-        const uploadedFiles = document.getElementById('uploadedFiles');
-        if (uploadedFiles) {
-            uploadedFiles.innerHTML = '';
-        }
+        pendingUploads = [];
+        renderPendingUploads();
 
         appendSystemMessage("Begin a new conversation.");
         showPromptIdeas();
@@ -920,6 +1094,28 @@ function escapeHtml(text) {
         "'": '&#039;',
     };
     return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+function formatAttachmentLabel(count) {
+    return count === 1 ? 'File' : 'Files';
+}
+
+function extractAttachmentInfoFromContent(content) {
+    if (typeof content !== 'string') return null;
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        const match = trimmed.match(/^(?:\*\*)?(File|Files):(?:\*\*)?\s*(.+)$/i);
+        if (match && i === 0) {
+            const remaining = [...lines.slice(0, i), ...lines.slice(i + 1)].join('\n').trim();
+            return {
+                label: match[1].toLowerCase() === 'file' ? 'File' : 'Files',
+                names: match[2].trim(),
+                remaining
+            };
+        }
+    }
+    return null;
 }
 
 // Scroll to the bottom of the chat display
@@ -1133,29 +1329,18 @@ function initializeFileUpload() {
                     const uniqueName = `pasted-${Date.now()}-${Math.floor(Math.random() * 1000)}.${extension}`;
                     const renamedFile = new File([originalFile], uniqueName, { type: originalFile.type });
 
-                    progressBar.style.display = 'block';
+                    if (progressBar) {
+                        progressBar.style.display = 'block';
+                    }
                     try {
                         const response = await uploadFile(renamedFile, progressElement);
-                        const imagePath = response.path;
-
-                        // Show the image inline
-                        const imageMessage = {
-                            id: generateId('msg'),
-                            role: 'user',
-                            type: 'image',
-                            format: 'path',
-                            content: imagePath,
-                            isComplete: true
-                        };
-                        //appendMessage(imageMessage); // Commenting this out to avoid double messages
-                        messages.push(imageMessage);
-                        scrollToBottom();
-
-                        await sendRequest(`Please describe this screenshot that I uploaded (${renamedFile.name})`);
+                        queuePendingUpload(renamedFile, response);
                     } catch (error) {
                         appendSystemMessage(`Error uploading pasted image: ${error.message}`);
                     } finally {
-                        progressBar.style.display = 'none';
+                        if (progressBar) {
+                            progressBar.style.display = 'none';
+                        }
                     }
                 }
             }
@@ -1266,8 +1451,6 @@ async function uploadFile(file, progressElement) {
         }
 
         const data = await response.json();
-        appendSystemMessage(`Successfully uploaded ${file.name}`);
-        //sendRequest(`I uploaded ${file.name}`); // Commenting this out to avoid double messages
         return data;
 
     } catch (error) {
@@ -1276,68 +1459,8 @@ async function uploadFile(file, progressElement) {
     }
 }
 
-async function updateFilesList() {
-    try {
-        const response = await fetch(config.getEndpoints().files, {
-            headers: {
-                'X-Session-Id': sessionId,
-                ...getAuthHeaders()
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to fetch files list');
-        }
-
-        const files = await response.json();
-        const uploadedFiles = document.getElementById('uploadedFiles');
-        uploadedFiles.innerHTML = '';
-
-        files.forEach(file => {
-            const fileElement = document.createElement('div');
-            fileElement.className = 'uploaded-file';
-            fileElement.innerHTML = `
-                <span>${file.name} (${formatFileSize(file.size)})</span>
-                <button class="delete-file" data-filename="${file.name}">×</button>
-            `;
-
-            // Add delete button event listener
-            const deleteButton = fileElement.querySelector('.delete-file');
-            deleteButton.addEventListener('click', async () => {
-                try {
-                    const filename = deleteButton.getAttribute('data-filename');
-                    const response = await fetch(`${config.getEndpoints().files}/${encodeURIComponent(filename)}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'X-Session-Id': sessionId,
-                            ...getAuthHeaders()
-                        }
-                    });
-
-                    if (!response.ok) {
-                        const error = await response.json();
-                        throw new Error(error.detail || 'Delete failed');
-                    }
-
-                    // Remove the file element from the UI
-                    fileElement.remove();
-                    appendSystemMessage(`Successfully deleted ${filename}`);
-                } catch (error) {
-                    appendSystemMessage(`Error deleting file: ${error.message}`);
-                }
-            });
-
-            uploadedFiles.appendChild(fileElement);
-        });
-    } catch (error) {
-        console.error('Error updating files list:', error);
-    }
-}
-
-function formatFileSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+function updateFilesList() {
+    renderPendingUploads();
 }
 
 async function downloadConversation() {
@@ -1383,7 +1506,18 @@ function renderMessageContentForExport(message) {
     const msgType = message.type || message.message_type || 'message';
     const format = message.format || message.message_format || '';
     if (msgType === 'message') {
-        return marked ? marked.parse(message.content || '') : (message.content || '');
+        const baseSource = message.content || message.userText || '';
+        const rendered = marked ? marked.parse(baseSource) : baseSource;
+        if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+            const alreadyPresent = /<strong>(?:file|files):<\/strong>/i.test(rendered);
+            const attachmentList = message.attachments
+                .map(att => escapeHtml(att.name))
+                .join(', ');
+            const label = formatAttachmentLabel(message.attachments.length);
+            const prefix = alreadyPresent ? '' : `<p><strong>${label}:</strong> ${attachmentList}</p>`;
+            return `${prefix}${rendered}`;
+        }
+        return rendered;
     }
     if (msgType === 'image') {
         if (format === 'base64.png') {
@@ -1475,7 +1609,6 @@ async function createSelfContainedHTML() {
         day: 'numeric',
         hour: 'numeric',
         minute: 'numeric',
-        second: 'numeric',
         hour12: true,
         timeZoneName: 'short'
     });
