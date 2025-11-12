@@ -803,6 +803,85 @@ pre {
     position: relative;
 }
 
+.console-output-message {
+    display: none !important;
+}
+
+.stdout-controls {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    width: 100%;
+    margin-top: 12px;
+}
+
+.stdout-controls.stdout-hidden {
+    display: none;
+}
+
+.stdout-button {
+    padding: 6px 14px;
+    font-size: 12px;
+    border-radius: 999px;
+    border: 1px solid var(--input-border);
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
+}
+
+.stdout-button:hover:not(:disabled) {
+    background: var(--assistant-bg);
+    border-color: var(--assistant-border);
+    transform: translateY(-1px);
+}
+
+.stdout-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.stdout-panel {
+    display: none;
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.55);
+    max-height: 260px;
+    overflow-y: auto;
+    box-shadow: inset 0 6px 18px rgba(2, 6, 23, 0.35);
+}
+
+.stdout-panel.open {
+    display: block;
+}
+
+.stdout-entry + .stdout-entry {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stdout-panel pre {
+    margin: 0;
+    background: transparent;
+    padding: 0;
+}
+
+.stdout-panel pre code {
+    display: block;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 0.9em;
+}
+
+.stdout-empty {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
 .disclaimer-text {
     position: fixed;
     bottom: 0;

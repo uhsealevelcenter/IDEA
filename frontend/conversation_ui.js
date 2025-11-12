@@ -203,7 +203,10 @@ async function loadConversation(conversationId) {
         
         // Clear current chat display and show the loaded conversation
         const chatDisplay = document.getElementById('chatDisplay');
-        chatDisplay.innerHTML = '';
+    chatDisplay.innerHTML = '';
+    if (typeof window.resetStdoutState === 'function') {
+        window.resetStdoutState();
+    }
         
         // Display the conversation messages
         const messages = conversationManager.getCurrentMessages();
