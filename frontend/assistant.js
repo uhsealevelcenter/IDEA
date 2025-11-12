@@ -1645,10 +1645,17 @@ async function createSelfContainedHTML() {
         .export-chat-panel {
             flex: 1;
             display: flex;
+            flex-direction: column;
             padding: clamp(18px, 4vw, 32px);
             background: var(--surface-alt);
             border-top: 1px solid var(--border);
             border-bottom: 1px solid var(--border);
+        }
+
+        .export-chat-panel .chat-display {
+            width: 100%;
+            min-width: 0;
+            flex: 1;
         }
 
         .export-view .disclaimer-text {
