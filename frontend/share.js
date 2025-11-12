@@ -3,6 +3,10 @@
  * Handles loading and displaying shared conversations in read-only mode
  */
 
+const sharedStdoutMap = new Map();
+const sharedMessageCache = new Map();
+let lastSharedCodeId = null;
+
 // Extract share token from URL
 function getShareTokenFromUrl() {
     const path = window.location.pathname;
@@ -15,19 +19,175 @@ function shouldDisplaySharedMessage(message) {
     if (!message) return false;
     
     if (message.message_type === 'console') {
-        // if (message.message_format === 'active_line') {
-        //     return false;
-        // }
-        
-        // if (typeof message.content === 'string') {
-        //     return message.content.trim().length > 0;
-        // }
-        
-        // return Boolean(message.content);
-        return false; // Do not display console messages in shared view
+        return !isSharedTelemetryConsole(message);
     }
     
     return true;
+}
+
+function resetSharedStdoutState() {
+    sharedStdoutMap.clear();
+    lastSharedCodeId = null;
+    sharedMessageCache.clear();
+}
+
+function shouldTrackSharedCode(message) {
+    return Boolean(
+        message &&
+        message.message_type === 'code' &&
+        message.role !== 'user' &&
+        message.message_format !== 'html'
+    );
+}
+
+function isSharedConsoleMessage(message) {
+    return Boolean(
+        message &&
+        message.message_type === 'console' &&
+        message.message_format !== 'active_line' &&
+        !isSharedTelemetryConsole(message)
+    );
+}
+
+function isSharedTelemetryConsole(message) {
+    if (!message || message.message_type !== 'console') return false;
+    if (message.message_format === 'active_line') return true;
+    const content = typeof message.content === 'string' ? message.content.trim() : '';
+    if (message.message_format === 'execution' && /^\d+(?:\/\d+)?$/.test(content)) {
+        return true;
+    }
+    if (/^line\s+\d+$/i.test(content)) {
+        return true;
+    }
+    return false;
+}
+
+function findSharedPreviousCodeId(referenceId) {
+    if (!referenceId) return null;
+    const chatDisplay = document.getElementById('chatDisplay');
+    const messages = Array.from(chatDisplay.querySelectorAll('.message'));
+    const index = messages.findIndex(el => el.getAttribute('data-id') === referenceId);
+    if (index === -1) return null;
+    for (let i = index - 1; i >= 0; i--) {
+        const candidateId = messages[i].getAttribute('data-id');
+        const data = sharedMessageCache.get(candidateId);
+        if (data && shouldTrackSharedCode(data)) {
+            return candidateId;
+        }
+    }
+    return null;
+}
+
+function ensureSharedStdoutElements(codeId) {
+    const messageElement = document.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return {};
+    const contentElement = messageElement.querySelector('.content');
+    if (!contentElement) return {};
+
+    let controls = messageElement.querySelector('.stdout-controls');
+    let button = controls ? controls.querySelector('.stdout-button') : null;
+    let panel = messageElement.querySelector('.stdout-panel');
+
+    if (!controls) {
+        controls = document.createElement('div');
+        controls.className = 'stdout-controls stdout-hidden';
+        button = document.createElement('button');
+        button.className = 'stdout-button';
+        button.type = 'button';
+        button.textContent = 'Show Output';
+        button.setAttribute('aria-expanded', 'false');
+        button.disabled = true;
+        button.addEventListener('click', () => toggleSharedStdoutPanel(codeId));
+        controls.appendChild(button);
+        contentElement.appendChild(controls);
+    }
+
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.className = 'stdout-panel';
+        panel.setAttribute('role', 'region');
+        panel.setAttribute('aria-label', 'STDOUT and STDERR');
+        panel.setAttribute('aria-hidden', 'true');
+        contentElement.appendChild(panel);
+    }
+
+    return { messageElement, contentElement, controls, button, panel };
+}
+
+function updateSharedStdoutAvailability(codeId) {
+    const { controls, button, panel } = ensureSharedStdoutElements(codeId);
+    if (!controls || !button) return;
+    const hasOutput = (sharedStdoutMap.get(codeId) || []).length > 0;
+    controls.classList.toggle('stdout-hidden', !hasOutput);
+    button.disabled = !hasOutput;
+    if (!hasOutput) {
+        button.textContent = 'Show Output';
+        button.setAttribute('aria-expanded', 'false');
+        if (panel) {
+            panel.classList.remove('open');
+            panel.setAttribute('aria-hidden', 'true');
+        }
+    }
+}
+
+function addSharedConsoleOutput(codeId, message) {
+    if (!codeId) return;
+    if (!sharedStdoutMap.has(codeId)) {
+        sharedStdoutMap.set(codeId, []);
+    }
+    sharedStdoutMap.get(codeId).push(message.content || '');
+    updateSharedStdoutAvailability(codeId);
+    const { panel } = ensureSharedStdoutElements(codeId);
+    if (panel && panel.classList.contains('open')) {
+        renderSharedStdoutPanel(codeId);
+        panel.scrollTop = panel.scrollHeight;
+    }
+}
+
+function renderSharedStdoutPanel(codeId) {
+    const { panel } = ensureSharedStdoutElements(codeId);
+    if (!panel) return;
+    panel.innerHTML = '';
+    const outputs = sharedStdoutMap.get(codeId) || [];
+    if (outputs.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'stdout-empty';
+        empty.textContent = 'No console output captured.';
+        panel.appendChild(empty);
+        return;
+    }
+    outputs.forEach(content => {
+        const entry = document.createElement('div');
+        entry.className = 'stdout-entry';
+        const pre = document.createElement('pre');
+        pre.classList.add('stdout-pre');
+        const code = document.createElement('code');
+        code.classList.add('stdout-code');
+        code.textContent = content;
+        pre.appendChild(code);
+        entry.appendChild(pre);
+        panel.appendChild(entry);
+    });
+    if (typeof Prism !== 'undefined') {
+        Prism.highlightAllUnder(panel);
+    }
+}
+
+function toggleSharedStdoutPanel(codeId) {
+    const { button, panel } = ensureSharedStdoutElements(codeId);
+    if (!button || !panel || button.disabled) return;
+    const isOpen = panel.classList.toggle('open');
+    if (isOpen) {
+        panel.setAttribute('aria-hidden', 'false');
+        button.textContent = 'Hide Output';
+        renderSharedStdoutPanel(codeId);
+        panel.scrollTop = panel.scrollHeight;
+        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else {
+        panel.setAttribute('aria-hidden', 'true');
+        button.textContent = 'Show Output';
+    }
+    button.setAttribute('aria-expanded', String(isOpen));
 }
 
 // Display message in chat (similar to conversation_ui.js but simplified for read-only)
@@ -40,7 +200,12 @@ function displayMessageInChat(message) {
     
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${message.role}`;
-    messageDiv.setAttribute('data-id', message.id || generateId('msg'));
+    const messageId = message.id || generateId('msg');
+    messageDiv.setAttribute('data-id', messageId);
+    if (!message.id) {
+        message.id = messageId;
+    }
+    sharedMessageCache.set(messageId, message);
     
     const contentElement = document.createElement('div');
     contentElement.classList.add('content');
@@ -66,7 +231,9 @@ function displayMessageInChat(message) {
             contentElement.innerHTML = `<pre><code class="language-${language}">${escapeHtml(message.content)}</code></pre>`;
         }
     } else if (message.message_type === 'console') {
-        contentElement.innerHTML = `<pre>${escapeHtml(message.content)}</pre>`;
+        contentElement.innerHTML = '<pre><code></code></pre>';
+        messageDiv.classList.add('console-output-message');
+        contentElement.setAttribute('aria-hidden', 'true');
     } else if (message.message_type === 'file') {
         contentElement.innerHTML = `<div class="file-attachment">
             <span class="material-icons">attach_file</span>
@@ -79,6 +246,23 @@ function displayMessageInChat(message) {
     
     messageDiv.appendChild(contentElement);
     chatDisplay.appendChild(messageDiv);
+    
+    if (shouldTrackSharedCode(message)) {
+        lastSharedCodeId = messageId;
+        ensureSharedStdoutElements(messageId);
+    } else if (isSharedConsoleMessage(message)) {
+        messageDiv.classList.add('console-output-message');
+        contentElement.setAttribute('aria-hidden', 'true');
+        let targetCodeId = lastSharedCodeId;
+        if (!targetCodeId) {
+            targetCodeId = findSharedPreviousCodeId(messageId);
+        }
+        if (targetCodeId) {
+            ensureSharedStdoutElements(targetCodeId);
+            addSharedConsoleOutput(targetCodeId, message);
+            lastSharedCodeId = targetCodeId;
+        }
+    }
     
     // Apply syntax highlighting if there's code
     if (typeof Prism !== 'undefined') {
@@ -184,6 +368,7 @@ async function loadSharedConversation() {
         // Clear chat display
         const chatDisplay = document.getElementById('chatDisplay');
         chatDisplay.innerHTML = '';
+        resetSharedStdoutState();
         
         // Check if conversation has messages
         if (!conversation.messages || conversation.messages.length === 0) {

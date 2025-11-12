@@ -26,6 +26,9 @@ let promptIdeasVisible = false;
 let currentMessageId = null;
 let workingIndicatorId = null;
 let pendingUploads = [];
+let lastExecutableCodeId = null;
+let pendingConsoleParentId = null;
+const codeConsoleMap = new Map();
 
 const THEME_STORAGE_KEY = 'idea-theme';
 const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
@@ -640,6 +643,9 @@ function saveCompletedAssistantMessage(message) {
     if (!conversationManager || !(message.role === 'assistant' || message.role === 'computer')) {
         return;
     }
+    if (message.type === 'console') {
+        return;
+    }
     const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
     const messageType = validTypes.includes(message.type) ? message.type : 'message';
 
@@ -669,13 +675,14 @@ function createImageMessageFromChunk(chunk, fallbackMessage) {
 
 // Function to process each chunk of the stream and create messages
 function processChunk(chunk) {
+    chunk = normalizeIncomingChunk(chunk);
     let messageStarted = false;
     let messageEnded = false;
     return new Promise((resolve) => {
         removeWorkingIndicator();
         if (chunk.start) {
             // Start of a new message
-            const newMessage = {
+            const newMessage = normalizeStdStreamMessage({
                 id: generateId('msg'),
                 role: chunk.role,
                 type: chunk.type,
@@ -684,7 +691,7 @@ function processChunk(chunk) {
                 recipient: chunk.recipient || undefined,
                 created_at: new Date().toISOString(),
                 isComplete: false,
-            };
+            });
             messages.push(newMessage);
             appendMessage(newMessage);
             currentMessageId = newMessage.id; // Use ID instead of index
@@ -812,6 +819,10 @@ function appendMessage(message) {
                 <span class="attachment-path">${filePath}</span>
             </div>
         `;
+    } else if (message.type === 'console') {
+        contentElement.innerHTML = '<pre><code></code></pre>';
+        messageElement.classList.add('console-output-message');
+        contentElement.setAttribute('aria-hidden', 'true');
     } else {
         contentElement.innerHTML = message.content; 
     }
@@ -819,6 +830,7 @@ function appendMessage(message) {
     messageElement.appendChild(contentElement);
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+    handleStdoutTrackingOnMessageStart(message);
 
     // Save user messages immediately to conversation (assistant/computer messages are saved when complete)
     if (conversationManager && message.role === 'user' && message.content) {
@@ -858,53 +870,37 @@ function updateMessageContent(id, content) {
         }
 
         if (message.type === 'console' && message.format === 'active_line') {
-            // console.log("Active line MESSAGE", message);
-            // console.log("Active line CONTENT", content);
-            // Find the most recent code block
             const codeBlocks = document.querySelectorAll('pre code');
             const lastCodeBlock = codeBlocks[codeBlocks.length - 1];
-            
             if (lastCodeBlock) {
-                // if (content) {
-                //     console.log('Current line being executed:', content);
-                //     // ... rest of your line highlighting code ...
-                // } else {
-                //     console.log('Execution completed!');
-                // }
                 const existingSpinner = lastCodeBlock.parentElement.querySelector('.code-spinner');
-                    if (existingSpinner) {
-                        existingSpinner.remove();
-                    }
-
-                    if (content) {
-                        // Add spinner
-                        const spinner = document.createElement('div');
-                        spinner.className = 'code-spinner';
-                        lastCodeBlock.parentElement.appendChild(spinner);
-
-                        // // Highlight current line
-                        // const lines = lastCodeBlock.innerHTML.split('\n');
-                        // const highlightedLines = lines.map((line, index) => {
-                        //     const lineNumber = index + 1;
-                        //     const isActive = lineNumber === parseInt(content);
-                        //     return `<div class="code-line${isActive ? ' active-line' : ''}">${line}</div>`;
-                        // }).join('');
-                        // lastCodeBlock.innerHTML = highlightedLines;
-                    } else {
-                        // Remove highlights
-                        // const lines = lastCodeBlock.innerHTML.split('\n');
-                        // const unhighlightedLines = lines.map(line => 
-                        //     `<div class="code-line">${line}</div>`
-                        // ).join('');
-                        // lastCodeBlock.innerHTML = unhighlightedLines;
-                    }
+                if (existingSpinner) {
+                    existingSpinner.remove();
+                }
             }
             return;
         }
 
-        if (contentDiv.getAttribute('data-type') === 'console') {
-            // contentDiv.parentElement.remove();
-            contentDiv.parentElement.style.display = 'none'; // Hide Console Output
+        if (message.type === 'console') {
+            if (isTelemetryConsoleMessage(message)) {
+                return;
+            }
+            const pre = contentDiv.querySelector('pre code') || (() => {
+                contentDiv.innerHTML = '<pre><code></code></pre>';
+                return contentDiv.querySelector('pre code');
+            })();
+            if (pre) {
+                pre.textContent = message.content || '';
+            }
+            const parent = contentDiv.parentElement;
+            if (parent) {
+                parent.classList.add('console-output-message');
+                if (message.associatedCodeId) {
+                    parent.setAttribute('data-associated-code-id', message.associatedCodeId);
+                    refreshStdoutPanel(message.associatedCodeId, { autoScroll: true });
+                }
+            }
+            contentDiv.setAttribute('aria-hidden', 'true');
             return;
         }
         
@@ -949,6 +945,7 @@ function updateMessageContent(id, content) {
                 contentDiv.innerHTML = `<img src="${content}" alt="Image">`;
             }
         } else if (message.type === 'code') {
+            const preservedStdoutState = captureStdoutPanelState(message.id);
             if (message.format === "html") {
                 // contentDiv.innerHTML = content;
                 // do nothing
@@ -957,16 +954,23 @@ function updateMessageContent(id, content) {
                 
                 contentDiv.innerHTML = content;
                 // return;
-            } else 
-            {
-            contentDiv.innerHTML = `<pre><code class="language-${message.format || ''}">${escapeHtml(content)}</code></pre>`;
-            // Apply syntax highlighting
-            const codeBlock = contentDiv.querySelector('code');
-            if (codeBlock ) {
-                // hljs.highlightElement(codeBlock);
-                Prism.highlightElement(codeBlock);
-            }
-            addCopyButtons();
+            } else {
+                let codeBlock = contentDiv.querySelector('pre code');
+                if (!codeBlock) {
+                    contentDiv.innerHTML = `<pre><code class="language-${message.format || ''}"></code></pre>`;
+                    codeBlock = contentDiv.querySelector('pre code');
+                } else {
+                    codeBlock.className = `language-${message.format || ''}`;
+                }
+
+                if (codeBlock) {
+                    codeBlock.textContent = content;
+                    Prism.highlightElement(codeBlock);
+                }
+                addCopyButtons();
+                ensureStdoutElements(message.id);
+                updateStdoutAvailability(message.id);
+                restoreStdoutPanelState(message.id, preservedStdoutState);
             }
         } else if (message.type === 'file') {
             contentDiv.innerHTML = `<a href="${content}" download>Download File</a>`;
@@ -1065,6 +1069,7 @@ async function clearChatHistory() {
         isGenerating = false;
         controller = null;
         chatDisplay.innerHTML = '';
+        resetStdoutState();
         
         // Clear uploaded files list in UI
         pendingUploads = [];
@@ -1202,6 +1207,292 @@ function addCopyButtons() {
     });
 }
 
+function resetStdoutState() {
+    codeConsoleMap.clear();
+    lastExecutableCodeId = null;
+    pendingConsoleParentId = null;
+}
+window.resetStdoutState = resetStdoutState;
+
+const STD_STREAM_RECIPIENTS = ['stdout', 'stderr'];
+
+function normalizeStdStreamMessage(message) {
+    if (!message) return message;
+    if (!message.type && message.message_type) {
+        message.type = message.message_type;
+    }
+    if (!message.format && message.message_format) {
+        message.format = message.message_format;
+    }
+    if (!message.recipient && message.message_recipient) {
+        message.recipient = message.message_recipient;
+    }
+
+    const recipient = (message.recipient || '').toLowerCase();
+    if ((message.type === 'message' || message.type === 'text') && STD_STREAM_RECIPIENTS.includes(recipient)) {
+        message.type = 'console';
+        message.format = message.format || recipient;
+    } else if (message.type === 'console' && !message.format && STD_STREAM_RECIPIENTS.includes(recipient)) {
+        message.format = recipient;
+    }
+    return message;
+}
+
+function normalizeIncomingChunk(chunk) {
+    if (!chunk) return chunk;
+    if (chunk.recipient) {
+        chunk.recipient = chunk.recipient.toLowerCase();
+    }
+    if ((chunk.type === 'message' || chunk.type === 'text') &&
+        STD_STREAM_RECIPIENTS.includes(chunk.recipient || '')) {
+        chunk.type = 'console';
+        chunk.format = chunk.format || chunk.recipient;
+    } else if (chunk.type === 'console' && !chunk.format && STD_STREAM_RECIPIENTS.includes(chunk.recipient || '')) {
+        chunk.format = chunk.recipient;
+    }
+    return chunk;
+}
+
+function shouldTrackCodeMessage(message) {
+    return Boolean(
+        message &&
+        message.type === 'code' &&
+        message.role !== 'user' &&
+        message.format !== 'html'
+    );
+}
+
+function isConsoleOutputMessage(message) {
+    if (!message) return false;
+    const type = message.type || message.message_type;
+    const format = message.format || message.message_format;
+    const recipient = (message.recipient || message.message_recipient || '').toLowerCase();
+    const isConsoleType = type === 'console' && format !== 'active_line' && !isTelemetryConsoleMessage(message);
+    const isStdStream = (type === 'message' || type === 'text') && STD_STREAM_RECIPIENTS.includes(recipient);
+    return isConsoleType || isStdStream;
+}
+
+function isTelemetryConsoleMessage(message) {
+    const type = message?.type || message?.message_type;
+    if (type !== 'console') return false;
+    if (message.format === 'active_line') return true;
+    const content = typeof message.content === 'string' ? message.content.trim() : '';
+    if (message.format === 'execution' && /^\d+(?:\/\d+)?$/.test(content)) {
+        return true;
+    }
+    if (/^line\s+\d+$/i.test(content)) {
+        return true;
+    }
+    return false;
+}
+
+function markCodeMessageForStdout(message) {
+    if (!message) return;
+    lastExecutableCodeId = message.id;
+    pendingConsoleParentId = message.id;
+    if (!codeConsoleMap.has(message.id)) {
+        codeConsoleMap.set(message.id, []);
+    }
+    ensureStdoutElements(message.id);
+}
+
+function addConsoleMapping(codeId, consoleId) {
+    if (!codeId || !consoleId) return;
+    if (!codeConsoleMap.has(codeId)) {
+        codeConsoleMap.set(codeId, []);
+    }
+    const entries = codeConsoleMap.get(codeId);
+    if (!entries.includes(consoleId)) {
+        entries.push(consoleId);
+    }
+    updateStdoutAvailability(codeId);
+}
+
+function registerConsoleMessage(message) {
+    if (!isConsoleOutputMessage(message)) return;
+    let codeId = message.associatedCodeId || pendingConsoleParentId || lastExecutableCodeId;
+    if (!codeId) {
+        codeId = findPreviousExecutableCodeId(message.id);
+    }
+    if (!codeId) return;
+    message.associatedCodeId = codeId;
+    addConsoleMapping(codeId, message.id);
+    pendingConsoleParentId = codeId;
+    lastExecutableCodeId = codeId;
+    refreshStdoutPanel(codeId, { autoScroll: true });
+}
+
+function handleStdoutTrackingOnMessageStart(message) {
+    if (!message || message.__stdoutHandled) return;
+    if (shouldTrackCodeMessage(message)) {
+        markCodeMessageForStdout(message);
+    } else if (isConsoleOutputMessage(message)) {
+        registerConsoleMessage(message);
+    } else if (isTelemetryConsoleMessage(message)) {
+        // ignore telemetry chunks
+    } else if (message.role === 'user') {
+        pendingConsoleParentId = null;
+        lastExecutableCodeId = null;
+    }
+    message.__stdoutHandled = true;
+}
+
+function ensureStdoutElements(codeId) {
+    const messageElement = chatDisplay.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return {};
+    const contentElement = messageElement.querySelector('.content');
+    if (!contentElement) return {};
+
+    let controls = messageElement.querySelector('.stdout-controls');
+    let button = controls ? controls.querySelector('.stdout-button') : null;
+    let panel = messageElement.querySelector('.stdout-panel');
+
+    if (!controls) {
+        controls = document.createElement('div');
+        controls.className = 'stdout-controls stdout-hidden';
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'stdout-button';
+        button.textContent = 'Show Output';
+        button.setAttribute('aria-expanded', 'false');
+        button.disabled = true;
+        button.addEventListener('click', () => toggleStdoutPanel(codeId));
+        controls.appendChild(button);
+        contentElement.appendChild(controls);
+    }
+
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.className = 'stdout-panel';
+        panel.setAttribute('role', 'region');
+        panel.setAttribute('aria-label', 'STDOUT and STDERR output');
+        panel.setAttribute('aria-hidden', 'true');
+        contentElement.appendChild(panel);
+    }
+
+    return { messageElement, contentElement, controls, button, panel };
+}
+
+function updateStdoutAvailability(codeId) {
+    const { controls, button, panel } = ensureStdoutElements(codeId);
+    if (!controls || !button) {
+        return;
+    }
+    const hasOutput = (codeConsoleMap.get(codeId) || []).length > 0;
+    controls.classList.toggle('stdout-hidden', !hasOutput);
+    button.disabled = !hasOutput;
+    if (!hasOutput) {
+        button.textContent = 'Show Output';
+        button.setAttribute('aria-expanded', 'false');
+        if (panel) {
+            panel.classList.remove('open');
+            panel.setAttribute('aria-hidden', 'true');
+        }
+    }
+}
+
+function getConsoleMessagesForCode(codeId) {
+    const ids = codeConsoleMap.get(codeId) || [];
+    return ids
+        .map(id => messages.find(msg => msg.id === id))
+        .filter(msg => Boolean(msg));
+}
+
+function findPreviousExecutableCodeId(referenceMessageId) {
+    if (!referenceMessageId) return null;
+    const index = messages.findIndex(msg => msg.id === referenceMessageId);
+    if (index === -1) return null;
+    for (let i = index - 1; i >= 0; i--) {
+        const candidate = messages[i];
+        if (shouldTrackCodeMessage(candidate)) {
+            return candidate.id;
+        }
+    }
+    return null;
+}
+
+function captureStdoutPanelState(codeId) {
+    const messageElement = chatDisplay.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return null;
+    const panel = messageElement.querySelector('.stdout-panel');
+    const button = messageElement.querySelector('.stdout-button');
+    if (!panel || !button) return null;
+    return {
+        isOpen: panel.classList.contains('open')
+    };
+}
+
+function restoreStdoutPanelState(codeId, state) {
+    if (!state || !state.isOpen) return;
+    const { panel, button } = ensureStdoutElements(codeId);
+    if (!panel || !button || button.disabled) return;
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+    button.textContent = 'Hide Output';
+    button.setAttribute('aria-expanded', 'true');
+    renderStdoutPanel(codeId);
+}
+
+function renderStdoutPanel(codeId) {
+    const { panel } = ensureStdoutElements(codeId);
+    if (!panel) return;
+    panel.innerHTML = '';
+    const outputs = getConsoleMessagesForCode(codeId).filter(msg => {
+        const text = typeof msg?.content === 'string' ? msg.content : '';
+        return text.trim().length > 0;
+    });
+    outputs.forEach(msg => {
+        const entry = document.createElement('div');
+        entry.className = 'stdout-entry';
+        const pre = document.createElement('pre');
+        pre.classList.add('stdout-pre');
+        const code = document.createElement('code');
+        code.classList.add('stdout-code');
+        code.textContent = msg.content || '';
+        pre.appendChild(code);
+        entry.appendChild(pre);
+        panel.appendChild(entry);
+    });
+    if (outputs.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'stdout-empty';
+        emptyState.textContent = 'No console output captured.';
+        panel.appendChild(emptyState);
+    }
+}
+
+function autoScrollStdoutPanel(panel) {
+    if (!panel) return;
+    panel.scrollTop = panel.scrollHeight;
+    panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function toggleStdoutPanel(codeId) {
+    const { button, panel } = ensureStdoutElements(codeId);
+    if (!button || !panel || button.disabled) return;
+    const isOpen = panel.classList.toggle('open');
+    if (isOpen) {
+        panel.setAttribute('aria-hidden', 'false');
+        button.textContent = 'Hide Output';
+        renderStdoutPanel(codeId);
+        autoScrollStdoutPanel(panel);
+    } else {
+        panel.setAttribute('aria-hidden', 'true');
+        button.textContent = 'Show Output';
+    }
+    button.setAttribute('aria-expanded', String(isOpen));
+}
+
+function refreshStdoutPanel(codeId, { autoScroll = false } = {}) {
+    const { panel } = ensureStdoutElements(codeId);
+    updateStdoutAvailability(codeId);
+    if (!panel || !panel.classList.contains('open')) return;
+    renderStdoutPanel(codeId);
+    if (autoScroll) {
+        autoScrollStdoutPanel(panel);
+    }
+}
+
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
     // Check authentication before doing anything else
@@ -1213,6 +1504,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (!micStream) await warmUpMicrophone(); // Ensure microphone is warmed up (sppeds up first use)
 
     // Initialize conversation manager
+    resetStdoutState();
     conversationManager = new ConversationManager();
 
     try {
@@ -1224,21 +1516,23 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
         });
         if (response.ok) {
-            const history = await response.json();  
-            history.forEach(message => {
-                // Assign an id if it's missing
-
-                if (history.length === 0) {
-                    showPromptIdeas();
-                } else if (message.type != 'console') {
+            const history = await response.json();
+            if (history.length === 0) {
+                showPromptIdeas();
+            } else {
+                history.forEach(message => {
+                    normalizeStdStreamMessage(message);
+                    if (message.type === 'console' && isTelemetryConsoleMessage(message)) {
+                        return;
+                    }
                     if (!message.id) {
                         message.id = generateId('msg');
                     }
-                    messages.push(message); // Add to messages array
+                    messages.push(message);
                     appendMessage(message);
                     updateMessageContent(message.id, message.content);
-                }
-            });
+                });
+            }
             scrollToBottom();
 
             // Typeset once after conversation is loaded
@@ -1494,7 +1788,7 @@ function shouldIncludeMessageInExport(message) {
     if (!message) return false;
     const msgType = message.type || message.message_type;
     if (msgType === 'console') {
-        if (message.format === 'active_line') {
+        if (isTelemetryConsoleMessage(message)) {
             return false;
         }
         const text = typeof message.content === 'string' ? message.content.trim() : '';
@@ -1541,6 +1835,73 @@ function renderMessageContentForExport(message) {
     return message.content || '';
 }
 
+function isExportCodeMessage(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type;
+    const format = message.format || message.message_format;
+    return msgType === 'code' && format !== 'html' && message.role !== 'user';
+}
+
+function isExportConsoleOutput(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type;
+    const format = message.format || message.message_format;
+    return msgType === 'console' && format !== 'active_line' && !isTelemetryConsoleMessage(message);
+}
+
+function buildStdoutAssociationsForExport(messageElements) {
+    const map = new Map();
+    let lastCodeId = null;
+    messageElements.forEach(element => {
+        const messageId = element.getAttribute('data-id');
+        const messageData = getMessageDataForExport(messageId);
+        if (!messageData) {
+            return;
+        }
+        if (isExportCodeMessage(messageData)) {
+            lastCodeId = messageId;
+        } else if (isExportConsoleOutput(messageData)) {
+            if (lastCodeId) {
+                if (!map.has(lastCodeId)) {
+                    map.set(lastCodeId, []);
+                }
+                map.get(lastCodeId).push({
+                    id: messageId,
+                    content: messageData.content || ''
+                });
+            }
+        } else if ((messageData.type || messageData.message_type) !== 'console') {
+            lastCodeId = null;
+        }
+    });
+    return map;
+}
+
+function attachStdoutControlsForExport(contentElement, codeId, outputs) {
+    if (!contentElement || !outputs || outputs.length === 0) return;
+    const controls = document.createElement('div');
+    controls.className = 'stdout-controls';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'stdout-button';
+    button.textContent = 'Show Output';
+    button.setAttribute('data-stdout-target', codeId);
+    button.setAttribute('aria-expanded', 'false');
+    controls.appendChild(button);
+    contentElement.appendChild(controls);
+
+    const panel = document.createElement('div');
+    panel.className = 'stdout-panel';
+    panel.setAttribute('data-stdout-target', codeId);
+    panel.setAttribute('aria-hidden', 'true');
+    panel.innerHTML = outputs.map(item => `
+        <div class="stdout-entry">
+            <pre class="stdout-pre"><code class="stdout-code">${escapeHtml(item.content || '')}</code></pre>
+        </div>
+    `).join('');
+    contentElement.appendChild(panel);
+}
+
 function getMessageDataForExport(messageId) {
     if (!messageId) return null;
     
@@ -1564,6 +1925,7 @@ function getMessageDataForExport(messageId) {
 function prepareChatCloneForExport() {
     const chatClone = chatDisplay.cloneNode(true);
     const messageElements = Array.from(chatClone.querySelectorAll('.message'));
+    const stdoutAssociations = buildStdoutAssociationsForExport(messageElements);
     
     messageElements.forEach(element => {
         const messageId = element.getAttribute('data-id');
@@ -1584,6 +1946,15 @@ function prepareChatCloneForExport() {
         
         contentEl.setAttribute('data-type', messageData.type || messageData.message_type || 'message');
         contentEl.innerHTML = renderMessageContentForExport(messageData);
+        
+        if (isExportConsoleOutput(messageData)) {
+            element.classList.add('console-output-message');
+        }
+
+        const outputs = stdoutAssociations.get(messageId);
+        if (outputs && outputs.length && isExportCodeMessage(messageData)) {
+            attachStdoutControlsForExport(contentEl, messageId, outputs);
+        }
     });
     
     if (window.Prism && Prism.highlightAllUnder) {
@@ -1827,11 +2198,11 @@ async function createSelfContainedHTML() {
                     pre.style.position = 'relative';
                     pre.appendChild(copyBtn);
                     
-                    copyBtn.addEventListener('click', function() {
-                        navigator.clipboard.writeText(codeBlock.textContent).then(function() {
-                            copyBtn.innerHTML = 'Copied!';
-                            setTimeout(function() {
-                                copyBtn.innerHTML = 'Copy';
+            copyBtn.addEventListener('click', function() {
+                navigator.clipboard.writeText(codeBlock.textContent).then(function() {
+                    copyBtn.innerHTML = 'Copied!';
+                    setTimeout(function() {
+                        copyBtn.innerHTML = 'Copy';
                             }, 2000);
                         }).catch(function() {
                             // Fallback for older browsers
@@ -1848,6 +2219,24 @@ async function createSelfContainedHTML() {
                         });
                     });
                 }
+            });
+
+            document.querySelectorAll('.stdout-button').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    const targetId = button.getAttribute('data-stdout-target');
+                    if (!targetId) return;
+                    const selector = '.stdout-panel[data-stdout-target="' + targetId + '"]';
+                    const panel = document.querySelector(selector);
+                    if (!panel) return;
+                    const isOpen = panel.classList.toggle('open');
+                    panel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+                    button.textContent = isOpen ? 'Hide Output' : 'Show Output';
+                    button.setAttribute('aria-expanded', String(isOpen));
+                    if (isOpen) {
+                        panel.scrollTop = panel.scrollHeight;
+                        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                    }
+                });
             });
 
             const typesetMath = () => {
