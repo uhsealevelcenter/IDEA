@@ -29,6 +29,8 @@ let pendingUploads = [];
 let lastExecutableCodeId = null;
 let pendingConsoleParentId = null;
 const codeConsoleMap = new Map();
+let activeLineCodeId = null;
+let isActiveLineRunning = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
 const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
@@ -679,6 +681,7 @@ function processChunk(chunk) {
     return new Promise((resolve) => {
         removeWorkingIndicator();
         if (chunk.type === 'console' && chunk.format === 'active_line') {
+            //console.log(chunk); // Debug log for active line chunks
             handleActiveLineChunk(chunk.content);
             resolve();
             return;
@@ -850,17 +853,17 @@ function appendMessage(message) {
 
 // Modify updateMessageContent with better error handling
 function handleActiveLineChunk(content) {
-    const codeBlocks = document.querySelectorAll('pre code');
-    const lastCodeBlock = codeBlocks[codeBlocks.length - 1];
-    if (!lastCodeBlock) return;
-    const existingSpinner = lastCodeBlock.parentElement.querySelector('.code-spinner');
-    if (existingSpinner) {
-        existingSpinner.remove();
+    if (!activeLineCodeId) {
+        activeLineCodeId = lastExecutableCodeId || pendingConsoleParentId || null;
     }
+    if (!activeLineCodeId) return;
     if (content) {
-        const spinner = document.createElement('div');
-        spinner.className = 'code-spinner';
-        lastCodeBlock.parentElement.appendChild(spinner);
+        isActiveLineRunning = true;
+        renderActiveLineSpinner();
+    } else {
+        isActiveLineRunning = false;
+        removeActiveLineSpinner();
+        activeLineCodeId = null;
     }
 }
 
@@ -971,6 +974,9 @@ function updateMessageContent(id, content) {
                 ensureStdoutElements(message.id);
                 updateStdoutAvailability(message.id);
                 restoreStdoutPanelState(message.id, preservedStdoutState);
+                if (isActiveLineRunning && activeLineCodeId === message.id) {
+                    renderActiveLineSpinner();
+                }
             }
         } else if (message.type === 'file') {
             contentDiv.innerHTML = `<a href="${content}" download>Download File</a>`;
@@ -1211,6 +1217,9 @@ function resetStdoutState() {
     lastExecutableCodeId = null;
     pendingConsoleParentId = null;
     activeMessageIds.clear();
+    activeLineCodeId = null;
+    isActiveLineRunning = false;
+    removeActiveLineSpinner();
 }
 window.resetStdoutState = resetStdoutState;
 
@@ -1297,6 +1306,35 @@ function getActiveMessageId(chunk) {
     return iterator.value || null;
 }
 
+function getCodeMessageElement(codeId) {
+    if (!codeId) return null;
+    return chatDisplay.querySelector(`.message[data-id="${codeId}"]`);
+}
+
+function renderActiveLineSpinner() {
+    if (!activeLineCodeId || !isActiveLineRunning) return;
+    const messageElement = getCodeMessageElement(activeLineCodeId);
+    if (!messageElement) return;
+    const pre = messageElement.querySelector('pre');
+    if (!pre) return;
+    let spinner = pre.querySelector('.code-spinner');
+    if (!spinner) {
+        spinner = document.createElement('div');
+        spinner.className = 'code-spinner';
+        pre.appendChild(spinner);
+    }
+}
+
+function removeActiveLineSpinner() {
+    if (!activeLineCodeId) return;
+    const messageElement = getCodeMessageElement(activeLineCodeId);
+    if (!messageElement) return;
+    const spinner = messageElement.querySelector('pre .code-spinner');
+    if (spinner) {
+        spinner.remove();
+    }
+}
+
 function clearActiveMessageId(chunk) {
     const baseKey = getChunkKey(chunk);
     const store = activeMessageIds.get(baseKey);
@@ -1347,8 +1385,13 @@ function isTelemetryConsoleMessage(message) {
 
 function markCodeMessageForStdout(message) {
     if (!message) return;
+    if (activeLineCodeId && activeLineCodeId !== message.id) {
+        removeActiveLineSpinner();
+    }
     lastExecutableCodeId = message.id;
     pendingConsoleParentId = message.id;
+    activeLineCodeId = message.id;
+    isActiveLineRunning = false;
     if (!codeConsoleMap.has(message.id)) {
         codeConsoleMap.set(message.id, []);
     }
