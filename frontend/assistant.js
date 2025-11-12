@@ -23,7 +23,7 @@ let currentMessageIndex = 0;
 let isGenerating = false;
 let controller = null;
 let promptIdeasVisible = false;
-let currentMessageId = null;
+const activeMessageIds = new Map();
 let workingIndicatorId = null;
 let pendingUploads = [];
 let lastExecutableCodeId = null;
@@ -676,12 +676,17 @@ function createImageMessageFromChunk(chunk, fallbackMessage) {
 // Function to process each chunk of the stream and create messages
 function processChunk(chunk) {
     chunk = normalizeIncomingChunk(chunk);
-    let messageStarted = false;
-    let messageEnded = false;
     return new Promise((resolve) => {
         removeWorkingIndicator();
+        if (chunk.type === 'console' && chunk.format === 'active_line') {
+            handleActiveLineChunk(chunk.content);
+            resolve();
+            return;
+        }
+
+        let message = null;
+
         if (chunk.start) {
-            // Start of a new message
             const newMessage = normalizeStdStreamMessage({
                 id: generateId('msg'),
                 role: chunk.role,
@@ -694,24 +699,21 @@ function processChunk(chunk) {
             });
             messages.push(newMessage);
             appendMessage(newMessage);
-            currentMessageId = newMessage.id; // Use ID instead of index
-        }else{
-            if (chunk.error) {
-                // if chunk error has message
-                const errorMessage = chunk.error.message || chunk.error;
-    appendSystemMessage(errorMessage);
-                return;
+            setActiveMessageId(chunk, newMessage.id);
+            message = newMessage;
+        } else if (chunk.error) {
+            const errorMessage = chunk.error.message || chunk.error;
+            appendSystemMessage(errorMessage);
+            return;
+        }
+
+        if (!message) {
+            const targetId = getActiveMessageId(chunk);
+            if (targetId) {
+                message = messages.find(msg => msg.id === targetId);
             }
         }
 
-        // if (chunk.end) {
-        //     // End of the current message
-        //     resolve();
-        //     return;
-        // }
-
-        // Append content to the message with the current ID
-        let message = messages.find(msg => msg.id === currentMessageId);
         if (message) {
             if (shouldStartNewBase64Image(message, chunk)) {
                 message.isComplete = true;
@@ -721,27 +723,22 @@ function processChunk(chunk) {
                 const newMessage = createImageMessageFromChunk(chunk, message);
                 messages.push(newMessage);
                 appendMessage(newMessage);
-                currentMessageId = newMessage.id;
+                setActiveMessageId(chunk, newMessage.id);
                 message = newMessage;
             }
 
             if (chunk.end) {
-                message.isComplete = true;  // Mark message as complete
-                // console.log(`Message ${currentMessageId} completed`);
-
-                // Save the completed message to conversation if it's from assistant or computer
+                chunk.format = chunk.format || message.format || chunk.recipient || 'output';
+                message.isComplete = true;
                 saveCompletedAssistantMessage(message);
+                clearActiveMessageId(chunk);
             }
+
             message.format = chunk.format || message.format || undefined;
             message.recipient = chunk.recipient || message.recipient || undefined;
-            if (chunk.format == 'active_line') {
-                message.content = chunk.content || '';
-            }else{
-                message.content += chunk.content || '';
-            }
-            
-            // Update the displayed message
-            updateMessageContent(currentMessageId, message.content);
+            message.content += chunk.content || '';
+
+            updateMessageContent(message.id, message.content);
         }
 
         resolve();
@@ -852,6 +849,21 @@ function appendMessage(message) {
 }
 
 // Modify updateMessageContent with better error handling
+function handleActiveLineChunk(content) {
+    const codeBlocks = document.querySelectorAll('pre code');
+    const lastCodeBlock = codeBlocks[codeBlocks.length - 1];
+    if (!lastCodeBlock) return;
+    const existingSpinner = lastCodeBlock.parentElement.querySelector('.code-spinner');
+    if (existingSpinner) {
+        existingSpinner.remove();
+    }
+    if (content) {
+        const spinner = document.createElement('div');
+        spinner.className = 'code-spinner';
+        lastCodeBlock.parentElement.appendChild(spinner);
+    }
+}
+
 function updateMessageContent(id, content) {
     try {
         const messageElement = chatDisplay.querySelector(`.message[data-id="${id}"]`);
@@ -867,18 +879,6 @@ function updateMessageContent(id, content) {
         const contentDiv = messageElement.querySelector('.content');
         if (!contentDiv) {
             throw new Error('Content div not found');
-        }
-
-        if (message.type === 'console' && message.format === 'active_line') {
-            const codeBlocks = document.querySelectorAll('pre code');
-            const lastCodeBlock = codeBlocks[codeBlocks.length - 1];
-            if (lastCodeBlock) {
-                const existingSpinner = lastCodeBlock.parentElement.querySelector('.code-spinner');
-                if (existingSpinner) {
-                    existingSpinner.remove();
-                }
-            }
-            return;
         }
 
         if (message.type === 'console') {
@@ -1065,7 +1065,6 @@ async function clearChatHistory() {
         // Clear frontend messages array
         messages = [];
         // Clear chat display
-        currentMessageId = null;
         isGenerating = false;
         controller = null;
         chatDisplay.innerHTML = '';
@@ -1211,6 +1210,7 @@ function resetStdoutState() {
     codeConsoleMap.clear();
     lastExecutableCodeId = null;
     pendingConsoleParentId = null;
+    activeMessageIds.clear();
 }
 window.resetStdoutState = resetStdoutState;
 
@@ -1250,7 +1250,66 @@ function normalizeIncomingChunk(chunk) {
     } else if (chunk.type === 'console' && !chunk.format && STD_STREAM_RECIPIENTS.includes(chunk.recipient || '')) {
         chunk.format = chunk.recipient;
     }
+    if (chunk.type === 'console' && !chunk.format) {
+        chunk.format = 'output';
+    }
     return chunk;
+}
+
+function getChunkKey(chunk) {
+    const role = chunk.role || '';
+    const type = chunk.type || '';
+    return `${role}:${type}`;
+}
+
+function getFormatKey(chunk) {
+    if (!chunk) return '__default__';
+    return chunk.format || chunk.recipient || '__default__';
+}
+
+function getFormatStore(baseKey) {
+    if (!activeMessageIds.has(baseKey)) {
+        activeMessageIds.set(baseKey, { map: new Map(), lastKey: null });
+    }
+    return activeMessageIds.get(baseKey);
+}
+
+function setActiveMessageId(chunk, messageId) {
+    const baseKey = getChunkKey(chunk);
+    const formatKey = getFormatKey(chunk);
+    const store = getFormatStore(baseKey);
+    store.map.set(formatKey, messageId);
+    store.lastKey = formatKey;
+}
+
+function getActiveMessageId(chunk) {
+    const baseKey = getChunkKey(chunk);
+    const store = activeMessageIds.get(baseKey);
+    if (!store) return null;
+    const formatKey = getFormatKey(chunk);
+    if (store.map.has(formatKey)) {
+        return store.map.get(formatKey);
+    }
+    if (store.lastKey && store.map.has(store.lastKey)) {
+        return store.map.get(store.lastKey);
+    }
+    const iterator = store.map.values().next();
+    return iterator.value || null;
+}
+
+function clearActiveMessageId(chunk) {
+    const baseKey = getChunkKey(chunk);
+    const store = activeMessageIds.get(baseKey);
+    if (!store) return;
+    const formatKey = getFormatKey(chunk);
+    store.map.delete(formatKey);
+    if (store.lastKey === formatKey) {
+        const nextKey = store.map.keys().next();
+        store.lastKey = nextKey.value || null;
+    }
+    if (store.map.size === 0) {
+        activeMessageIds.delete(baseKey);
+    }
 }
 
 function shouldTrackCodeMessage(message) {
