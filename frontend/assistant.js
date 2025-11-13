@@ -1982,7 +1982,34 @@ function isExportConsoleOutput(message) {
 }
 
 function buildStdoutAssociationsForExport(messageElements) {
-    const map = new Map();
+    const elementIds = new Set(
+        messageElements.map(element => element.getAttribute('data-id')).filter(Boolean)
+    );
+
+    const fromRuntimeState = new Map();
+    if (codeConsoleMap && codeConsoleMap.size > 0) {
+        codeConsoleMap.forEach((consoleIds = [], codeId) => {
+            if (!elementIds.has(codeId)) {
+                return;
+            }
+            const outputs = consoleIds
+                .map(id => getMessageDataForExport(id))
+                .filter(msg => msg && isExportConsoleOutput(msg))
+                .map(msg => ({
+                    id: msg.id,
+                    content: msg.content || ''
+                }));
+            if (outputs.length > 0) {
+                fromRuntimeState.set(codeId, outputs);
+            }
+        });
+    }
+
+    if (fromRuntimeState.size > 0) {
+        return fromRuntimeState;
+    }
+
+    const fallbackMap = new Map();
     let lastCodeId = null;
     messageElements.forEach(element => {
         const messageId = element.getAttribute('data-id');
@@ -1994,10 +2021,10 @@ function buildStdoutAssociationsForExport(messageElements) {
             lastCodeId = messageId;
         } else if (isExportConsoleOutput(messageData)) {
             if (lastCodeId) {
-                if (!map.has(lastCodeId)) {
-                    map.set(lastCodeId, []);
+                if (!fallbackMap.has(lastCodeId)) {
+                    fallbackMap.set(lastCodeId, []);
                 }
-                map.get(lastCodeId).push({
+                fallbackMap.get(lastCodeId).push({
                     id: messageId,
                     content: messageData.content || ''
                 });
@@ -2006,7 +2033,7 @@ function buildStdoutAssociationsForExport(messageElements) {
             lastCodeId = null;
         }
     });
-    return map;
+    return fallbackMap;
 }
 
 function attachStdoutControlsForExport(contentElement, codeId, outputs) {
