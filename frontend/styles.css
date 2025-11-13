@@ -780,22 +780,23 @@ body.theme-light .message .content pre {
 /* Style for the copy button */
 .copy-button {
     position: absolute;
-    top: 10px;
-    right: 10px;
-    padding: 6px 10px;
+    top: 8px;
+    right: 8px;
+    padding: 4px 10px;
     font-size: 12px;
     cursor: pointer;
-    background-color: rgba(255, 255, 255, 0.16);
+    background-color: #007bff;
     color: #ffffff;
-    border: 1px solid rgba(255, 255, 255, 0.35);
-    border-radius: 999px;
-    opacity: 0.8;
-    transition: opacity 0.3s, transform 0.2s;
+    border: none;
+    border-radius: 6px;
+    opacity: 0.92;
+    transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .copy-button:hover {
     opacity: 1;
     transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.35);
 }
 
 /* Ensure the <pre> elements are positioned relatively to contain the absolute button */
