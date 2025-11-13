@@ -1950,7 +1950,14 @@ function renderMessageContentForExport(message) {
     const format = message.format || message.message_format || '';
     if (msgType === 'message') {
         const baseSource = message.content || message.userText || '';
-        const rendered = marked ? marked.parse(baseSource) : baseSource;
+        const { text: shielded, store } = protectMath(baseSource);
+        let rendered;
+        if (!hasBalancedMath(baseSource)) {
+            rendered = `<pre>${escapeHtml(baseSource)}</pre>`;
+        } else {
+            const parsedMarkdown = marked ? marked.parse(shielded) : shielded;
+            rendered = restoreMath(parsedMarkdown, store);
+        }
         if (Array.isArray(message.attachments) && message.attachments.length > 0) {
             const alreadyPresent = /<strong>(?:file|files):<\/strong>/i.test(rendered);
             const attachmentList = message.attachments
