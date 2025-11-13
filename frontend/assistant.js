@@ -756,7 +756,8 @@ function processChunk(chunk) {
 }
 
 // Function to append a message to the chat display, gets called on chunk start
-function appendMessage(message) {
+function appendMessage(message, options = {}) {
+    const { persist = true } = options;
     // if (message.type == 'console'){
     //     // TODO: we should only skip console messages that have start or end properties
     //     // or have content that is empty
@@ -840,7 +841,7 @@ function appendMessage(message) {
     handleStdoutTrackingOnMessageStart(message);
 
     // Save user messages immediately to conversation (assistant/computer messages are saved when complete)
-    if (conversationManager && message.role === 'user' && message.content) {
+    if (persist && conversationManager && message.role === 'user' && message.content) {
         // Validate message type against backend enums
         const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
         const messageType = validTypes.includes(message.type) ? message.type : 'message';
@@ -1602,6 +1603,43 @@ function refreshStdoutPanel(codeId, { autoScroll = false } = {}) {
     }
 }
 
+function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
+    if (!Array.isArray(rawMessages)) {
+        return;
+    }
+
+    messages = [];
+    chatDisplay.innerHTML = '';
+    resetStdoutState();
+
+    rawMessages.forEach(rawMessage => {
+        if (!rawMessage) {
+            return;
+        }
+
+        const normalized = normalizeStdStreamMessage({ ...rawMessage });
+        if (normalized.type === 'console' && isTelemetryConsoleMessage(normalized)) {
+            return;
+        }
+
+        if (!normalized.id) {
+            normalized.id = generateId('msg');
+        }
+
+        normalized.isComplete = true;
+        normalized.content = normalized.content || '';
+
+        messages.push(normalized);
+        appendMessage(normalized, { persist });
+        updateMessageContent(normalized.id, normalized.content);
+    });
+
+    scrollToBottom();
+    typeset(document.getElementById('chatDisplay'));
+}
+
+window.hydrateChatWithMessages = hydrateChatWithMessages;
+
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
     // Check authentication before doing anything else
@@ -1629,23 +1667,8 @@ window.addEventListener('DOMContentLoaded', async () => {
             if (history.length === 0) {
                 showPromptIdeas();
             } else {
-                history.forEach(message => {
-                    normalizeStdStreamMessage(message);
-                    if (message.type === 'console' && isTelemetryConsoleMessage(message)) {
-                        return;
-                    }
-                    if (!message.id) {
-                        message.id = generateId('msg');
-                    }
-                    messages.push(message);
-                    appendMessage(message);
-                    updateMessageContent(message.id, message.content);
-                });
+                hydrateChatWithMessages(history, { persist: false });
             }
-            scrollToBottom();
-
-            // Typeset once after conversation is loaded
-            typeset(document.getElementById('chatDisplay'));
         }
     } catch (error) {
         console.error("Failed to fetch history:", error);
