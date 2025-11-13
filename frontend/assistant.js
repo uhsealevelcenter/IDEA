@@ -646,7 +646,14 @@ function saveCompletedAssistantMessage(message) {
         return;
     }
     if (message.type === 'console') {
-        return;
+        if (message.format === 'active_line') {
+            return;
+        }
+        const text = typeof message.content === 'string' ? message.content.trim() : '';
+        if (!text) {
+            return;
+        }
+        message.format = message.format || 'output';
     }
     const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
     const messageType = validTypes.includes(message.type) ? message.type : 'message';
@@ -1175,25 +1182,22 @@ function removeWorkingIndicator() {
     workingIndicatorId = null;
 }
 
-function addCopyButtons() {
-    // console.log("Adding copy buttons");
-    const codeBlocks = document.querySelectorAll('pre code');
+function addCopyButtons(root) {
+    const scope = root instanceof Element ? root : document;
+    const codeBlocks = scope.querySelectorAll('pre code');
     
     codeBlocks.forEach((codeBlock) => {
         const pre = codeBlock.parentElement;
+        if (!pre) return;
 
-        // Avoid adding multiple buttons to the same code block
         if (pre.querySelector('.copy-button')) return;
 
-        // Create the copy button
         const button = document.createElement('button');
         button.classList.add('copy-button');
+        button.type = 'button';
         button.innerText = 'Copy';
-
-        // Append the button to the <pre> element
         pre.appendChild(button);
 
-        // Add click event to copy code
         button.addEventListener('click', () => {
             const code = codeBlock.innerText;
             navigator.clipboard.writeText(code).then(() => {
@@ -1555,6 +1559,9 @@ function renderStdoutPanel(codeId) {
         entry.appendChild(pre);
         panel.appendChild(entry);
     });
+    if (outputs.length > 0) {
+        addCopyButtons(panel);
+    }
     if (outputs.length === 0) {
         const emptyState = document.createElement('div');
         emptyState.className = 'stdout-empty';
@@ -2260,7 +2267,7 @@ async function createSelfContainedHTML() {
                 processEnvironments: true
             },
             options: {
-                skipHtmlTags: ['script', 'noscript', 'style', 'textarea']
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
             },
             svg: { fontCache: 'global' }
         };
@@ -2276,52 +2283,32 @@ async function createSelfContainedHTML() {
                 }
             });
             
-            // Add click-to-copy functionality for code blocks
-            document.querySelectorAll('pre code').forEach(function(codeBlock) {
-                const pre = codeBlock.parentElement;
-                if (!pre.querySelector('.export-copy-btn')) {
+            const attachCopyButtons = (root = document) => {
+                root.querySelectorAll('pre code').forEach(codeBlock => {
+                    const pre = codeBlock.parentElement;
+                    if (!pre) return;
+                    if (pre.querySelector('.copy-button')) return;
                     const copyBtn = document.createElement('button');
-                    copyBtn.className = 'export-copy-btn';
-                    copyBtn.innerHTML = 'Copy';
-                    copyBtn.style.cssText = \`
-                        position: absolute;
-                        top: 8px;
-                        right: 8px;
-                        background: #007bff;
-                        color: white;
-                        border: none;
-                        border-radius: 4px;
-                        padding: 4px 8px;
-                        font-size: 12px;
-                        cursor: pointer;
-                        opacity: 0.8;
-                    \`;
-                    
-                    pre.style.position = 'relative';
+                    copyBtn.className = 'copy-button';
+                    copyBtn.type = 'button';
+                    copyBtn.textContent = 'Copy';
                     pre.appendChild(copyBtn);
-                    
-            copyBtn.addEventListener('click', function() {
-                navigator.clipboard.writeText(codeBlock.textContent).then(function() {
-                    copyBtn.innerHTML = 'Copied!';
-                    setTimeout(function() {
-                        copyBtn.innerHTML = 'Copy';
+                    copyBtn.addEventListener('click', function() {
+                        navigator.clipboard.writeText(codeBlock.textContent).then(function() {
+                            copyBtn.textContent = 'Copied!';
+                            setTimeout(function() {
+                                copyBtn.textContent = 'Copy';
                             }, 2000);
                         }).catch(function() {
-                            // Fallback for older browsers
-                            const textarea = document.createElement('textarea');
-                            textarea.value = codeBlock.textContent;
-                            document.body.appendChild(textarea);
-                            textarea.select();
-                            document.execCommand('copy');
-                            document.body.removeChild(textarea);
-                            copyBtn.innerHTML = 'Copied!';
+                            copyBtn.textContent = 'Error';
                             setTimeout(function() {
-                                copyBtn.innerHTML = 'Copy';
+                                copyBtn.textContent = 'Copy';
                             }, 2000);
                         });
                     });
-                }
-            });
+                });
+            };
+            attachCopyButtons();
 
             document.querySelectorAll('.stdout-button').forEach(function(button) {
                 button.addEventListener('click', function() {
@@ -2337,6 +2324,7 @@ async function createSelfContainedHTML() {
                     if (isOpen) {
                         panel.scrollTop = panel.scrollHeight;
                         panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                        attachCopyButtons(panel);
                     }
                 });
             });

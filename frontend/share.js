@@ -6,6 +6,31 @@
 const sharedStdoutMap = new Map();
 const sharedMessageCache = new Map();
 let lastSharedCodeId = null;
+const SHARED_STD_STREAM_RECIPIENTS = ['stdout', 'stderr'];
+
+function addCopyButtonsShared(root) {
+    const scope = root instanceof Element ? root : document;
+    const codeBlocks = scope.querySelectorAll('pre code');
+    codeBlocks.forEach(codeBlock => {
+        const pre = codeBlock.parentElement;
+        if (!pre) return;
+        if (pre.querySelector('.copy-button')) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'copy-button';
+        button.innerText = 'Copy';
+        pre.appendChild(button);
+        button.addEventListener('click', () => {
+            navigator.clipboard.writeText(codeBlock.innerText).then(() => {
+                button.innerText = 'Copied!';
+                setTimeout(() => button.innerText = 'Copy', 2000);
+            }).catch(() => {
+                button.innerText = 'Error';
+                setTimeout(() => button.innerText = 'Copy', 2000);
+            });
+        });
+    });
+}
 
 // Extract share token from URL
 function getShareTokenFromUrl() {
@@ -17,6 +42,7 @@ function getShareTokenFromUrl() {
 // Determine whether a shared message should be rendered
 function shouldDisplaySharedMessage(message) {
     if (!message) return false;
+    normalizeSharedMessage(message);
     
     if (message.message_type === 'console') {
         return !isSharedTelemetryConsole(message);
@@ -29,6 +55,29 @@ function resetSharedStdoutState() {
     sharedStdoutMap.clear();
     lastSharedCodeId = null;
     sharedMessageCache.clear();
+}
+
+function normalizeSharedMessage(message) {
+    if (!message) return message;
+    if (!message.message_type && message.type) {
+        message.message_type = message.type;
+    }
+    if (!message.message_format && message.format) {
+        message.message_format = message.format;
+    }
+    if (!message.recipient && message.message_recipient) {
+        message.recipient = message.message_recipient;
+    }
+
+    const recipient = (message.recipient || '').toLowerCase();
+    if ((message.message_type === 'message' || message.message_type === 'text') &&
+        SHARED_STD_STREAM_RECIPIENTS.includes(recipient)) {
+        message.message_type = 'console';
+        message.message_format = message.message_format || recipient || 'output';
+    } else if (message.message_type === 'console' && !message.message_format) {
+        message.message_format = recipient || 'output';
+    }
+    return message;
 }
 
 function shouldTrackSharedCode(message) {
@@ -132,10 +181,12 @@ function updateSharedStdoutAvailability(codeId) {
 
 function addSharedConsoleOutput(codeId, message) {
     if (!codeId) return;
+    const text = typeof message.content === 'string' ? message.content : '';
+    if (!text.trim()) return;
     if (!sharedStdoutMap.has(codeId)) {
         sharedStdoutMap.set(codeId, []);
     }
-    sharedStdoutMap.get(codeId).push(message.content || '');
+    sharedStdoutMap.get(codeId).push(text);
     updateSharedStdoutAvailability(codeId);
     const { panel } = ensureSharedStdoutElements(codeId);
     if (panel && panel.classList.contains('open')) {
@@ -168,6 +219,9 @@ function renderSharedStdoutPanel(codeId) {
         entry.appendChild(pre);
         panel.appendChild(entry);
     });
+    if (outputs.length > 0) {
+        addCopyButtonsShared(panel);
+    }
     if (typeof Prism !== 'undefined') {
         Prism.highlightAllUnder(panel);
     }
@@ -195,6 +249,7 @@ function displayMessageInChat(message) {
     if (!shouldDisplaySharedMessage(message)) {
         return;
     }
+    normalizeSharedMessage(message);
     
     const chatDisplay = document.getElementById('chatDisplay');
     
@@ -246,6 +301,7 @@ function displayMessageInChat(message) {
     
     messageDiv.appendChild(contentElement);
     chatDisplay.appendChild(messageDiv);
+    addCopyButtonsShared(contentElement);
     
     if (shouldTrackSharedCode(message)) {
         lastSharedCodeId = messageId;
