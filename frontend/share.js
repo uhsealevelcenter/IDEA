@@ -8,6 +8,57 @@ const sharedMessageCache = new Map();
 let lastSharedCodeId = null;
 const SHARED_STD_STREAM_RECIPIENTS = ['stdout', 'stderr'];
 
+//// Math formatting helpers for shared/downloaded views
+function protectMath(text) {
+    const store = [];
+    const protect = (regex) => (src) =>
+        src.replace(regex, (match) => {
+            const key = `@@MATH${store.length}@@`;
+            store.push(match);
+            return key;
+        });
+
+    let out = protect(/\$\$([\s\S]*?)\$\$/g)(text);
+    out = protect(/\\\[([\s\S]*?)\\\]/g)(out);
+    out = protect(/(?<!\$)\$([^\n]+?)\$(?!\$)/g)(out);
+    out = protect(/\\\(([^\n]+?)\\\)/g)(out);
+
+    return { text: out, store };
+}
+
+function restoreMath(html, store) {
+    return store.reduce((acc, original, index) => acc.replace(`@@MATH${index}@@`, original), html);
+}
+
+function countUnescapedSequence(text, sequence) {
+    if (!text || !sequence) return 0;
+    let count = 0;
+    let index = text.indexOf(sequence);
+    while (index !== -1) {
+        let backslashCount = 0;
+        let cursor = index - 1;
+        while (cursor >= 0 && text[cursor] === '\\') {
+            backslashCount += 1;
+            cursor -= 1;
+        }
+        if (backslashCount % 2 === 0) {
+            count += 1;
+        }
+        index = text.indexOf(sequence, index + sequence.length);
+    }
+    return count;
+}
+
+function hasBalancedMath(text) {
+    const dollars = countUnescapedSequence(text, '$$') % 2 === 0;
+    const lb = (text.match(/\\\[/g) || []).length;
+    const rb = (text.match(/\\\]/g) || []).length;
+    const lp = (text.match(/\\\(/g) || []).length;
+    const rp = (text.match(/\\\)/g) || []).length;
+    return dollars && lb === rb && lp === rp;
+}
+//// End math helpers
+
 function addCopyButtonsShared(root) {
     const scope = root instanceof Element ? root : document;
     const codeBlocks = scope.querySelectorAll('pre code');
@@ -268,8 +319,14 @@ function displayMessageInChat(message) {
     
     // Handle different message types and formats similar to conversation_ui.js
     if (message.message_type === 'message') {
-        // Handle markdown content
-        contentElement.innerHTML = marked ? marked.parse(message.content) : message.content;
+        const raw = message.content || '';
+        const { text: shielded, store } = protectMath(raw);
+        if (!hasBalancedMath(raw)) {
+            contentElement.textContent = raw;
+        } else {
+            const parsedMarkdown = marked ? marked.parse(shielded) : shielded;
+            contentElement.innerHTML = restoreMath(parsedMarkdown, store);
+        }
     } else if (message.message_type === 'image') {
         if (message.message_format === 'base64.png') {
             contentElement.innerHTML = `<img src="data:image/png;base64,${message.content}" alt="Image">`;
