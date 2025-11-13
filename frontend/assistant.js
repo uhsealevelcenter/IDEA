@@ -138,13 +138,29 @@ function restoreMath(html, store) {
 }
 
 // Returns true if display/inline math is closed (so it's safe to typeset)
+function countUnescapedSequence(text, sequence) {
+  if (!text || !sequence) return 0;
+  let count = 0;
+  let index = text.indexOf(sequence);
+  while (index !== -1) {
+    let backslashCount = 0;
+    let cursor = index - 1;
+    while (cursor >= 0 && text[cursor] === '\\') {
+      backslashCount += 1;
+      cursor -= 1;
+    }
+    if (backslashCount % 2 === 0) {
+      count += 1;
+    }
+    index = text.indexOf(sequence, index + sequence.length);
+  }
+  return count;
+}
+
 function hasBalancedMath(s) {
-  // even number of $$ delimiters
-  const dollars = (s.match(/\$\$/g) || []).length % 2 === 0;
-  // balanced \[ \]
+  const dollars = countUnescapedSequence(s, '$$') % 2 === 0;
   const lb = (s.match(/\\\[/g) || []).length;
   const rb = (s.match(/\\\]/g) || []).length;
-  // balanced \( \)
   const lp = (s.match(/\\\(/g) || []).length;
   const rp = (s.match(/\\\)/g) || []).length;
   return dollars && lb === rb && lp === rp;
