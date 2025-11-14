@@ -172,9 +172,9 @@ data/**
 !data/prompts/
 !data/prompts/*.json
 
-# Except, allow UHSLC metadata (GEOJSON)
-!data/metadata/
-!data/metadata/*.geojson   
+# # Except, allow UHSLC metadata (GEOJSON)
+# !data/metadata/
+# !data/metadata/*.geojson   
 
 # Except, allow UHSLC benchmarks (JSON files)
 !data/benchmarks/
@@ -201,3 +201,6 @@ node_modules/
 
 # Example Output
 Example_Output/
+
+# Ignore local_scripts
+local_scripts/
