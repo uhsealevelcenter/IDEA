@@ -5,12 +5,14 @@ import os
 from datetime import date, datetime, timedelta
 from time import time
 import logging
+from logging.handlers import RotatingFileHandler
 from typing import Dict, List
 import hashlib
 import secrets
+from uuid import UUID
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -25,7 +27,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter
 from slowapi.errors import RateLimitExceeded
 from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, \
-    PromptListResponse, SetActivePromptRequest
+    PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate, UserCreate, UserPublic, GenericMessage, User
+import crud
+from core.security import verify_password as verify_password_hash
+from sqlalchemy.exc import IntegrityError
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
 
@@ -39,16 +44,67 @@ from utils.custom_instructions import get_custom_instructions  # Generic Assista
 
 # Import prompt manager
 from utils.prompt_manager import init_prompt_manager, get_prompt_manager
-from knowledge_base_routes import router as knowledge_base_router
+from knowledge_base_routes import router as knowledge_base_router, MAX_PAPER_SIZE
+from conversation_routes import router as conversation_router
+from sqlmodel import Session
 from auth import (
     generate_auth_token, verify_password, is_authenticated, get_auth_token,
-    add_auth_session, remove_auth_session, SESSION_TIMEOUT
+    add_auth_session, remove_auth_session, SESSION_TIMEOUT, get_db, get_current_user
 )
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
+from utils.pqa_multi_tenant import ensure_user_pqa_settings, ensure_user_index_built
 
+#import interpreter.core.llm.llm as llm_mod
+
+
+
+# LOG_DIR = Path("logs")
+# LOG_DIR.mkdir(parents=True, exist_ok=True)
+# LOG_FILE = LOG_DIR / "idea.log"
+
+# logging.basicConfig(
+#     level=logging.DEBUG,
+#     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+#     handlers=[
+#         RotatingFileHandler(str(LOG_FILE), maxBytes=10*1024*1024, backupCount=5, encoding="utf-8"),
+#         logging.StreamHandler()
+#     ],
+# )
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# # Inject reasoning_effort at the completions layer (affects both text + tool paths)
+# _orig_completions = llm_mod.fixed_litellm_completions
+
+# def fixed_litellm_completions_with_reasoning(**params):
+#     p = dict(params)
+#     p.setdefault("reasoning_effort", "minimal") # minimal | low | medium | high
+#     # Optionally: also enforce a cap on generated tokens for reasoning models
+#     p.setdefault("max_completion_tokens", 64000)
+#     yield from _orig_completions(**p)
+
+# llm_mod.fixed_litellm_completions = fixed_litellm_completions_with_reasoning
+
+# # Keep function-level monkeypatch (optional now that completions is wrapped)
+# _orig_text = llm_mod.run_text_llm
+
+# def run_text_llm_with_reasoning(self, params):
+#     p = dict(params)
+#     p.setdefault("reasoning_effort", "minimal") # minimal | low | medium | high
+#     return _orig_text(self, p)
+
+# llm_mod.run_text_llm = run_text_llm_with_reasoning
+
+# # If you also need tool-calling:
+# _orig_tool = llm_mod.run_tool_calling_llm
+
+# def run_tool_calling_llm_with_reasoning(self, params):
+#     p = dict(params)
+#     p.setdefault("reasoning_effort", "minimal") # minimal | low | medium | high
+#     return _orig_tool(self, p)
+
+# llm_mod.run_tool_calling_llm = run_tool_calling_llm_with_reasoning
 
 IDLE_TIMEOUT = 3600  # 1 hour in seconds
 INTERPRETER_PREFIX = "interpreter:"
@@ -59,7 +115,24 @@ CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
 STATIC_DIR = Path("static")
 UPLOAD_DIR = Path("uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-ALLOWED_EXTENSIONS = {'.csv', '.txt', '.json', '.nc', '.xlsx', '.mat', '.tif', '.png', '.jpg'}  # Added PNG, JPG. & MAT
+ALLOWED_EXTENSIONS = {
+    '.csv',
+    '.txt',
+    '.json',
+    '.nc',
+    '.xls',
+    '.xlsx',
+    '.doc',
+    '.docx',
+    '.ppt',
+    '.pptx',
+    '.pdf',
+    '.md',
+    '.mat',
+    '.tif',
+    '.png',
+    '.jpg'
+}  # Office docs + data/image formats
 
 # Rate limiting
 UPLOAD_RATE_LIMIT = "5/minute"
@@ -80,31 +153,38 @@ class InterpreterError(Exception):
 today = date.today()
 root_path = "/idea-api"
 host = (
-    "http://localhost"
-    if os.getenv("LOCAL_DEV") == "1"
-    else "https://uhslc.soest.hawaii.edu/idea-api"
+    os.getenv("API_HOST", "https://uhslc.soest.hawaii.edu/idea-api")
 )
 
 app = FastAPI(root_path=root_path)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static")
+# Serve frontend assets (CSS/JS) for shared pages under a stable, prefixed path
+app.mount('/assets', StaticFiles(directory='frontend'), name='assets')
 
 init_prompt_manager()
 
 app.include_router(knowledge_base_router)
+app.include_router(conversation_router, prefix="/conversations", tags=["conversations"])
 
-origins = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://localhost:8001",
-    "http://127.0.0.1:8001",
-    "http://localhost",
-    "*",
-    "http://172.18.46.161",
-    "http://172.18.46.161:8001",
-    "https://uhslc.soest.hawaii.edu/research/IDEA",
-]
+# Get CORS origins from environment variable or use defaults
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env:
+    origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+else:
+    # Default origins if environment variable is not set
+    origins = [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+        "http://localhost",
+        "*",
+        "http://172.18.46.161",
+        "http://172.18.46.161:8001",
+        "https://uhslc.soest.hawaii.edu/research/IDEA",
+    ]
 
 
 # TODO:
@@ -118,15 +198,30 @@ origins = [
 # Add request size limit middleware
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        #if request.method == "POST":
-        if request.method == "POST" and request.url.path.endswith("/upload"): # Limits to uploads, so images in chat are unlimited
-
+        if request.method == "POST":
+            path = request.url.path
             content_length = request.headers.get("content-length")
-            if content_length and int(content_length) > MAX_FILE_SIZE:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Request too large"}
-                )
+
+            if content_length:
+                try:
+                    request_size = int(content_length)
+                except ValueError:
+                    request_size = None
+
+                if request_size is not None:
+                    # Allow larger files for knowledge-base uploads while keeping chat uploads constrained
+                    if path.endswith("/knowledge-base/papers/upload"):
+                        max_size = MAX_PAPER_SIZE
+                    elif path.endswith("/upload"):
+                        max_size = MAX_FILE_SIZE
+                    else:
+                        max_size = None
+
+                    if max_size and request_size > max_size:
+                        return JSONResponse(
+                            status_code=413,
+                            content={"detail": "Request too large"}
+                        )
         return await call_next(request)
 
 
@@ -160,6 +255,10 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
+def make_session_key(user_id: str | int, session_id: str) -> str:
+    return f"{user_id}:{session_id}"
+
+
 async def scan_file(file_path: Path) -> tuple[bool, str]:
     """Scan a file for viruses using ClamAV"""
     # TODO: Not implemented yet
@@ -191,9 +290,9 @@ async def scan_file(file_path: Path) -> tuple[bool, str]:
     return True, "Virus scan skipped (ClamAV unavailable)"
 
 
-async def check_session_upload_limit(session_id: str) -> bool:
+async def check_session_upload_limit(user_id: str, session_id: str) -> bool:
     """Check if session has reached upload limit"""
-    session_dir = STATIC_DIR / session_id / UPLOAD_DIR
+    session_dir = STATIC_DIR / str(user_id) / session_id / UPLOAD_DIR
     if not session_dir.exists():
         return True
 
@@ -210,12 +309,13 @@ interpreter_instances: Dict[str, OpenInterpreter] = {}
 
 # Authentication endpoints
 @app.post("/login", response_model=LoginResponse)
-async def login(login_request: LoginRequest):
+async def login(login_request: LoginRequest, session: Session = Depends(get_db)):
     """Login endpoint to authenticate users"""
-    if verify_password(login_request.username, login_request.password):
+    user = verify_password(login_request.username, login_request.password, session)
+    if user:
         token = generate_auth_token()
         expiry_time = datetime.now() + timedelta(seconds=SESSION_TIMEOUT)
-        add_auth_session(token, expiry_time)
+        add_auth_session(token, user.id, expiry_time)
 
         return LoginResponse(
             success=True,
@@ -225,7 +325,7 @@ async def login(login_request: LoginRequest):
     else:
         raise HTTPException(
             status_code=401,
-            detail="Invalid username or password"
+            detail="Invalid email or password"
         )
 
 
@@ -242,23 +342,176 @@ async def verify_auth(token: str = Depends(get_auth_token)):
     return {"authenticated": True, "message": "Token is valid"}
 
 
+@app.get("/users/me")
+async def get_current_user_profile(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Get current authenticated user's profile information"""
+    try:
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+            
+        # Re-fetch user from database to get latest info
+        db_user = crud.get_user_by_id(session=db, user_id=user.id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        return {
+            "id": str(db_user.id),
+            "email": db_user.email,
+            "full_name": db_user.full_name,
+            "is_active": db_user.is_active,
+            "is_superuser": db_user.is_superuser,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user profile: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get user profile")
+
+
+@app.get("/share/{share_token}")
+async def shared_conversation_page(share_token: str):
+    """Serve the shared conversation page"""
+    frontend_dir = Path(__file__).parent / "frontend"
+    share_html_path = frontend_dir / "share.html"
+    
+    if not share_html_path.exists():
+        raise HTTPException(status_code=404, detail="Share page not found")
+    
+    return FileResponse(share_html_path, media_type="text/html")
+
+
+# Account management endpoints
+@app.post("/users/change-password")
+async def change_password(payload: UpdatePassword, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Change password for the current authenticated user"""
+    try:
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        # Re-fetch user in this DB session to avoid detached instance issues
+        db_user = crud.get_user_by_id(session=db, user_id=user.id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Verify current password
+        if not verify_password_hash(payload.current_password, db_user.hashed_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+        # Update to new password
+        crud.update_user(session=db, db_user=db_user, user_in=UserUpdate(password=payload.new_password))
+        return {"message": "Password updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error changing password: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to change password")
+
+
+def _ensure_superuser(token: str) -> User:
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    return user
+
+
+@app.get("/users", response_model=List[UserPublic])
+async def list_users(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """List all users (superuser only)"""
+    try:
+        _ensure_superuser(token)
+        users = crud.list_users(session=db)
+        return [UserPublic.model_validate(user, from_attributes=True) for user in users]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing users: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list users")
+
+
+@app.post("/users", response_model=UserPublic, status_code=201)
+async def create_user_admin(user_in: UserCreate, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Create a new user (superuser only)"""
+    try:
+        _ensure_superuser(token)
+        try:
+            db_user = crud.create_user(session=db, user_create=user_in)
+        except IntegrityError:
+            raise HTTPException(status_code=400, detail="A user with this email already exists")
+        return UserPublic.model_validate(db_user, from_attributes=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating user: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to create user")
+
+
+@app.put("/users/{user_id}", response_model=UserPublic)
+async def update_user_admin(user_id: UUID, user_in: UserUpdate, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Update an existing user (superuser only)"""
+    try:
+        _ensure_superuser(token)
+        db_user = crud.get_user_by_id(session=db, user_id=user_id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        try:
+            updated_user = crud.update_user(session=db, db_user=db_user, user_in=user_in)
+        except IntegrityError:
+            raise HTTPException(status_code=400, detail="A user with this email already exists")
+        return UserPublic.model_validate(updated_user, from_attributes=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update user")
+
+
+@app.delete("/users/{user_id}", response_model=GenericMessage)
+async def delete_user_admin(user_id: UUID, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Delete a user (superuser only)"""
+    try:
+        admin = _ensure_superuser(token)
+        if admin.id == user_id:
+            raise HTTPException(status_code=400, detail="Superusers cannot delete their own account")
+        db_user = crud.get_user_by_id(session=db, user_id=user_id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        crud.delete_user(session=db, db_user=db_user)
+        return GenericMessage(message="User deleted successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete user")
+
+
 # Prompt Management Endpoints
 @app.get("/prompts", response_model=List[PromptListResponse])
-async def list_prompts(token: str = Depends(get_auth_token)):
-    """List all available prompts"""
+async def list_prompts(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """List all available prompts for the current user"""
     try:
-        prompts = get_prompt_manager().list_prompts()
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        prompts = get_prompt_manager().list_prompts(db, user.id)
         return prompts
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing prompts: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to list prompts")
 
-
 @app.get("/prompts/{prompt_id}", response_model=PromptResponse)
-async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
-    """Get a specific prompt by ID"""
+async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Get a specific prompt by ID for the current user"""
     try:
-        prompt = get_prompt_manager().get_prompt(prompt_id)
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        prompt = get_prompt_manager().get_prompt(db, user.id, prompt_id)
         if not prompt:
             raise HTTPException(status_code=404, detail="Prompt not found")
         return prompt
@@ -268,27 +521,37 @@ async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
         logger.error(f"Error getting prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get prompt")
 
-
 @app.post("/prompts", response_model=PromptResponse)
-async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token)):
-    """Create a new prompt"""
+async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Create a new prompt for the current user"""
     try:
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
         new_prompt = get_prompt_manager().create_prompt(
+            db,
+            user.id,
             name=prompt_data.name,
             description=prompt_data.description,
             content=prompt_data.content
         )
         return new_prompt
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating prompt: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to create prompt")
 
-
 @app.put("/prompts/{prompt_id}", response_model=PromptResponse)
-async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token)):
-    """Update an existing prompt"""
+async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Update an existing prompt for the current user"""
     try:
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
         updated_prompt = get_prompt_manager().update_prompt(
+            db,
+            user.id,
             prompt_id=prompt_id,
             name=prompt_data.name,
             description=prompt_data.description,
@@ -303,12 +566,14 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token:
         logger.error(f"Error updating prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to update prompt")
 
-
 @app.delete("/prompts/{prompt_id}")
-async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
-    """Delete a prompt"""
+async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Delete a prompt for the current user"""
     try:
-        success = get_prompt_manager().delete_prompt(prompt_id)
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        success = get_prompt_manager().delete_prompt(db, user.id, prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
         return {"message": "Prompt deleted successfully"}
@@ -318,12 +583,14 @@ async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token)):
         logger.error(f"Error deleting prompt {prompt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete prompt")
 
-
 @app.post("/prompts/set-active")
-async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token)):
-    """Set a prompt as the active one"""
+async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Set a prompt as the active one for the current user"""
     try:
-        success = get_prompt_manager().set_active_prompt(request.prompt_id)
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        success = get_prompt_manager().set_active_prompt(db, user.id, request.prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
 
@@ -338,21 +605,28 @@ async def set_active_prompt(request: SetActivePromptRequest, token: str = Depend
         raise HTTPException(status_code=500, detail="Failed to set active prompt")
 
 
-def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
-    """Get existing interpreter or create new one"""
+def get_or_create_interpreter(session_key: str, token: str | None = None, db: Session | None = None) -> OpenInterpreter:
+    """Get existing interpreter or create new one. If token+db provided, use per-user active prompt."""
     try:
         # Return existing instance if it exists
-        if session_id in interpreter_instances:
-            logger.info(f"Retrieved existing interpreter for session {session_id}")
-            return interpreter_instances[session_id]
+        if session_key in interpreter_instances:
+            logger.info(f"Retrieved existing interpreter for session {session_key}")
+            return interpreter_instances[session_key]
 
         # Create new interpreter instance with default settings
         interpreter = OpenInterpreter()
 
         # Get active system prompt from prompt manager
-        active_prompt = get_prompt_manager().get_active_prompt()
-        #interpreter.system_message += active_prompt # Appends System Prompt to Open Interpreter's default message 
-        interpreter.system_message = sys_prompt + active_prompt # Combine generic and specific prompts. Does not append System Prompt to Open Interpreter's default message 
+        active_prompt = ""
+        user = None
+        if token and db is not None:
+            user = get_current_user(token)
+            if user:
+                active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
+        if not active_prompt and (token and db and user):
+            # Fallback to previous file-backed default behavior for safety
+            active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
+        interpreter.system_message = sys_prompt + active_prompt
 
         # Enable vision
         interpreter.llm.supports_vision = True
@@ -364,7 +638,7 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         # interpreter.llm.model = "gpt-4o"
         interpreter.llm.supports_functions = True
 
-        # ## Jetstream2 Models (https://docs.jetstream-cloud.org/inference-service/api/)
+        ## Jetstream2 Models (https://docs.jetstream-cloud.org/inference-service/api/)
         # interpreter.llm.api_key = os.getenv("JETSTREAM2_API_KEY") # api key to send your model 
         # interpreter.llm.api_base = "https://llm.jetstream-cloud.org/api" # add api base for OpenAI compatible provider
         # interpreter.llm.model = "openai/DeepSeek-R1" # add openai/ prefix to route as OpenAI provider
@@ -377,8 +651,8 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         interpreter.llm.reasoning_effort = "minimal" # GPT-5 "minimal" | "low" | "medium" | "high"
         interpreter.llm.temperature = 0.2 # Temperature not used by reasoning models, set to default (e.g., GPT-5)
         interpreter.llm.context_window = 400000 # GPT-5 (max context window)
-        interpreter.llm.max_completion_tokens = 64000 # GPT-5 (128K, previously max_tokens, max tokens generated per request (prompt + max_completion_tokens can not exceed context_window
-            
+        interpreter.llm.max_completion_tokens = 64000 # GPT-5 (128K, previously max_tokens, max tokens generated per request (prompt + max_completion_tokens can not exceed context_window)
+
         # # Intelligence models (e.g., GPT4.1)
         # interpreter.llm.temperature = 0.2 # Temperature (0-2, float) --> fairly deterministic
         # interpreter.llm.context_window = 128000 # Setting to maximum for gpt-4o as per documentation
@@ -394,17 +668,12 @@ def get_or_create_interpreter(session_id: str) -> OpenInterpreter:
         interpreter.auto_run = True
 
         # Store the instance
-        interpreter_instances[session_id] = interpreter
-        logger.info(f"Created new interpreter for session {session_id}")
-
-        # Store last active time in Redis
-        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_id}", str(time()))
-
+        interpreter_instances[session_key] = interpreter
+        logger.info(f"Created new interpreter for session {session_key}")
         return interpreter
-
     except Exception as e:
-        logger.error(f"Error in get_or_create_interpreter: {str(e)}")
-        raise InterpreterError(f"Failed to create/retrieve interpreter: {str(e)}")
+        logger.error(f"Error creating interpreter for session {session_key}: {str(e)}")
+        raise
 
 
 async def periodic_cleanup():
@@ -425,45 +694,51 @@ async def start_periodic_cleanup():
     asyncio.create_task(periodic_cleanup())
 
 
-def clear_session(session_id: str):
+def clear_session(session_key: str):
     """Clear all resources associated with a session"""
     try:
         # Get interpreter instance
-        interpreter = interpreter_instances.get(session_id)
+        interpreter = interpreter_instances.get(session_key)
         if interpreter:
             # Call reset() to properly terminate all languages and clean up
             interpreter.reset()
             # Remove from instances dict
-            del interpreter_instances[session_id]
+            del interpreter_instances[session_key]
 
         # Clear Redis keys
-        redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_id}")
-        redis_client.delete(f"messages:{session_id}")
+        redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_key}")
+        redis_client.delete(f"messages:{session_key}")
 
-        # Remove session directory and all its contents
-        session_dir = STATIC_DIR / session_id
-        if session_dir.exists():
-            # Remove all contents recursively
-            import shutil
-            shutil.rmtree(session_dir)
-        logger.info(f"Cleared session {session_id}")
+        # Remove session directory and all its contents (user_id/session_id structure)
+        try:
+            user_id, raw_session_id = session_key.split(":", 1)
+            session_dir = STATIC_DIR / user_id / raw_session_id
+            if session_dir.exists():
+                import shutil
+                shutil.rmtree(session_dir)
+        except ValueError:
+            # Fallback for old session keys without user_id
+            raw_session_id = session_key
+            session_dir = STATIC_DIR / raw_session_id
+            if session_dir.exists():
+                import shutil
+                shutil.rmtree(session_dir)
+        logger.info(f"Cleared session {session_key}")
     except Exception as e:
-        logger.error(f"Error clearing session {session_id}: {str(e)}")
+        logger.error(f"Error clearing session {session_key}: {str(e)}")
         raise
 
 
 def clear_all_interpreter_instances():
     """Clear all interpreter instances to force recreation with new system message"""
     try:
-        # Reset and clear all interpreter instances
-        for session_id, interpreter in list(interpreter_instances.items()):
+        for session_key, interpreter in list(interpreter_instances.items()):
             try:
                 interpreter.reset()
-                logger.info(f"Reset interpreter for session {session_id}")
+                logger.info(f"Reset interpreter for session {session_key}")
             except Exception as e:
-                logger.error(f"Error resetting interpreter for session {session_id}: {str(e)}")
+                logger.error(f"Error resetting interpreter for session {session_key}: {str(e)}")
 
-        # Clear the instances dictionary
         interpreter_instances.clear()
         logger.info("Cleared all interpreter instances due to system prompt change")
     except Exception as e:
@@ -478,22 +753,20 @@ async def cleanup_idle_sessions():
         current_time = time()
         logger.info(f"Current time: {current_time}")
         logger.info(f"interpreter_instances: {list(interpreter_instances.keys())}")
-        # Check all active sessions
-        for session_id in list(interpreter_instances.keys()):
+        for session_key in list(interpreter_instances.keys()):
             try:
-                last_active = redis_client.get(f"{LAST_ACTIVE_PREFIX}{session_id}")
+                last_active = redis_client.get(f"{LAST_ACTIVE_PREFIX}{session_key}")
                 if last_active:
-                    logger.info(f"Last active time for session {session_id}: {last_active}")
+                    logger.info(f"Last active time for session {session_key}: {last_active}")
 
                     last_active_time = float(last_active.decode('utf-8'))
                     if current_time - last_active_time > IDLE_TIMEOUT:
-                        clear_session(session_id)
+                        clear_session(session_key)
             except Exception as e:
-                logger.error(f"Error cleaning up session {session_id}: {str(e)}")
-                continue
-
+                logger.error(f"Error during idle cleanup for {session_key}: {str(e)}")
     except Exception as e:
-        logger.error(f"Error in cleanup_idle_sessions: {str(e)}")
+        logger.error(f"Error cleaning up sessions: {str(e)}")
+        raise
 
 
 @app.exception_handler(HTTPException)
@@ -549,7 +822,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 @app.post("/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
-async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token)):
+async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -561,37 +834,55 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         if not messages:
             raise HTTPException(status_code=400, detail="No messages provided")
 
-        logger.info(f"Received messages for session {session_id}")
-        # Get or create interpreter instance
-        interpreter = get_or_create_interpreter(session_id)
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        session_key = make_session_key(user.id, session_id)
 
-        # Add custom instructions (matches SEA design)
-        station_id = '000'  # Placeholder
+        logger.info(f"Received messages for session {session_key}")
+        interpreter = get_or_create_interpreter(session_key, token, db)
+
+        pqa_settings_path = ensure_user_pqa_settings(user.id)
+        pqa_settings_name = Path(str(pqa_settings_path)).stem
+        # Build user index once if not present
+        try:
+            ensure_user_index_built(user.id)
+        except Exception:
+            pass
+
+        #station_id = '000'  # Placeholder (do not use for IDEA)
         interpreter.custom_instructions = get_custom_instructions(
-            today=today,
             host=host,
+            user_id=str(user.id),
             session_id=session_id,
             static_dir=STATIC_DIR,
             upload_dir=UPLOAD_DIR,
-            station_id=station_id
+            pqa_settings_name=pqa_settings_name
         )
 
-        # Update last active time
-        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_id}", str(time()))
+        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+        
+        # Update interpreter messages from any loaded conversation
+        stored_messages = redis_client.get(f"messages:{session_key}")
+        if stored_messages:
+            try:
+                interpreter.messages = json.loads(stored_messages)
+                logger.info(f"Restored {len(interpreter.messages)} messages from Redis for session {session_key}")
+            except Exception as e:
+                logger.warning(f"Failed to restore messages from Redis: {str(e)}")
 
         def event_stream():
             try:
-                # logger.info(f"Messages sent to interpreter: {messages}") # Debugging
                 for result in interpreter.chat(messages[-1], stream=True):
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
-                error_message = {"error": str(e)}  # <-- fix: use str(e)
+                error_message = {"error": str(e)}
                 yield f"data: {json.dumps(error_message)}\n\n"
             finally:
                 redis_client.set(
-                    f"messages:{session_id}", json.dumps(interpreter.messages)
+                    f"messages:{session_key}", json.dumps(interpreter.messages)
                 )
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -606,8 +897,12 @@ def history_endpoint(request: Request, token: str = Depends(get_auth_token)):
     session_id = request.headers.get("x-session-id")
     if not session_id:
         return {"error": "x-session-id header is required"}
+    user = get_current_user(token)
+    if user is None:
+        return {"error": "Invalid or expired token"}
+    session_key = make_session_key(user.id, session_id)
 
-    stored_messages = redis_client.get(f"messages:{session_id}")
+    stored_messages = redis_client.get(f"messages:{session_key}")
     if stored_messages:
         return json.loads(stored_messages)
     return []
@@ -619,9 +914,12 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
         session_id = request.headers.get("x-session-id")
         if not session_id:
             raise HTTPException(status_code=400, detail="x-session-id header is required")
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-        # redis_client.delete(f"messages:{session_id}")
-        clear_session(session_id)
+        session_key = make_session_key(user.id, session_id)
+        clear_session(session_key)
         return {"status": "Chat history cleared"}
     except redis.RedisError as e:
         logger.error(f"Redis error in clear_endpoint: {str(e)}")
@@ -629,6 +927,79 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
     except Exception as e:
         logger.error(f"Unexpected error in clear_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/load-conversation")
+async def load_conversation_endpoint(request: Request, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """Load a conversation's messages into the interpreter context"""
+    try:
+        session_id = request.headers.get("x-session-id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="x-session-id header is required")
+        
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+            
+        # Get request body
+        body = await request.json()
+        messages = body.get("messages", [])
+        
+        session_key = make_session_key(user.id, session_id)
+        
+        # Convert frontend message format to interpreter format
+        interpreter_messages = []
+        for msg in messages:
+            # Skip console messages with active_line format as they cause issues
+            if (msg.get("message_type") == "console" and 
+                msg.get("message_format") == "active_line"):
+                continue
+                
+            # Convert to format the interpreter expects (with required fields)
+            if msg.get("role") in ["user", "assistant"]:
+                # For user/assistant messages, use message type
+                interpreter_msg = {
+                    "role": msg.get("role"),
+                    "type": "message",
+                    "content": msg.get("content", "")
+                }
+                interpreter_messages.append(interpreter_msg)
+            elif msg.get("role") == "computer":
+                # For computer messages, convert to assistant with appropriate type
+                msg_type = msg.get("message_type", "message")
+                if msg_type == "console":
+                    # Skip console messages entirely as they're not needed for context
+                    continue
+                else:
+                    interpreter_msg = {
+                        "role": "assistant",
+                        "type": msg_type if msg_type in ["code", "message", "image"] else "message",
+                        "content": msg.get("content", "")
+                    }
+                    if msg.get("message_format"):
+                        interpreter_msg["format"] = msg.get("message_format")
+                    interpreter_messages.append(interpreter_msg)
+        
+        # Store messages in Redis - the interpreter will load them on next chat request
+        redis_client.set(
+            f"messages:{session_key}", json.dumps(interpreter_messages)
+        )
+        
+        # Clear any existing interpreter instance so it gets recreated with new messages
+        if session_key in interpreter_instances:
+            try:
+                interpreter_instances[session_key].reset()
+                del interpreter_instances[session_key]
+                logger.info(f"Cleared existing interpreter for session {session_key}")
+            except Exception as e:
+                logger.warning(f"Error clearing existing interpreter: {str(e)}")
+        
+        logger.info(f"Stored {len(interpreter_messages)} messages in Redis for session {session_key}")
+        return {"status": "Conversation loaded", "message_count": len(interpreter_messages)}
+        
+    except Exception as e:
+        logger.error(f"Error loading conversation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to load conversation: {str(e)}")
 
 
 async def has_executable_header(file_path: Path) -> bool:
@@ -657,15 +1028,19 @@ async def upload_file(
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
 
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
         # Check session upload limit
-        if not await check_session_upload_limit(session_id):
+        if not await check_session_upload_limit(str(user.id), session_id):
             raise HTTPException(
                 status_code=429,
                 detail=f"Upload limit reached. Maximum {MAX_UPLOADS_PER_SESSION} files per session"
             )
 
-        # Create session upload directory if it doesn't exist
-        session_dir = STATIC_DIR / session_id / UPLOAD_DIR
+        # Create user/session upload directory if it doesn't exist
+        session_dir = STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR
         session_dir.mkdir(parents=True, exist_ok=True)
 
         # Validate file extension
@@ -713,7 +1088,7 @@ async def upload_file(
             return {
                 "filename": file.filename,
                 "size": file_size,
-                "path": str(final_path.relative_to(STATIC_DIR / session_id / UPLOAD_DIR)),
+                "path": str(final_path.relative_to(STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR)),
                 "scan_result": scan_result
             }
 
@@ -736,15 +1111,19 @@ async def delete_file(filename: str, request: Request, token: str = Depends(get_
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
 
-        file_path = STATIC_DIR / session_id / UPLOAD_DIR / filename  # Removed "uploads" from path
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        file_path = STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR / filename
 
         # Ensure the file exists and is within the session directory
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
 
-        # Verify the file is in the correct session directory
+        # Verify the file is in the correct user/session directory
         try:
-            file_path.relative_to(STATIC_DIR / session_id / UPLOAD_DIR)
+            file_path.relative_to(STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR)
         except ValueError:
             raise HTTPException(status_code=403, detail="Access denied")
 
@@ -767,7 +1146,11 @@ async def list_files(request: Request, token: str = Depends(get_auth_token)):
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
 
-        session_dir = STATIC_DIR / session_id / UPLOAD_DIR
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        session_dir = STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR
         if not session_dir.exists():
             return []
 
@@ -777,7 +1160,7 @@ async def list_files(request: Request, token: str = Depends(get_auth_token)):
                 files.append({
                     "name": file_path.name,
                     "size": file_path.stat().st_size,
-                    "path": str(file_path.relative_to(STATIC_DIR / session_id / UPLOAD_DIR))
+                    "path": str(file_path.relative_to(STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR))
                 })
         return files
 
@@ -793,7 +1176,11 @@ async def delete_all_files(request: Request, token: str = Depends(get_auth_token
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID required")
 
-        session_dir = STATIC_DIR / session_id / UPLOAD_DIR
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        session_dir = STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR
         if session_dir.exists():
             # Delete all files in the session directory
             for file_path in session_dir.glob("*"):

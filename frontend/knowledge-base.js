@@ -118,7 +118,7 @@ class KnowledgeBaseManager {
         try {
             this.showUploadProgress();
             
-            const response = await fetch(this.endpoints.knowledgeBaseUpload, {
+            const response = await fetch(this.endpoints.knowledgeBaseUpload || '/idea-api/knowledge-base/papers/upload', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${this.getAuthToken()}`
@@ -144,7 +144,7 @@ class KnowledgeBaseManager {
 
     async loadPapers() {
         try {
-            const response = await fetch(this.endpoints.knowledgeBase, {
+            const response = await fetch(this.endpoints.knowledgeBase || '/idea-api/knowledge-base/papers', {
                 headers: {
                     'Authorization': `Bearer ${this.getAuthToken()}`
                 }
@@ -165,7 +165,7 @@ class KnowledgeBaseManager {
 
     async loadStats() {
         try {
-            const response = await fetch(this.endpoints.knowledgeBaseStats, {
+            const response = await fetch(this.endpoints.knowledgeBaseStats || '/idea-api/knowledge-base/stats', {
                 headers: {
                     'Authorization': `Bearer ${this.getAuthToken()}`
                 }
@@ -239,7 +239,7 @@ class KnowledgeBaseManager {
         }
 
         try {
-            const response = await fetch(`${this.endpoints.knowledgeBase}/${encodeURIComponent(filename)}`, {
+            const response = await fetch(`${(this.endpoints.knowledgeBase || '/idea-api/knowledge-base/papers')}/${encodeURIComponent(filename)}`, {
                 method: 'DELETE',
                 headers: {
                     'Authorization': `Bearer ${this.getAuthToken()}`

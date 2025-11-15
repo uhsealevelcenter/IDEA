@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shared Conversation - IDEA</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+    <link href="../assets/prism.css" rel="stylesheet" />  <!-- Prism for code syntax highlighting -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        body.main-app.shared-view {
+            background: var(--body-gradient);
+            min-height: 100vh;
+            padding: clamp(16px, 4vw, 28px);
+            color: var(--text-primary);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .shared-view .app {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .console-output-message {
+            display: none !important;
+        }
+
+        .stdout-controls {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            width: 100%;
+            margin-top: 12px;
+        }
+
+        .stdout-controls.stdout-hidden {
+            display: none;
+        }
+
+        .stdout-button {
+            padding: 6px 14px;
+            font-size: 12px;
+            border-radius: 999px;
+            border: 1px solid var(--input-border);
+            background: var(--surface);
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
+        }
+
+        .stdout-button:hover:not(:disabled) {
+            background: var(--assistant-bg);
+            border-color: var(--assistant-border);
+            transform: translateY(-1px);
+        }
+
+        .stdout-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .stdout-panel {
+            display: none;
+            margin-top: 10px;
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: rgba(15, 23, 42, 0.55);
+            max-height: 260px;
+            overflow-y: auto;
+            box-shadow: inset 0 6px 18px rgba(2, 6, 23, 0.35);
+        }
+
+        .stdout-panel.open {
+            display: block;
+        }
+
+        .stdout-entry + .stdout-entry {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .stdout-panel pre {
+            margin: 0;
+            background: transparent;
+            padding: 0;
+        }
+
+        .stdout-panel pre code {
+            display: block;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+            font-size: 0.9em;
+        }
+
+        .stdout-empty {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        pre {
+            position: relative;
+        }
+
+        .copy-button {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            padding: 4px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            opacity: 0.92;
+            transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .copy-button:hover {
+            opacity: 1;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 123, 255, 0.35);
+        }
+
+        .shared-container {
+            width: min(1200px, 100%);
+            margin: 0 auto;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            box-shadow: var(--shadow);
+            display: flex;
+            flex-direction: column;
+            overflow: visible;
+            height: auto;
+            max-height: none;
+        }
+
+        .shared-header .header-content {
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: clamp(12px, 3vw, 24px);
+        }
+
+        .shared-meta {
+            text-align: right;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .shared-meta .shared-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .shared-conversation-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .shared-body {
+            display: flex;
+            flex-direction: column;
+            padding: clamp(18px, 4vw, 32px);
+            gap: 16px;
+            background: var(--surface-alt);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .shared-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            gap: 12px;
+            padding: clamp(32px, 6vw, 72px);
+            border-radius: 18px;
+            border: 1px dashed var(--border);
+            background: var(--surface);
+            color: var(--text-muted);
+        }
+
+        .shared-state .material-icons {
+            font-size: 3rem;
+            opacity: 0.75;
+        }
+
+        .shared-chat-panel {
+            display: flex;
+            border-radius: 18px;
+            background: var(--surface);
+            padding: clamp(12px, 2vw, 20px);
+        }
+
+        .shared-chat-panel .chat-display {
+            width: 100%;
+            max-height: none;
+            overflow: visible;
+        }
+
+        .shared-footer {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.92rem;
+        }
+
+        .shared-link {
+            color: rgba(255, 255, 255, 0.72);
+            text-decoration: underline;
+            font-weight: 500;
+        }
+
+        .shared-link:hover {
+            color: rgba(255, 255, 255, 0.92);
+        }
+
+        .shared-footer a {
+            color: var(--link-color);
+            text-decoration: underline;
+            font-weight: 500;
+        }
+
+        @media (max-width: 640px) {
+            .shared-header .header-content {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .shared-meta {
+                text-align: left;
+            }
+        }
+    </style>
+</head>
+<body class="main-app theme-light shared-view">
+    <div class="app">
+        <div class="chat-container shared-container">
+            <header class="chat-header shared-header">
+                <div class="header-content">
+                    <div class="header-brand">
+                        <span class="brand-abbrev">IDEA</span>
+                        <a class="brand-name shared-link" href="https://uhslc.soest.hawaii.edu/research/IDEA" target="_blank" rel="noreferrer noopener">Intelligent Data Exploring Assistant</a>
+                    </div>
+                    <div class="shared-meta">
+                        <span class="shared-title">Shared conversation</span>
+                        <div id="conversationInfo" class="shared-conversation-meta"></div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="shared-body">
+                <!-- Loading State -->
+                <div id="loadingState" class="shared-state">
+                    <span class="material-icons">hourglass_empty</span>
+                    <p>Loading shared conversation...</p>
+                </div>
+
+                <!-- Error State -->
+                <div id="errorState" class="shared-state" style="display: none;">
+                    <span class="material-icons">error</span>
+                    <p id="errorMessage">Failed to load conversation</p>
+                </div>
+
+                <!-- Empty Conversation State -->
+                <div id="emptyState" class="shared-state" style="display: none;">
+                    <span class="material-icons">chat_bubble_outline</span>
+                    <p>This conversation has no messages.</p>
+                </div>
+
+                <!-- Chat Display Container -->
+                <div id="chatContainer" class="shared-chat-panel" style="display: none;">
+                    <div id="chatDisplay" class="chat-display"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="shared-footer">
+            <p>
+                IDEA can make mistakes — check important results.
+                <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noreferrer noopener">[More info on GitHub]</a>
+            </p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" integrity="sha512-jB0TkTBeQC9ZSkBqDhdmfTv1qdfbWpGE72yJ/01Srq6hEzZIz2xkz1e57p9ai7IeHMwEG7HpzG6NdptChif5Pg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="../assets/prism.js"></script>
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+            },
+            svg: {
+                fontCache: 'global'
+            }
+        };
+    </script>
+    <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+    <script src="../assets/config.js"></script>
+    <script src="../assets/share.js"></script>
+</body>
+</html>
