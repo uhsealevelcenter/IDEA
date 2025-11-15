@@ -54,7 +54,7 @@ body.theme-light {
     --assistant-bg: rgba(15, 51, 72, 0.08);
     --assistant-border: rgba(15, 51, 72, 0.16);
     --assistant-text: #0d2b3d;
-    --user-bg: #10344a;
+    --user-bg: #0d6ea7;
     --user-border: rgba(15, 50, 71, 0.28);
     --user-text: #f3f7fa;
     --system-bg: rgba(253, 186, 58, 0.18);
@@ -106,7 +106,7 @@ body.theme-dark {
     --assistant-bg: rgba(76, 167, 255, 0.12);
     --assistant-border: rgba(76, 167, 255, 0.28);
     --assistant-text: #d3e7ff;
-    --user-bg: #0f3348;
+    --user-bg: #0d6ea7;
     --user-border: rgba(59, 115, 157, 0.42);
     --user-text: #ecf6ff;
     --system-bg: rgba(245, 158, 11, 0.2);
@@ -628,7 +628,7 @@ body.theme-dark .toggle-slider {
     min-height: 38px;
     max-height: 200px;
     resize: none;
-    padding: 12px 54px 12px 54px;
+    padding: 12px;
     font-family: inherit;
     font-size: 15px;
     line-height: 1.55;
@@ -807,27 +807,107 @@ body.theme-light .message .content pre {
 /* Style for the copy button */
 .copy-button {
     position: absolute;
-    top: 10px;
-    right: 10px;
-    padding: 6px 10px;
+    top: 8px;
+    right: 8px;
+    padding: 4px 10px;
     font-size: 12px;
     cursor: pointer;
-    background-color: rgba(255, 255, 255, 0.16);
+    background-color: #007bff;
     color: #ffffff;
-    border: 1px solid rgba(255, 255, 255, 0.35);
-    border-radius: 999px;
-    opacity: 0.8;
-    transition: opacity 0.3s, transform 0.2s;
+    border: none;
+    border-radius: 6px;
+    opacity: 0.92;
+    transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .copy-button:hover {
     opacity: 1;
     transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.35);
 }
 
 /* Ensure the <pre> elements are positioned relatively to contain the absolute button */
 pre {
     position: relative;
+}
+
+.console-output-message {
+    display: none !important;
+}
+
+.stdout-controls {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    width: 100%;
+    margin-top: 12px;
+}
+
+.stdout-controls.stdout-hidden {
+    display: none;
+}
+
+.stdout-button {
+    padding: 6px 14px;
+    font-size: 12px;
+    border-radius: 999px;
+    border: 1px solid var(--input-border);
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
+}
+
+.stdout-button:hover:not(:disabled) {
+    background: var(--assistant-bg);
+    border-color: var(--assistant-border);
+    transform: translateY(-1px);
+}
+
+.stdout-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.stdout-panel {
+    display: none;
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.55);
+    max-height: 260px;
+    overflow-y: auto;
+    box-shadow: inset 0 6px 18px rgba(2, 6, 23, 0.35);
+}
+
+.stdout-panel.open {
+    display: block;
+}
+
+.stdout-entry + .stdout-entry {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stdout-panel pre {
+    margin: 0;
+    background: transparent;
+    padding: 0;
+}
+
+.stdout-panel pre code {
+    display: block;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 0.9em;
+}
+
+.stdout-empty {
+    font-size: 13px;
+    color: var(--text-muted);
 }
 
 .disclaimer-text {
@@ -995,16 +1075,6 @@ pre {
     animation-delay: 0.4s;
 }
 
-.file-upload-section {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    color: var(--text-muted);
-    font-size: 13px;
-    flex: 0 0 auto;
-}
-
 .prompt-row {
     display: flex;
     align-items: stretch;
@@ -1127,15 +1197,15 @@ pre {
     }
 
     #messageInput {
-        padding: 12px 48px;
+        padding: 12px;
     }
 
     #uploadButton {
-        left: 12px;
+        left: auto;
     }
 
     #micButton {
-        right: 12px;
+        right: auto;
     }
 }
 
@@ -1166,14 +1236,16 @@ pre {
 }
 
 #uploadButton {
-    position: absolute;
-    left: 10px;
+    position: relative;
+    left: auto;
     background: none;
     border: none;
-    padding: 8px;
+    padding: 4px;
     color: var(--text-muted);
     cursor: pointer;
-    z-index: 2;
+    z-index: 1;
+    box-shadow: none;
+    border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1192,9 +1264,9 @@ pre {
 #uploadButton::after {
     content: "Max file size: 10MB";
     position: absolute;
-    bottom: 100%;
-    left: 50%;
-    transform: translateX(-50%);
+    bottom: 6px;
+    left: 55%;
+    transform: translate(1px, 100%);
     background: rgba(15, 33, 47, 0.88);
     color: #ffffff;
     padding: 4px 8px;
@@ -1212,43 +1284,141 @@ pre {
     opacity: 1;
 }
 
+#micButton::after {
+    content: "Dictate";
+    position: absolute;
+    bottom: 6px;
+    right: 55%;
+    transform: translate(1px, 100%);
+    background: rgba(15, 33, 47, 0.88);
+    color: #ffffff;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+#micButton:hover::after {
+    visibility: visible;
+    opacity: 1;
+}
+
 .input-container button:focus,
 .input-container button:focus-visible {
     outline: none;
 }
 
 
-.uploaded-files-list {
-    max-height: min(120px, 18vh);
-    overflow-y: auto;
+.input-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.attached-files-inline {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 100%;
+    align-items: center;
+}
+
+.attached-files-inline.active {
+    display: flex;
+}
+
+.attached-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border: 1px solid var(--assistant-border);
+    border-radius: 999px;
+    background: transparent;
+}
+
+.attached-file-name {
+    white-space: nowrap;
+}
+
+.attached-file .remove-attachment {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 0;
+    width: 14px;
+    height: 14px;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    box-shadow: none;
+}
+
+.attached-file .remove-attachment:hover {
+    color: #ef4444;
+}
+
+.file-attachment {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.attachment-icon {
+    font-size: 18px;
+    color: var(--text-muted);
+}
+
+.attachment-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.attachment-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.attachment-path {
+    font-size: 12px;
+    color: var(--text-muted);
+    word-break: break-all;
+}
+
+.uploaded-image-preview {
+    max-width: min(220px, 40vw);
+    border-radius: 10px;
+    border: 1px solid var(--assistant-border);
+}
+
+.user-message-wrapper {
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
 
-.uploaded-file {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 9px 12px;
-    background: var(--assistant-bg);
-    border: 1px solid var(--assistant-border);
-    border-radius: 12px;
+.message.user .user-attachment-line {
     font-size: 13px;
-    color: var(--text-primary);
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.9);
 }
 
-.delete-file {
-    background: none;
-    border: none;
-    color: #f87171;
-    cursor: pointer;
-    font-size: 16px;
-    padding: 0 5px;
-}
-
-.delete-file:hover {
-    color: #ef4444;
+.message.user .user-attachment-line strong {
+    font-weight: 600;
+    margin-right: 4px;
 }
 
 .progress-bar {
@@ -1306,20 +1476,41 @@ pre {
 .input-container {
     position: relative;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     flex: 1 1 360px;
-    min-height: 60px;
+    padding: 10px 12px;
     border-radius: 16px;
     background: var(--input-bg);
     border: 1px solid var(--input-border);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     transition: border 0.25s ease, box-shadow 0.25s ease;
+    gap: 6px;
     overflow: hidden;
 }
 
 .input-container:focus-within {
     border-color: var(--input-focus);
     box-shadow: 0 0 0 3px rgba(15, 51, 72, 0.16);
+}
+
+.input-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.input-main button {
+    position: relative;
+    z-index: 1;
+    flex: 0 0 auto;
+}
+
+.input-main textarea {
+    position: relative;
+    z-index: 1;
+    flex: 1 1 auto;
 }
 
 .drop-overlay {
@@ -1343,17 +1534,19 @@ pre {
 }
 
 #micButton {
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
+    position: relative;
+    right: auto;
+    top: auto;
+    transform: none;
     background: none;
     border: none;
-    padding: 6px;
+    padding: 4px;
     margin: 0;
     color: var(--text-muted);
     cursor: pointer;
-    z-index: 2;
+    z-index: 1;
+    box-shadow: none;
+    border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
