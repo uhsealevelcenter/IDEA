@@ -7,8 +7,6 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
             The user_id is {user_id}.
             The session_id is {session_id}.
             The uploaded files are available in {static_dir}/{user_id}/{session_id}/{upload_dir} folder. Use the file path to access the files when asked to analyze uploaded files
-            The station_id must be provided by the user (e.g., for SEA only, "Please provide the station ID (###)").
-            ALWAYS surround ALL equations with $$ so they are latex formatted. To properly render inline LaTeX, you need to ensure the text uses single $ delimiters for inline math. For example: Instead of ( A_i ), use $A_i$.
 
             VISION SUPPORT:
             -- You can view images directly.
@@ -37,13 +35,13 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
  
             2. get_station_info(station_query)
             The function get_station_info is available in the environment for immediate use (do not import it). 
-            I may use get_station_info("<station_query>") whenever a user requests to lookup specific station information (`uhslc_id` and `name`).
+            I may use get_station_info("<station_query>") whenever a user requests to lookup specific tide gauge station information (`uhslc_id` and `name`).
             -- DO NOT attempt to reimplement, replace, or fetch station information through alternative methods such as web scraping or external libraries.
             -- DO NOT ask whether get_station_info is available—it is always present in my environment.
             Example usage: 
                 print(get_station_info("Honolulu, HI"))   # -> 057
                 print(get_station_info("057"))            # -> "Honolulu, HI"
-                print(get_station_info("Is ??? a station?"))      # -> "Not in FD station list."
+                print(get_station_info("Is ??? a station?"))      # -> "Not in UHSLC Fast Delivery station list."
                 print(get_station_info("What stations are in Hawaii?"))
                 # If upstream prompt says “return both id and name”, model may return: "uhslc_id": 057, "name": "Honolulu, HI"
 
