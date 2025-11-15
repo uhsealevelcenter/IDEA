@@ -201,18 +201,23 @@ async function loadConversation(conversationId) {
         // Close the modal
         closeConversationsModal();
         
-        // Clear current chat display and show the loaded conversation
         const chatDisplay = document.getElementById('chatDisplay');
-        chatDisplay.innerHTML = '';
-        
-        // Display the conversation messages
-        const messages = conversationManager.getCurrentMessages();
-        messages.forEach(message => {
-            displayMessageInChat(message);
-        });
+        const loadedMessages = conversationManager.getCurrentMessages() || [];
+
+        if (typeof window.hydrateChatWithMessages === 'function') {
+            window.hydrateChatWithMessages(loadedMessages, { persist: false });
+        } else {
+            chatDisplay.innerHTML = '';
+            if (typeof window.resetStdoutState === 'function') {
+                window.resetStdoutState();
+            }
+            loadedMessages.forEach(message => {
+                displayMessageInChat(message);
+            });
+        }
         
         // Load conversation context into backend interpreter
-        await loadConversationIntoInterpreter(messages);
+        await loadConversationIntoInterpreter(loadedMessages);
         
         // Update the current conversation indicator
         displayConversations();
