@@ -9,74 +9,141 @@
     <link href="prism.css" rel="stylesheet" />  <!-- Prism for code syntax highlighting -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"> <!-- Mic icon -->
 </head>
-<body class="main-app">
-    <!-- Navigation Bar -->
-    <nav class="navbar">
-        <div class="navbar-container">
-            <div class="navbar-brand">
-                <h1>IDEA</h1>
-                <span class="navbar-subtitle">Intelligent Data Exploring Assistant</span>
-            </div>
-            
-            <!-- Desktop Navigation -->
-            <div class="navbar-menu">
-                <button id="systemPromptButton" class="nav-btn">
+<body class="main-app theme-light">
+    <div class="app">
+        <div class="chat-container">
+            <header class="chat-header">
+                <div class="header-content">
+                    <div class="header-brand">
+                        <span class="brand-abbrev">IDEA</span>
+                        <span class="brand-name">Intelligent Data Exploring Assistant</span>
+                    </div>
+                    <div class="header-actions">
+                        <div class="navbar-menu" id="headerMenu">
+                            <button id="systemPromptButton" class="nav-btn">
+                                <span class="material-icons">settings</span>
+                                Instructions
+                            </button>
+                            <button id="knowledgeBaseButton" class="nav-btn">
+                                <span class="material-icons">psychology</span>
+                                Knowledge
+                            </button>
+                            <button id="downloadButton" class="nav-btn">
+                                <span class="material-icons">download</span>
+                                Download
+                            </button>
+                            <button id="newMessagesButton" class="nav-btn">
+                                <span class="material-icons">refresh</span>
+                                Restart
+                            </button>
+                            <button id="conversationsButton" class="nav-btn">
+                                <span class="material-icons">chat</span>
+                                Conversations
+                            </button>
+                            <button id="userManagementButton" class="nav-btn admin-only" data-admin-display="inline-flex">
+                                <span class="material-icons">group</span>
+                                Users
+                            </button>
+                            <button id="accountSettingsButton" class="nav-btn">
+                                <span class="material-icons">manage_accounts</span>
+                                Account
+                            </button>
+                            <button id="logoutButton" class="nav-btn logout-btn">
+                                <span class="material-icons">logout</span>
+                                Logout
+                            </button>
+                        </div>
+                        <button class="navbar-toggle" id="navbarToggle" aria-label="Toggle menu" aria-controls="navbarMobileMenu" aria-expanded="false">
+                            <span class="hamburger-line"></span>
+                            <span class="hamburger-line"></span>
+                            <span class="hamburger-line"></span>
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <div class="navbar-mobile-menu" id="navbarMobileMenu">
+                <button id="systemPromptButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">settings</span>
-                    System Prompt
+                    Instructions
                 </button>
-                <button id="knowledgeBaseButton" class="nav-btn">
+                <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">psychology</span>
-                    Knowledge Base
+                    Knowledge
                 </button>
-                <button id="downloadButton" class="nav-btn">
+                <button id="downloadButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">download</span>
                     Download
                 </button>
-                <button id="newMessagesButton" class="nav-btn">
+                <button id="newMessagesButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">refresh</span>
-                    Start Over
+                    Restart
                 </button>
-                <button id="logoutButton" class="nav-btn logout-btn">
+                <button id="conversationsButtonMobile" class="nav-btn-mobile">
+                    <span class="material-icons">chat</span>
+                    Conversations
+                </button>
+                <button id="userManagementButtonMobile" class="nav-btn-mobile admin-only" data-admin-display="flex">
+                    <span class="material-icons">group</span>
+                    Users
+                </button>
+                <button id="accountSettingsButtonMobile" class="nav-btn-mobile">
+                    <span class="material-icons">manage_accounts</span>
+                    Account
+                </button>
+                <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
                     <span class="material-icons">logout</span>
                     Logout
                 </button>
             </div>
-            
-            <!-- Mobile Menu Toggle -->
-            <button class="navbar-toggle" id="navbarToggle">
-                <span class="hamburger-line"></span>
-                <span class="hamburger-line"></span>
-                <span class="hamburger-line"></span>
-            </button>
-        </div>
-        
-        <!-- Mobile Navigation Menu -->
-        <div class="navbar-mobile-menu" id="navbarMobileMenu">
-            <button id="systemPromptButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">settings</span>
-                System Prompt
-            </button>
-            <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">psychology</span>
-                Knowledge Base
-            </button>
-            <button id="downloadButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">download</span>
-                Download conversation
-            </button>
-            <button id="newMessagesButtonMobile" class="nav-btn-mobile">
-                <span class="material-icons">refresh</span>
-                Start over
-            </button>
-            <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
-                <span class="material-icons">logout</span>
-                Logout
-            </button>
-        </div>
-    </nav>
 
-    <!-- Mobile overlay -->
-    <div class="mobile-overlay" id="mobileOverlay"></div>
+            <div class="mobile-overlay" id="mobileOverlay"></div>
+
+            <div id="chatDisplay" class="chat-display"></div>
+            <footer class="chat-footer">
+                <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.pdf,.md,.mat,.tif,.png,.jpg" style="display: none">
+                <div class="prompt-row">
+                    <div class="input-container">
+                        <div class="input-header">
+                            <div id="uploadedFiles" class="attached-files-inline"></div>
+                            <div id="uploadProgress" class="progress-bar" style="display: none">
+                                <div class="progress"></div>
+                            </div>
+                        </div>
+                        <div class="input-main">
+                            <button id="uploadButton">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M21.44 11.05l-9.19 9.19a6.003 6.003 0 01-8.49-8.49l9.19-9.19a4.002 4.002 0 015.66 5.66l-9.2 9.19a2.001 2.001 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                            
+                            <textarea id="messageInput" placeholder="Type your message, click mic to dictate, or attach/drop a file..." autocomplete="off" rows="1"></textarea>
+
+                            <button id="micButton" class="icon-button">
+                                <i class="material-icons">mic</i>
+                            </button>
+                        </div>
+
+                        <!-- Drop overlay -->
+                        <div id="dropOverlay" class="drop-overlay">
+                            <p>Drop files or screenshots here</p>
+                        </div>
+                    </div>
+                    <div class="prompt-actions">
+                        <button id="sendButton">Send</button>
+                        <button id="stopButton" disabled>Stop</button>
+                    </div>
+                </div>
+            </footer>
+
+            <div id="promptIdeasContainer"></div>
+        </div>
+
+        <div class="disclaimer-text">
+            <span>IDEA can make mistakes — check important results. Inputs may be used to improve services by UHSLC and/or LLM providers.</span>
+            <a href="https://github.com/uhsealevelcenter/IDEA"> [More info on GitHub]</a>
+        </div>
+    </div>
 
     <!-- Knowledge Base Management Modal -->
     <div id="knowledgeBaseModal" class="modal">
@@ -183,45 +250,142 @@
         </div>
     </div>
 
-    <div class="chat-container">
-        <div id="chatDisplay" class="chat-display"></div>
-        <footer class="chat-footer">
-            <div class="file-upload-section">
-                <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xlsx, .jpg, .png, .pdf" style="display: none">
-                <div id="uploadProgress" class="progress-bar" style="display: none">
-                    <div class="progress"></div>
-                </div>
-                <div id="uploadedFiles" class="uploaded-files-list"></div>
+    <!-- Account Settings Modal -->
+    <div id="accountSettingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Account Settings</h2>
+                <span class="close" id="closeAccountSettingsModal">&times;</span>
             </div>
-            <div class="input-container">
-                <button id="uploadButton" title="Max file size: 10MB">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M21.44 11.05l-9.19 9.19a6.003 6.003 0 01-8.49-8.49l9.19-9.19a4.002 4.002 0 015.66 5.66l-9.2 9.19a2.001 2.001 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </button>
-                
-                <textarea id="messageInput" placeholder="Type your message, click mic to dictate, or attach/drop a file..." autocomplete="off" rows="1"></textarea>
+            <div class="modal-body">
+                <div class="account-info-section">
+                    <h3>Account Information</h3>
+                    <div class="form-group">
+                        <label for="userEmailDisplay">Email</label>
+                        <input type="email" id="userEmailDisplay" readonly disabled>
+                    </div>
+                </div>
+                <hr>
+                <form id="accountSettingsForm">
+                    <h3>Change Password</h3>
+                    <div class="form-group">
+                        <label for="currentPasswordInput">Current Password</label>
+                        <input type="password" id="currentPasswordInput" autocomplete="current-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="newPasswordInput">New Password</label>
+                        <input type="password" id="newPasswordInput" autocomplete="new-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPasswordInput">Confirm New Password</label>
+                        <input type="password" id="confirmPasswordInput" autocomplete="new-password" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-success">Update Password</button>
+                        <button type="button" id="cancelAccountSettingsBtn" class="btn btn-secondary">Cancel</button>
+                    </div>
+                    <div id="accountSettingsMessage" class="form-message" aria-live="polite"></div>
+                </form>
+            </div>
+        </div>
+    </div>
 
-                <button id="micButton" title="Dictate" class="icon-button">
-                    <i class="material-icons">mic</i>
-                </button>
-
-                <!-- Drop overlay -->
-                <div id="dropOverlay" class="drop-overlay">
-                    <p>Drop files or screenshots here</p>
+    <!-- User Management Modal -->
+    <div id="userManagementModal" class="modal">
+        <div class="modal-content wide-modal">
+            <div class="modal-header">
+                <h2>User Management</h2>
+                <span class="close" id="closeUserManagementModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="prompt-management-container user-management-container">
+                    <div class="prompt-list-section user-list-section">
+                        <div class="section-header">
+                            <h3>Users</h3>
+                            <button id="createUserButton" class="btn btn-primary">
+                                <span class="material-icons">add</span>
+                                New User
+                            </button>
+                        </div>
+                        <div id="userList" class="prompts-list user-list">
+                            <div class="loading">Loading users...</div>
+                        </div>
+                    </div>
+                    <div class="prompt-editor-section user-form-section">
+                        <div class="user-form">
+                            <h3 id="userFormTitle">Create User</h3>
+                            <form id="userForm">
+                                <div class="form-group">
+                                    <label for="userFullName">Full Name</label>
+                                    <input type="text" id="userFullName" name="full_name" autocomplete="name">
+                                </div>
+                                <div class="form-group">
+                                    <label for="userEmail">Email</label>
+                                    <input type="email" id="userEmail" name="email" autocomplete="email" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="userPassword">Password</label>
+                                    <input type="password" id="userPassword" name="password" autocomplete="new-password" required>
+                                    <p class="form-helper" id="userPasswordHelper">Password must be 8-40 characters.</p>
+                                </div>
+                                <div class="form-group checkbox-group">
+                                    <label>
+                                        <input type="checkbox" id="userIsSuperuser">
+                                        <span>Grant superuser access</span>
+                                    </label>
+                                </div>
+                                <div class="form-group checkbox-group">
+                                    <label>
+                                        <input type="checkbox" id="userIsActive" checked>
+                                        <span>User is active</span>
+                                    </label>
+                                </div>
+                                <div class="form-actions">
+                                    <button type="submit" class="btn btn-success">Save</button>
+                                    <button type="button" id="cancelUserEditBtn" class="btn btn-secondary">Cancel</button>
+                                </div>
+                                <div id="userFormMessage" class="form-message" aria-live="polite"></div>
+                            </form>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <button id="sendButton">Send</button>
-            <button id="stopButton" disabled>Stop</button>
-            <input type="file" id="fileUpload" multiple style="display: none">
-        </footer>
+        </div>
+    </div>
 
-        <div id="promptIdeasContainer"></div>
+    <!-- Conversations Management Modal -->
+    <div id="conversationsModal" class="modal">
+        <div class="modal-content wide-modal">
+            <div class="modal-header">
+                <h2>Conversation History</h2>
+                <span class="close" id="closeConversationsModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="conversations-container">
+                    <!-- Search and Filter Section -->
+                    <div class="conversations-header">
+                        <div class="search-section">
+                            <input type="text" id="conversationSearch" placeholder="Search conversations..." class="search-input">
+                            <button id="refreshConversations" class="btn btn-secondary">
+                                <span class="material-icons">refresh</span>
+                                Refresh
+                            </button>
+                        </div>
+                        <div class="filter-section">
+                            <button id="showAllConversations" class="btn btn-primary active">All</button>
+                            <button id="showFavoriteConversations" class="btn btn-favorite">Favorites</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Conversations List -->
+                    <div class="conversations-list" id="conversationsList">
+                        <div class="loading">Loading conversations...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-    <div class="disclaimer-text">
-        <span>IDEA can make mistakes — check important results. Inputs may be used to improve services by UHSLC and/or LLM providers.</span>
-        <a href="https://github.com/uhsealevelcenter/IDEA"> [More info]</a>
-    </div>
+
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <!-- DOMPurify for sanitizing HTML -->
@@ -245,8 +409,12 @@
     </script>
     <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
     <script src="config.js"></script>
+    <script src="conversation_manager.js"></script>
     <script src="assistant.js"></script>
+    <script src="account-settings.js"></script>
     <script src="prompt-manager.js"></script>
     <script src="knowledge-base.js"></script>
+    <script src="user-management.js"></script>
+    <script src="conversation_ui.js"></script>
 </body>
 </html>

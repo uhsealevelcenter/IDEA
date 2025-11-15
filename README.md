@@ -75,8 +75,8 @@ Create a `.env` file in the project root. You have two options:
   ```ini
   OPENAI_API_KEY=YOUR_API_KEY_HERE
   # Authentication Configuration
-  AUTH_USERNAME=admin
-  AUTH_PASSWORD=your_secure_password_here
+  FIRST_SUPERUSER=admin
+  FIRST_SUPERUSER_PASSWORD=your_secure_password_here
   ```
 - **Option B:** Manually create a `.env` file with the necessary variables.
 
@@ -141,8 +141,8 @@ Ensure your production `.env` file includes secure authentication credentials:
 ```ini
 OPENAI_API_KEY=your_production_api_key
 # Authentication Configuration - USE STRONG PASSWORDS!
-AUTH_USERNAME=your_admin_username
-AUTH_PASSWORD=your_very_secure_production_password
+FIRST_SUPERUSER=your_admin_username
+FIRST_SUPERUSER_PASSWORD=your_very_secure_production_password
 # Other production variables
 LOCAL_DEV=0
 PQA_HOME=/app/data
@@ -222,8 +222,8 @@ The project behavior is controlled by several environment variables in the `.env
 
 **Secrets (must be in .env file, never commit to repo):**
 - `OPENAI_API_KEY`: Your API key provided by OpenAI
-- `AUTH_USERNAME`: Username for application login (default: `admin`)
-- `AUTH_PASSWORD`: Password for application login (default: `password123`)
+- `FIRST_SUPERUSER`: Username for application login
+- `FIRST_SUPERUSER_PASSWORD`: Password for application login
 
 **Configuration settings:**
 - `LOCAL_DEV`: Set to `1` for local development mode; set to `0` for production

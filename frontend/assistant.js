@@ -15,14 +15,7 @@ async function warmUpMicrophone() {
 
 // Constants and State Management
 const INITIAL_TEXTAREA_HEIGHT = '38px';
-const MESSAGE_TYPES = {
-    CONSOLE: 'console',
-    MESSAGE: 'message',
-    IMAGE: 'image',
-    CODE: 'code',
-    FILE: 'file',
-    SYSTEM: 'system'
-};
+// MESSAGE_TYPES is imported from conversation_manager.js
 
 // Global State
 let messages = [];
@@ -30,7 +23,20 @@ let currentMessageIndex = 0;
 let isGenerating = false;
 let controller = null;
 let promptIdeasVisible = false;
-let currentMessageId = null;
+const activeMessageIds = new Map();
+let workingIndicatorId = null;
+let pendingUploads = [];
+let lastExecutableCodeId = null;
+let pendingConsoleParentId = null;
+const codeConsoleMap = new Map();
+let activeLineCodeId = null;
+let isActiveLineRunning = false;
+
+const THEME_STORAGE_KEY = 'idea-theme';
+const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
+
+// Conversation manager instance
+let conversationManager;
 
 // Authentication state
 let authToken = localStorage.getItem('authToken');
@@ -74,9 +80,29 @@ function getAuthHeaders() {
 
 function logout() {
     localStorage.removeItem('authToken');
-    authToken = null;
-    redirectToLogin();
+   authToken = null;
+   redirectToLogin();
 }
+
+function applyTheme() {
+    document.body.classList.remove('theme-light', 'theme-dark');
+    document.body.classList.add('theme-light');
+
+    themeToggleInputs.forEach((input) => {
+        input.checked = false;
+    });
+}
+
+function initializeTheme() {
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, 'light');
+        applyTheme();
+    } catch (error) {
+        console.error('Failed to initialize theme:', error);
+    }
+}
+
+initializeTheme();
 
 //// Math formatting helpers
 
@@ -112,13 +138,29 @@ function restoreMath(html, store) {
 }
 
 // Returns true if display/inline math is closed (so it's safe to typeset)
+function countUnescapedSequence(text, sequence) {
+  if (!text || !sequence) return 0;
+  let count = 0;
+  let index = text.indexOf(sequence);
+  while (index !== -1) {
+    let backslashCount = 0;
+    let cursor = index - 1;
+    while (cursor >= 0 && text[cursor] === '\\') {
+      backslashCount += 1;
+      cursor -= 1;
+    }
+    if (backslashCount % 2 === 0) {
+      count += 1;
+    }
+    index = text.indexOf(sequence, index + sequence.length);
+  }
+  return count;
+}
+
 function hasBalancedMath(s) {
-  // even number of $$ delimiters
-  const dollars = (s.match(/\$\$/g) || []).length % 2 === 0;
-  // balanced \[ \]
+  const dollars = countUnescapedSequence(s, '$$') % 2 === 0;
   const lb = (s.match(/\\\[/g) || []).length;
   const rb = (s.match(/\\\]/g) || []).length;
-  // balanced \( \)
   const lp = (s.match(/\\\(/g) || []).length;
   const rp = (s.match(/\\\)/g) || []).length;
   return dollars && lb === rb && lp === rp;
@@ -169,43 +211,104 @@ const stopButton = document.getElementById('stopButton');
 const newMessagesButton = document.getElementById('newMessagesButton');
 const messageInput = document.getElementById('messageInput');
 const progressBar = document.getElementById('uploadProgress');
-const progressElement = progressBar.querySelector('.progress');
+const progressElement = progressBar ? progressBar.querySelector('.progress') : null;
 
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
 
     hidePromptIdeas(); 
-    progressBar.style.display = 'block';
+    if (progressBar) {
+        progressBar.style.display = 'block';
+    }
     for (const file of files) {
         try {
             const response = await uploadFile(file, progressElement);
-            const imagePath = response.path || `/uploads/${response.name}`;
-
-            if (file.type.startsWith('image')) {
-                // Show the image inline
-                const imageMessage = {
-                    id: generateId('msg'),
-                    role: 'user',
-                    type: 'image',
-                    format: 'path',
-                    content: imagePath,
-                    isComplete: true
-                };
-                // Append image visually and store in conversation
-                //appendMessage(imageMessage); // Commenting this out to avoid double messages
-                messages.push(imageMessage);
-                scrollToBottom();
-
-                // Send clean user message about the upload
-                await sendRequest(`Please describe this image that I uploaded (${file.name})`);
-            } else {
-                sendRequest(`I uploaded ${file.name}`);
-            }
+            queuePendingUpload(file, response);
         } catch (error) {
             appendSystemMessage(`Error uploading ${file.name}: ${error.message}`);
         }
     }
-    progressBar.style.display = 'none';
+    if (progressBar) {
+        progressBar.style.display = 'none';
+    }
+}
+
+function queuePendingUpload(file, uploadResponse = {}) {
+    const storedName = uploadResponse.filename || uploadResponse.name || file.name;
+    const storagePath = uploadResponse.path || storedName;
+    const isImage = (file.type || '').startsWith('image/');
+
+    const attachment = {
+        id: generateId('upload'),
+        name: file.name,
+        storedName,
+        path: storagePath,
+        size: file.size,
+        mimeType: file.type,
+        messageType: isImage ? 'image' : 'file',
+        messageFormat: isImage ? 'path' : null
+    };
+
+    pendingUploads.push(attachment);
+    renderPendingUploads();
+}
+
+function renderPendingUploads() {
+    const uploadedFiles = document.getElementById('uploadedFiles');
+    if (!uploadedFiles) return;
+
+    uploadedFiles.innerHTML = '';
+
+    if (pendingUploads.length === 0) {
+        uploadedFiles.classList.remove('active');
+        return;
+    }
+
+    uploadedFiles.classList.add('active');
+
+    pendingUploads.forEach((attachment) => {
+        const fileElement = document.createElement('span');
+        fileElement.className = 'attached-file';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'attached-file-name';
+        nameSpan.textContent = attachment.name;
+        fileElement.appendChild(nameSpan);
+
+        const removeButton = document.createElement('button');
+        removeButton.className = 'remove-attachment';
+        removeButton.setAttribute('aria-label', `Remove ${attachment.name}`);
+        removeButton.textContent = '×';
+        removeButton.addEventListener('click', () => removePendingAttachment(attachment.id));
+        fileElement.appendChild(removeButton);
+
+        uploadedFiles.appendChild(fileElement);
+    });
+}
+
+async function removePendingAttachment(attachmentId) {
+    const attachment = pendingUploads.find(att => att.id === attachmentId);
+    if (!attachment) return;
+
+    try {
+        const response = await fetch(`${config.getEndpoints().files}/${encodeURIComponent(attachment.storedName)}`, {
+            method: 'DELETE',
+            headers: {
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
+            }
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || 'Delete failed');
+        }
+
+        pendingUploads = pendingUploads.filter(att => att.id !== attachmentId);
+        renderPendingUploads();
+    } catch (error) {
+        appendSystemMessage(`Error deleting file: ${error.message}`);
+    }
 }
 
 function createPromptIdeas() {
@@ -217,27 +320,27 @@ function createPromptIdeas() {
     console.log("Creating prompt ideas");
     const prompts = [
         {
-            title: "Explore Popular Datasets",
+            title: "Explore data", // Explore Popular Datasets
             prompt: "Explore a popular dataset for me, such as global population, climate data, or economic indicators. Load the data, clean it, and provide summaries or visualizations like interactive maps, time-series plots, or bar charts to help me understand the data better."
         },
         {
-            title: "Perform Data Analysis",
+            title: "Analyze data", // Perform Data Analysis
             prompt: "Analyze a dataset for me. Calculate trends, perform statistical analysis, or apply machine learning models. Show me the code, results, and visualizations step-by-step."
         },
         {
-            title: "Create Interactive Maps",
+            title: "Create maps", // Create Interactive Maps
             prompt: "Create an interactive map for me using geospatial data. For example, map population density, weather patterns, or transportation networks. Fetch the data, process it, and generate a map I can interact with."
         },
         {
-            title: "Generate Insights from Files",
+            title: "Process files", // Generate Insights from Files
             prompt: "Process and analyze a file I upload, such as a CSV, Excel, or JSON file. Clean the data, extract insights, and create visualizations or reports for me."
         },
         {
-            title: "Brainstorm Research Ideas",
+            title: "Brainstorm ideas", // Brainstorm Research Ideas
             prompt: "Help me brainstorm research ideas using publicly available datasets. Suggest interesting questions, guide me through the initial analysis, and create visualizations to support the findings. If I don’t have a specific topic in mind, suggest one for me."
         },
         {
-            title: "Interact with APIs",
+            title: "Fetch data", // Interact with APIs
             prompt: "Fetch data from an API or scrape data from a website (ethically and within legal boundaries). For example, retrieve weather data, stock prices, or other real-time information and analyze it for me."
         }
     ];
@@ -287,7 +390,7 @@ function resetTextareaHeight() {
 
 // Event listeners
 sendButton.addEventListener('click', () => {
-    if (messageInput.value.trim() === '') return;
+    if (messageInput.value.trim() === '' && pendingUploads.length === 0) return;
     sendRequest();
     hidePromptIdeas();
     resetTextareaHeight();
@@ -314,6 +417,11 @@ stopButton.addEventListener('click', () => {
 newMessagesButton.addEventListener('click', () => {
     clearChatHistory();
     resetTextareaHeight();
+    
+    // Start a new conversation
+    if (conversationManager) {
+        conversationManager.startNewConversation();
+    }
 });
 
 // Logout button event listeners (both desktop and mobile)
@@ -360,10 +468,62 @@ function safeGetElement(id) {
     return element;
 }
 
+function buildAttachmentInstruction(attachments = []) {
+    if (!attachments.length) return '';
+    const basePath = `./static/{user_id}/${sessionId}/uploads`;
+    const lines = attachments.map(att => {
+        const relPath = att.path || att.storedName || att.name;
+        const mimeType = att.mimeType ? ` (${att.mimeType})` : '';
+        return `- ${att.name}${mimeType}${relPath ? ` | relative path: ${relPath}` : ''}`;
+    }).join('\n');
+    return `Files uploaded in this message:\nSession ID: ${sessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.`;
+}
+
+function serializeMessagesForRequest(messageList = []) {
+    return messageList.map(msg => {
+        const { llmContent, attachments, userText, storageContent, ...rest } = msg;
+        const serialized = { ...rest };
+        if (llmContent) {
+            serialized.content = llmContent;
+        }
+        return serialized;
+    });
+}
+
 // Modify sendRequest to use better error handling
 async function sendRequest(msgOverride=null) {
-    const userInput = msgOverride ? msgOverride : messageInput.value.trim();
-    if (!userInput) return;
+    const attachmentsToSend = pendingUploads.map(att => ({ ...att }));
+    const rawInput = msgOverride !== null ? msgOverride : messageInput.value;
+    const trimmedInput = rawInput ? rawInput.trim() : '';
+    if (!trimmedInput && attachmentsToSend.length === 0) return;
+
+    const attachmentSummaries = attachmentsToSend.map(att => ({
+        name: att.name,
+        path: att.path,
+        size: att.size,
+        mimeType: att.mimeType
+    }));
+
+    const llmInstruction = buildAttachmentInstruction(attachmentsToSend);
+    const llmContentParts = [];
+    if (trimmedInput) {
+        llmContentParts.push(trimmedInput);
+    }
+    if (llmInstruction) {
+        llmContentParts.push(llmInstruction);
+    }
+    const llmContent = llmContentParts.join('\n\n');
+
+    const displaySegments = [];
+    if (trimmedInput) {
+        displaySegments.push(trimmedInput);
+    }
+    if (attachmentSummaries.length) {
+        const attachmentLabel = formatAttachmentLabel(attachmentSummaries.length);
+        const fileNames = attachmentSummaries.map(att => att.name).join(', ');
+        displaySegments.push(`**${attachmentLabel}:** ${fileNames}`);
+    }
+    const displayContent = displaySegments.join('\n\n');
 
     try {
         // Input validation
@@ -375,16 +535,23 @@ async function sendRequest(msgOverride=null) {
             id: generateId('msg'),
             role: 'user',
             type: 'message',
-            content: userInput
+            content: displayContent || trimmedInput,
+            userText: trimmedInput,
+            attachments: attachmentSummaries,
+            llmContent: llmContent || trimmedInput
         };
         messages.push(userMessage);
         appendMessage(userMessage);
         scrollToBottom();
         messageInput.value = '';
+        pendingUploads = [];
+        renderPendingUploads();
+
+        showWorkingIndicator();
 
         // Define parameters for the POST request
         const params = {
-            messages
+            messages: serializeMessagesForRequest(messages)
         };
 
         // Initialize AbortController to handle cancellation
@@ -466,20 +633,87 @@ async function sendRequest(msgOverride=null) {
 
 // Function to reset send and stop buttons
 function resetButtons() {
+    removeWorkingIndicator();
     sendButton.disabled = false;
     stopButton.disabled = true;
     controller = null;
     isGenerating = false;
 }
 
+function shouldStartNewBase64Image(message, chunk) {
+    if (!message || message.type !== 'image') return false;
+    const hasExistingContent = typeof message.content === 'string' && message.content.length > 0;
+    if (!hasExistingContent) return false;
+
+    const formatHint = chunk.format || message.format || '';
+    if (!formatHint.startsWith('base64.')) return false;
+    if (chunk.start) return false;
+
+    const chunkContent = (chunk.content || '').trimStart();
+    if (!chunkContent) return false;
+
+    const pngHeader = 'iVBORw0KGgo';
+    const jpegHeader = '/9j/';
+    return chunkContent.startsWith(pngHeader) || chunkContent.startsWith(jpegHeader);
+}
+
+function saveCompletedAssistantMessage(message) {
+    if (!conversationManager || !(message.role === 'assistant' || message.role === 'computer')) {
+        return;
+    }
+    if (message.type === 'console') {
+        if (message.format === 'active_line') {
+            return;
+        }
+        const text = typeof message.content === 'string' ? message.content.trim() : '';
+        if (!text) {
+            return;
+        }
+        message.format = message.format || 'output';
+    }
+    const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+    const messageType = validTypes.includes(message.type) ? message.type : 'message';
+
+    conversationManager.addMessage(
+        message.role,
+        message.content,
+        messageType,
+        message.format,
+        message.recipient
+    ).catch(error => {
+        console.error('Failed to save completed message to conversation:', error);
+    });
+}
+
+function createImageMessageFromChunk(chunk, fallbackMessage) {
+    return {
+        id: generateId('msg'),
+        role: chunk.role || (fallbackMessage && fallbackMessage.role) || 'assistant',
+        type: chunk.type || (fallbackMessage && fallbackMessage.type) || 'image',
+        content: '',
+        format: chunk.format || (fallbackMessage && fallbackMessage.format) || undefined,
+        recipient: chunk.recipient || (fallbackMessage && fallbackMessage.recipient) || undefined,
+        created_at: new Date().toISOString(),
+        isComplete: false,
+    };
+}
+
 // Function to process each chunk of the stream and create messages
 function processChunk(chunk) {
-    let messageStarted = false;
-    let messageEnded = false;
+    chunk = normalizeIncomingChunk(chunk);
     return new Promise((resolve) => {
+        removeWorkingIndicator();
+        if (chunk.type === 'console' && chunk.format === 'active_line') {
+            //console.log(chunk); // Debug log for active line chunks
+            handleActiveLineChunk(chunk.content);
+            resolve();
+            return;
+        }
+
+        let message = null;
+
         if (chunk.start) {
-            // Start of a new message
-            const newMessage = {
+            const newMessage = normalizeStdStreamMessage({
                 id: generateId('msg'),
                 role: chunk.role,
                 type: chunk.type,
@@ -488,41 +722,49 @@ function processChunk(chunk) {
                 recipient: chunk.recipient || undefined,
                 created_at: new Date().toISOString(),
                 isComplete: false,
-            };
+            });
             messages.push(newMessage);
             appendMessage(newMessage);
-            currentMessageId = newMessage.id; // Use ID instead of index
-        }else{
-            if (chunk.error) {
-                // if chunk error has message
-                const errorMessage = chunk.error.message || chunk.error;
-    appendSystemMessage(errorMessage);
-                return;
+            setActiveMessageId(chunk, newMessage.id);
+            message = newMessage;
+        } else if (chunk.error) {
+            const errorMessage = chunk.error.message || chunk.error;
+            appendSystemMessage(errorMessage);
+            return;
+        }
+
+        if (!message) {
+            const targetId = getActiveMessageId(chunk);
+            if (targetId) {
+                message = messages.find(msg => msg.id === targetId);
             }
         }
 
-        // if (chunk.end) {
-        //     // End of the current message
-        //     resolve();
-        //     return;
-        // }
-
-        // Append content to the message with the current ID
-        const message = messages.find(msg => msg.id === currentMessageId);
         if (message) {
+            if (shouldStartNewBase64Image(message, chunk)) {
+                message.isComplete = true;
+                updateMessageContent(message.id, message.content);
+                saveCompletedAssistantMessage(message);
+
+                const newMessage = createImageMessageFromChunk(chunk, message);
+                messages.push(newMessage);
+                appendMessage(newMessage);
+                setActiveMessageId(chunk, newMessage.id);
+                message = newMessage;
+            }
+
             if (chunk.end) {
-                message.isComplete = true;  // Mark message as complete
-                // console.log(`Message ${currentMessageId} completed`);
+                chunk.format = chunk.format || message.format || chunk.recipient || 'output';
+                message.isComplete = true;
+                saveCompletedAssistantMessage(message);
+                clearActiveMessageId(chunk);
             }
-            message.format = chunk.format || undefined;
-            if (chunk.format == 'active_line') {
-                message.content = chunk.content || '';
-            }else{
-                message.content += chunk.content || '';
-            }
-            
-            // Update the displayed message
-            updateMessageContent(currentMessageId, message.content);
+
+            message.format = chunk.format || message.format || undefined;
+            message.recipient = chunk.recipient || message.recipient || undefined;
+            message.content += chunk.content || '';
+
+            updateMessageContent(message.id, message.content);
         }
 
         resolve();
@@ -530,7 +772,8 @@ function processChunk(chunk) {
 }
 
 // Function to append a message to the chat display, gets called on chunk start
-function appendMessage(message) {
+function appendMessage(message, options = {}) {
+    const { persist = true } = options;
     // if (message.type == 'console'){
     //     // TODO: we should only skip console messages that have start or end properties
     //     // or have content that is empty
@@ -545,14 +788,109 @@ function appendMessage(message) {
     const contentElement = document.createElement('div');
     contentElement.classList.add('content');
     contentElement.setAttribute('data-type', message.type);
-    contentElement.innerHTML = message.content; 
+    if (message.role === 'user' && message.type === 'message') {
+        const userContentWrapper = document.createElement('div');
+        userContentWrapper.classList.add('user-message-wrapper');
+
+        let attachmentNames = null;
+        let textSource = typeof message.userText === 'string' ? message.userText : null;
+        let parsedContentAttachments = null;
+
+        if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+            attachmentLabel = formatAttachmentLabel(message.attachments.length);
+            attachmentNames = message.attachments.map(att => att.name).join(', ');
+        } else if (typeof message.content === 'string') {
+            parsedContentAttachments = extractAttachmentInfoFromContent(message.content);
+            if (parsedContentAttachments) {
+                attachmentLabel = parsedContentAttachments.label || null;
+                attachmentNames = parsedContentAttachments.names;
+                if (textSource === null) {
+                    textSource = parsedContentAttachments.remaining;
+                }
+            }
+        }
+
+        const fallbackText = parsedContentAttachments ? parsedContentAttachments.remaining : (message.content || '');
+        const textToShow = (textSource !== null ? textSource : fallbackText || '').trim();
+        if (textToShow) {
+            const textBlock = document.createElement('div');
+            textBlock.textContent = textToShow;
+            userContentWrapper.appendChild(textBlock);
+        }
+
+        if (attachmentNames) {
+            const attachmentLine = document.createElement('div');
+            attachmentLine.className = 'user-attachment-line';
+            const fallbackCount = (attachmentNames.match(/,/g) || []).length + 1;
+            const label = attachmentLabel || formatAttachmentLabel(fallbackCount);
+            attachmentLine.innerHTML = `<strong>${label}:</strong> ${escapeHtml(attachmentNames)}`;
+            userContentWrapper.appendChild(attachmentLine);
+        }
+
+        contentElement.appendChild(userContentWrapper);
+    } else if (message.type === 'image' && message.format === 'path') {
+        const imageSrc = escapeHtml(message.content || '');
+        const imageAlt = escapeHtml(message.filename || 'Uploaded image');
+        contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview">`;
+    } else if (message.type === 'file') {
+        const displayName = escapeHtml(message.filename || message.name || message.content || 'Attachment');
+        const filePath = escapeHtml(message.content || '');
+        contentElement.classList.add('file-attachment');
+        contentElement.innerHTML = `
+            <span class="material-icons attachment-icon">attach_file</span>
+            <div class="attachment-details">
+                <span class="attachment-name">${displayName}</span>
+                <span class="attachment-path">${filePath}</span>
+            </div>
+        `;
+    } else if (message.type === 'console') {
+        contentElement.innerHTML = '<pre><code></code></pre>';
+        messageElement.classList.add('console-output-message');
+        contentElement.setAttribute('aria-hidden', 'true');
+    } else {
+        contentElement.innerHTML = message.content; 
+    }
 
     messageElement.appendChild(contentElement);
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+    handleStdoutTrackingOnMessageStart(message);
+
+    // Save user messages immediately to conversation (assistant/computer messages are saved when complete)
+    if (persist && conversationManager && message.role === 'user' && message.content) {
+        // Validate message type against backend enums
+        const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+        const messageType = validTypes.includes(message.type) ? message.type : 'message';
+        
+        // Save to conversation asynchronously
+        conversationManager.addMessage(
+            message.role, 
+            message.content, 
+            messageType, 
+            message.format, 
+            message.recipient
+        ).catch(error => {
+            console.error('Failed to save user message to conversation:', error);
+        });
+    }
 }
 
 // Modify updateMessageContent with better error handling
+function handleActiveLineChunk(content) {
+    if (!activeLineCodeId) {
+        activeLineCodeId = lastExecutableCodeId || pendingConsoleParentId || null;
+    }
+    if (!activeLineCodeId) return;
+    if (content) {
+        isActiveLineRunning = true;
+        renderActiveLineSpinner();
+    } else {
+        isActiveLineRunning = false;
+        removeActiveLineSpinner();
+        activeLineCodeId = null;
+    }
+}
+
 function updateMessageContent(id, content) {
     try {
         const messageElement = chatDisplay.querySelector(`.message[data-id="${id}"]`);
@@ -570,54 +908,26 @@ function updateMessageContent(id, content) {
             throw new Error('Content div not found');
         }
 
-        if (message.type === 'console' && message.format === 'active_line') {
-            // console.log("Active line MESSAGE", message);
-            // console.log("Active line CONTENT", content);
-            // Find the most recent code block
-            const codeBlocks = document.querySelectorAll('pre code');
-            const lastCodeBlock = codeBlocks[codeBlocks.length - 1];
-            
-            if (lastCodeBlock) {
-                // if (content) {
-                //     console.log('Current line being executed:', content);
-                //     // ... rest of your line highlighting code ...
-                // } else {
-                //     console.log('Execution completed!');
-                // }
-                const existingSpinner = lastCodeBlock.parentElement.querySelector('.code-spinner');
-                    if (existingSpinner) {
-                        existingSpinner.remove();
-                    }
-
-                    if (content) {
-                        // Add spinner
-                        const spinner = document.createElement('div');
-                        spinner.className = 'code-spinner';
-                        lastCodeBlock.parentElement.appendChild(spinner);
-
-                        // // Highlight current line
-                        // const lines = lastCodeBlock.innerHTML.split('\n');
-                        // const highlightedLines = lines.map((line, index) => {
-                        //     const lineNumber = index + 1;
-                        //     const isActive = lineNumber === parseInt(content);
-                        //     return `<div class="code-line${isActive ? ' active-line' : ''}">${line}</div>`;
-                        // }).join('');
-                        // lastCodeBlock.innerHTML = highlightedLines;
-                    } else {
-                        // Remove highlights
-                        // const lines = lastCodeBlock.innerHTML.split('\n');
-                        // const unhighlightedLines = lines.map(line => 
-                        //     `<div class="code-line">${line}</div>`
-                        // ).join('');
-                        // lastCodeBlock.innerHTML = unhighlightedLines;
-                    }
+        if (message.type === 'console') {
+            if (isTelemetryConsoleMessage(message)) {
+                return;
             }
-            return;
-        }
-
-        if (contentDiv.getAttribute('data-type') === 'console') {
-            // contentDiv.parentElement.remove();
-            contentDiv.parentElement.style.display = 'none'; // Hide Console Output
+            const pre = contentDiv.querySelector('pre code') || (() => {
+                contentDiv.innerHTML = '<pre><code></code></pre>';
+                return contentDiv.querySelector('pre code');
+            })();
+            if (pre) {
+                pre.textContent = message.content || '';
+            }
+            const parent = contentDiv.parentElement;
+            if (parent) {
+                parent.classList.add('console-output-message');
+                if (message.associatedCodeId) {
+                    parent.setAttribute('data-associated-code-id', message.associatedCodeId);
+                    refreshStdoutPanel(message.associatedCodeId, { autoScroll: true });
+                }
+            }
+            contentDiv.setAttribute('aria-hidden', 'true');
             return;
         }
         
@@ -648,12 +958,21 @@ function updateMessageContent(id, content) {
             // 6) Typeset math (don’t wait for message.isComplete)
             typeset(contentDiv);
         } else if (message.type === 'image') {
-            if (message.format === 'base64.png') {
-                contentDiv.innerHTML = `<img src="data:image/png;base64,${content}" alt="Image">`;
+            if (message.format && message.format.startsWith('base64.')) {
+                const mime = message.format.replace('base64.', 'image/');
+                if (message.isComplete) {
+                    contentDiv.innerHTML =
+                        `<img src="data:${mime};base64,${content}" alt="Image">`;
+                } else {
+                    // still streaming, don't try to render partial base64
+                    contentDiv.innerHTML = `<div class="image-placeholder"> Generating image… </div>`;
+                }
             } else if (message.format === 'path') {
+                // path-based images are usually already usable
                 contentDiv.innerHTML = `<img src="${content}" alt="Image">`;
             }
         } else if (message.type === 'code') {
+            const preservedStdoutState = captureStdoutPanelState(message.id);
             if (message.format === "html") {
                 // contentDiv.innerHTML = content;
                 // do nothing
@@ -662,16 +981,26 @@ function updateMessageContent(id, content) {
                 
                 contentDiv.innerHTML = content;
                 // return;
-            } else 
-            {
-            contentDiv.innerHTML = `<pre><code class="language-${message.format || ''}">${escapeHtml(content)}</code></pre>`;
-            // Apply syntax highlighting
-            const codeBlock = contentDiv.querySelector('code');
-            if (codeBlock ) {
-                // hljs.highlightElement(codeBlock);
-                Prism.highlightElement(codeBlock);
-            }
-            addCopyButtons();
+            } else {
+                let codeBlock = contentDiv.querySelector('pre code');
+                if (!codeBlock) {
+                    contentDiv.innerHTML = `<pre><code class="language-${message.format || ''}"></code></pre>`;
+                    codeBlock = contentDiv.querySelector('pre code');
+                } else {
+                    codeBlock.className = `language-${message.format || ''}`;
+                }
+
+                if (codeBlock) {
+                    codeBlock.textContent = content;
+                    Prism.highlightElement(codeBlock);
+                }
+                addCopyButtons();
+                ensureStdoutElements(message.id);
+                updateStdoutAvailability(message.id);
+                restoreStdoutPanelState(message.id, preservedStdoutState);
+                if (isActiveLineRunning && activeLineCodeId === message.id) {
+                    renderActiveLineSpinner();
+                }
             }
         } else if (message.type === 'file') {
             contentDiv.innerHTML = `<a href="${content}" download>Download File</a>`;
@@ -735,6 +1064,7 @@ function appendConfirmationChunk(chunk) {
 // Function to clear chat history
 async function clearChatHistory() {
     try {
+        removeWorkingIndicator();
         // Clear chat history
         const response = await fetch(config.getEndpoints().clear, {
             method: "POST",
@@ -765,16 +1095,14 @@ async function clearChatHistory() {
         // Clear frontend messages array
         messages = [];
         // Clear chat display
-        currentMessageId = null;
         isGenerating = false;
         controller = null;
         chatDisplay.innerHTML = '';
+        resetStdoutState();
         
         // Clear uploaded files list in UI
-        const uploadedFiles = document.getElementById('uploadedFiles');
-        if (uploadedFiles) {
-            uploadedFiles.innerHTML = '';
-        }
+        pendingUploads = [];
+        renderPendingUploads();
 
         appendSystemMessage("Begin a new conversation.");
         showPromptIdeas();
@@ -803,30 +1131,90 @@ function escapeHtml(text) {
     return text.replace(/[&<>"']/g, function(m) { return map[m]; });
 }
 
+function formatAttachmentLabel(count) {
+    return count === 1 ? 'File' : 'Files';
+}
+
+function extractAttachmentInfoFromContent(content) {
+    if (typeof content !== 'string') return null;
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        const match = trimmed.match(/^(?:\*\*)?(File|Files):(?:\*\*)?\s*(.+)$/i);
+        if (match && i === 0) {
+            const remaining = [...lines.slice(0, i), ...lines.slice(i + 1)].join('\n').trim();
+            return {
+                label: match[1].toLowerCase() === 'file' ? 'File' : 'Files',
+                names: match[2].trim(),
+                remaining
+            };
+        }
+    }
+    return null;
+}
+
 // Scroll to the bottom of the chat display
 function scrollToBottom() {
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
 }
 
-function addCopyButtons() {
-    // console.log("Adding copy buttons");
-    const codeBlocks = document.querySelectorAll('pre code');
+function showWorkingIndicator() {
+    if (workingIndicatorId) {
+        return workingIndicatorId;
+    }
+
+    workingIndicatorId = generateId('thinking');
+
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'assistant', 'thinking');
+    messageElement.setAttribute('data-id', workingIndicatorId);
+
+    const contentElement = document.createElement('div');
+    contentElement.classList.add('content');
+    contentElement.innerHTML = `
+        <div class="thinking-content" role="status" aria-live="polite">
+            <span class="thinking-spinner" aria-hidden="true"></span>
+            <span>Thinking</span>
+            <span class="thinking-ellipsis" aria-hidden="true">
+                <span></span><span></span><span></span>
+            </span>
+        </div>
+    `;
+
+    messageElement.appendChild(contentElement);
+    chatDisplay.appendChild(messageElement);
+    scrollToBottom();
+
+    return workingIndicatorId;
+}
+
+function removeWorkingIndicator() {
+    if (!workingIndicatorId) return;
+
+    const indicator = chatDisplay.querySelector(`.message[data-id="${workingIndicatorId}"]`);
+    if (indicator) {
+        indicator.remove();
+    }
+
+    workingIndicatorId = null;
+}
+
+function addCopyButtons(root) {
+    const scope = root instanceof Element ? root : document;
+    const codeBlocks = scope.querySelectorAll('pre code');
     
     codeBlocks.forEach((codeBlock) => {
         const pre = codeBlock.parentElement;
+        if (!pre) return;
 
-        // Avoid adding multiple buttons to the same code block
         if (pre.querySelector('.copy-button')) return;
 
-        // Create the copy button
         const button = document.createElement('button');
         button.classList.add('copy-button');
+        button.type = 'button';
         button.innerText = 'Copy';
-
-        // Append the button to the <pre> element
         pre.appendChild(button);
 
-        // Add click event to copy code
         button.addEventListener('click', () => {
             const code = codeBlock.innerText;
             navigator.clipboard.writeText(code).then(() => {
@@ -845,6 +1233,429 @@ function addCopyButtons() {
     });
 }
 
+function resetStdoutState() {
+    codeConsoleMap.clear();
+    lastExecutableCodeId = null;
+    pendingConsoleParentId = null;
+    activeMessageIds.clear();
+    activeLineCodeId = null;
+    isActiveLineRunning = false;
+    removeActiveLineSpinner();
+}
+window.resetStdoutState = resetStdoutState;
+
+const STD_STREAM_RECIPIENTS = ['stdout', 'stderr'];
+
+function normalizeStdStreamMessage(message) {
+    if (!message) return message;
+    if (!message.type && message.message_type) {
+        message.type = message.message_type;
+    }
+    if (!message.format && message.message_format) {
+        message.format = message.message_format;
+    }
+    if (!message.recipient && message.message_recipient) {
+        message.recipient = message.message_recipient;
+    }
+
+    const recipient = (message.recipient || '').toLowerCase();
+    if ((message.type === 'message' || message.type === 'text') && STD_STREAM_RECIPIENTS.includes(recipient)) {
+        message.type = 'console';
+        message.format = message.format || recipient;
+    } else if (message.type === 'console' && !message.format && STD_STREAM_RECIPIENTS.includes(recipient)) {
+        message.format = recipient;
+    }
+    return message;
+}
+
+function normalizeIncomingChunk(chunk) {
+    if (!chunk) return chunk;
+    if (chunk.recipient) {
+        chunk.recipient = chunk.recipient.toLowerCase();
+    }
+    if ((chunk.type === 'message' || chunk.type === 'text') &&
+        STD_STREAM_RECIPIENTS.includes(chunk.recipient || '')) {
+        chunk.type = 'console';
+        chunk.format = chunk.format || chunk.recipient;
+    } else if (chunk.type === 'console' && !chunk.format && STD_STREAM_RECIPIENTS.includes(chunk.recipient || '')) {
+        chunk.format = chunk.recipient;
+    }
+    if (chunk.type === 'console' && !chunk.format) {
+        chunk.format = 'output';
+    }
+    return chunk;
+}
+
+function getChunkKey(chunk) {
+    const role = chunk.role || '';
+    const type = chunk.type || '';
+    return `${role}:${type}`;
+}
+
+function getFormatKey(chunk) {
+    if (!chunk) return '__default__';
+    return chunk.format || chunk.recipient || '__default__';
+}
+
+function getFormatStore(baseKey) {
+    if (!activeMessageIds.has(baseKey)) {
+        activeMessageIds.set(baseKey, { map: new Map(), lastKey: null });
+    }
+    return activeMessageIds.get(baseKey);
+}
+
+function setActiveMessageId(chunk, messageId) {
+    const baseKey = getChunkKey(chunk);
+    const formatKey = getFormatKey(chunk);
+    const store = getFormatStore(baseKey);
+    store.map.set(formatKey, messageId);
+    store.lastKey = formatKey;
+}
+
+function getActiveMessageId(chunk) {
+    const baseKey = getChunkKey(chunk);
+    const store = activeMessageIds.get(baseKey);
+    if (!store) return null;
+    const formatKey = getFormatKey(chunk);
+    if (store.map.has(formatKey)) {
+        return store.map.get(formatKey);
+    }
+    if (store.lastKey && store.map.has(store.lastKey)) {
+        return store.map.get(store.lastKey);
+    }
+    const iterator = store.map.values().next();
+    return iterator.value || null;
+}
+
+function getCodeMessageElement(codeId) {
+    if (!codeId) return null;
+    return chatDisplay.querySelector(`.message[data-id="${codeId}"]`);
+}
+
+function renderActiveLineSpinner() {
+    if (!activeLineCodeId || !isActiveLineRunning) return;
+    const messageElement = getCodeMessageElement(activeLineCodeId);
+    if (!messageElement) return;
+    const pre = messageElement.querySelector('pre');
+    if (!pre) return;
+    let spinner = pre.querySelector('.code-spinner');
+    if (!spinner) {
+        spinner = document.createElement('div');
+        spinner.className = 'code-spinner';
+        pre.appendChild(spinner);
+    }
+}
+
+function removeActiveLineSpinner() {
+    if (!activeLineCodeId) return;
+    const messageElement = getCodeMessageElement(activeLineCodeId);
+    if (!messageElement) return;
+    const spinner = messageElement.querySelector('pre .code-spinner');
+    if (spinner) {
+        spinner.remove();
+    }
+}
+
+function clearActiveMessageId(chunk) {
+    const baseKey = getChunkKey(chunk);
+    const store = activeMessageIds.get(baseKey);
+    if (!store) return;
+    const formatKey = getFormatKey(chunk);
+    store.map.delete(formatKey);
+    if (store.lastKey === formatKey) {
+        const nextKey = store.map.keys().next();
+        store.lastKey = nextKey.value || null;
+    }
+    if (store.map.size === 0) {
+        activeMessageIds.delete(baseKey);
+    }
+}
+
+function shouldTrackCodeMessage(message) {
+    return Boolean(
+        message &&
+        message.type === 'code' &&
+        message.role !== 'user' &&
+        message.format !== 'html'
+    );
+}
+
+function isConsoleOutputMessage(message) {
+    if (!message) return false;
+    const type = message.type || message.message_type;
+    const format = message.format || message.message_format;
+    const recipient = (message.recipient || message.message_recipient || '').toLowerCase();
+    const isConsoleType = type === 'console' && format !== 'active_line' && !isTelemetryConsoleMessage(message);
+    const isStdStream = (type === 'message' || type === 'text') && STD_STREAM_RECIPIENTS.includes(recipient);
+    return isConsoleType || isStdStream;
+}
+
+function isTelemetryConsoleMessage(message) {
+    const type = message?.type || message?.message_type;
+    if (type !== 'console') return false;
+    if (message.format === 'active_line') return true;
+    const content = typeof message.content === 'string' ? message.content.trim() : '';
+    if (message.format === 'execution' && /^\d+(?:\/\d+)?$/.test(content)) {
+        return true;
+    }
+    if (/^line\s+\d+$/i.test(content)) {
+        return true;
+    }
+    return false;
+}
+
+function markCodeMessageForStdout(message) {
+    if (!message) return;
+    if (activeLineCodeId && activeLineCodeId !== message.id) {
+        removeActiveLineSpinner();
+    }
+    lastExecutableCodeId = message.id;
+    pendingConsoleParentId = message.id;
+    activeLineCodeId = message.id;
+    isActiveLineRunning = false;
+    if (!codeConsoleMap.has(message.id)) {
+        codeConsoleMap.set(message.id, []);
+    }
+    ensureStdoutElements(message.id);
+}
+
+function addConsoleMapping(codeId, consoleId) {
+    if (!codeId || !consoleId) return;
+    if (!codeConsoleMap.has(codeId)) {
+        codeConsoleMap.set(codeId, []);
+    }
+    const entries = codeConsoleMap.get(codeId);
+    if (!entries.includes(consoleId)) {
+        entries.push(consoleId);
+    }
+    updateStdoutAvailability(codeId);
+}
+
+function registerConsoleMessage(message) {
+    if (!isConsoleOutputMessage(message)) return;
+    let codeId = message.associatedCodeId || pendingConsoleParentId || lastExecutableCodeId;
+    if (!codeId) {
+        codeId = findPreviousExecutableCodeId(message.id);
+    }
+    if (!codeId) return;
+    message.associatedCodeId = codeId;
+    addConsoleMapping(codeId, message.id);
+    pendingConsoleParentId = codeId;
+    lastExecutableCodeId = codeId;
+    refreshStdoutPanel(codeId, { autoScroll: true });
+}
+
+function handleStdoutTrackingOnMessageStart(message) {
+    if (!message || message.__stdoutHandled) return;
+    if (shouldTrackCodeMessage(message)) {
+        markCodeMessageForStdout(message);
+    } else if (isConsoleOutputMessage(message)) {
+        registerConsoleMessage(message);
+    } else if (isTelemetryConsoleMessage(message)) {
+        // ignore telemetry chunks
+    } else if (message.role === 'user') {
+        pendingConsoleParentId = null;
+        lastExecutableCodeId = null;
+    }
+    message.__stdoutHandled = true;
+}
+
+function ensureStdoutElements(codeId) {
+    const messageElement = chatDisplay.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return {};
+    const contentElement = messageElement.querySelector('.content');
+    if (!contentElement) return {};
+
+    let controls = messageElement.querySelector('.stdout-controls');
+    let button = controls ? controls.querySelector('.stdout-button') : null;
+    let panel = messageElement.querySelector('.stdout-panel');
+
+    if (!controls) {
+        controls = document.createElement('div');
+        controls.className = 'stdout-controls stdout-hidden';
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'stdout-button';
+        button.textContent = 'Show Output';
+        button.setAttribute('aria-expanded', 'false');
+        button.disabled = true;
+        button.addEventListener('click', () => toggleStdoutPanel(codeId));
+        controls.appendChild(button);
+        contentElement.appendChild(controls);
+    }
+
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.className = 'stdout-panel';
+        panel.setAttribute('role', 'region');
+        panel.setAttribute('aria-label', 'STDOUT and STDERR output');
+        panel.setAttribute('aria-hidden', 'true');
+        contentElement.appendChild(panel);
+    }
+
+    return { messageElement, contentElement, controls, button, panel };
+}
+
+function updateStdoutAvailability(codeId) {
+    const { controls, button, panel } = ensureStdoutElements(codeId);
+    if (!controls || !button) {
+        return;
+    }
+    const hasOutput = (codeConsoleMap.get(codeId) || []).length > 0;
+    controls.classList.toggle('stdout-hidden', !hasOutput);
+    button.disabled = !hasOutput;
+    if (!hasOutput) {
+        button.textContent = 'Show Output';
+        button.setAttribute('aria-expanded', 'false');
+        if (panel) {
+            panel.classList.remove('open');
+            panel.setAttribute('aria-hidden', 'true');
+        }
+    }
+}
+
+function getConsoleMessagesForCode(codeId) {
+    const ids = codeConsoleMap.get(codeId) || [];
+    return ids
+        .map(id => messages.find(msg => msg.id === id))
+        .filter(msg => Boolean(msg));
+}
+
+function findPreviousExecutableCodeId(referenceMessageId) {
+    if (!referenceMessageId) return null;
+    const index = messages.findIndex(msg => msg.id === referenceMessageId);
+    if (index === -1) return null;
+    for (let i = index - 1; i >= 0; i--) {
+        const candidate = messages[i];
+        if (shouldTrackCodeMessage(candidate)) {
+            return candidate.id;
+        }
+    }
+    return null;
+}
+
+function captureStdoutPanelState(codeId) {
+    const messageElement = chatDisplay.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return null;
+    const panel = messageElement.querySelector('.stdout-panel');
+    const button = messageElement.querySelector('.stdout-button');
+    if (!panel || !button) return null;
+    return {
+        isOpen: panel.classList.contains('open')
+    };
+}
+
+function restoreStdoutPanelState(codeId, state) {
+    if (!state || !state.isOpen) return;
+    const { panel, button } = ensureStdoutElements(codeId);
+    if (!panel || !button || button.disabled) return;
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+    button.textContent = 'Hide Output';
+    button.setAttribute('aria-expanded', 'true');
+    renderStdoutPanel(codeId);
+}
+
+function renderStdoutPanel(codeId) {
+    const { panel } = ensureStdoutElements(codeId);
+    if (!panel) return;
+    panel.innerHTML = '';
+    const outputs = getConsoleMessagesForCode(codeId).filter(msg => {
+        const text = typeof msg?.content === 'string' ? msg.content : '';
+        return text.trim().length > 0;
+    });
+    outputs.forEach(msg => {
+        const entry = document.createElement('div');
+        entry.className = 'stdout-entry';
+        const pre = document.createElement('pre');
+        pre.classList.add('stdout-pre');
+        const code = document.createElement('code');
+        code.classList.add('stdout-code');
+        code.textContent = msg.content || '';
+        pre.appendChild(code);
+        entry.appendChild(pre);
+        panel.appendChild(entry);
+    });
+    if (outputs.length > 0) {
+        addCopyButtons(panel);
+    }
+    if (outputs.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'stdout-empty';
+        emptyState.textContent = 'No console output captured.';
+        panel.appendChild(emptyState);
+    }
+}
+
+function autoScrollStdoutPanel(panel) {
+    if (!panel) return;
+    panel.scrollTop = panel.scrollHeight;
+    panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function toggleStdoutPanel(codeId) {
+    const { button, panel } = ensureStdoutElements(codeId);
+    if (!button || !panel || button.disabled) return;
+    const isOpen = panel.classList.toggle('open');
+    if (isOpen) {
+        panel.setAttribute('aria-hidden', 'false');
+        button.textContent = 'Hide Output';
+        renderStdoutPanel(codeId);
+        autoScrollStdoutPanel(panel);
+    } else {
+        panel.setAttribute('aria-hidden', 'true');
+        button.textContent = 'Show Output';
+    }
+    button.setAttribute('aria-expanded', String(isOpen));
+}
+
+function refreshStdoutPanel(codeId, { autoScroll = false } = {}) {
+    const { panel } = ensureStdoutElements(codeId);
+    updateStdoutAvailability(codeId);
+    if (!panel || !panel.classList.contains('open')) return;
+    renderStdoutPanel(codeId);
+    if (autoScroll) {
+        autoScrollStdoutPanel(panel);
+    }
+}
+
+function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
+    if (!Array.isArray(rawMessages)) {
+        return;
+    }
+
+    messages = [];
+    chatDisplay.innerHTML = '';
+    resetStdoutState();
+
+    rawMessages.forEach(rawMessage => {
+        if (!rawMessage) {
+            return;
+        }
+
+        const normalized = normalizeStdStreamMessage({ ...rawMessage });
+        if (normalized.type === 'console' && isTelemetryConsoleMessage(normalized)) {
+            return;
+        }
+
+        if (!normalized.id) {
+            normalized.id = generateId('msg');
+        }
+
+        normalized.isComplete = true;
+        normalized.content = normalized.content || '';
+
+        messages.push(normalized);
+        appendMessage(normalized, { persist });
+        updateMessageContent(normalized.id, normalized.content);
+    });
+
+    scrollToBottom();
+    typeset(document.getElementById('chatDisplay'));
+}
+
+window.hydrateChatWithMessages = hydrateChatWithMessages;
+
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
     // Check authentication before doing anything else
@@ -855,6 +1666,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     if (!micStream) await warmUpMicrophone(); // Ensure microphone is warmed up (sppeds up first use)
 
+    // Initialize conversation manager
+    resetStdoutState();
+    conversationManager = new ConversationManager();
+
     try {
         const response = await fetch(config.getEndpoints().history, {
             method: "GET",
@@ -864,25 +1679,12 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
         });
         if (response.ok) {
-            const history = await response.json();  
-            history.forEach(message => {
-                // Assign an id if it's missing
-
-                if (history.length === 0) {
-                    showPromptIdeas();
-                } else if (message.type != 'console') {
-                    if (!message.id) {
-                        message.id = generateId('msg');
-                    }
-                    messages.push(message); // Add to messages array
-                    appendMessage(message);
-                    updateMessageContent(message.id, message.content);
-                }
-            });
-            scrollToBottom();
-
-            // Typeset once after conversation is loaded
-            typeset(document.getElementById('chatDisplay'));
+            const history = await response.json();
+            if (history.length === 0) {
+                showPromptIdeas();
+            } else {
+                hydrateChatWithMessages(history, { persist: false });
+            }
         }
     } catch (error) {
         console.error("Failed to fetch history:", error);
@@ -970,29 +1772,18 @@ function initializeFileUpload() {
                     const uniqueName = `pasted-${Date.now()}-${Math.floor(Math.random() * 1000)}.${extension}`;
                     const renamedFile = new File([originalFile], uniqueName, { type: originalFile.type });
 
-                    progressBar.style.display = 'block';
+                    if (progressBar) {
+                        progressBar.style.display = 'block';
+                    }
                     try {
                         const response = await uploadFile(renamedFile, progressElement);
-                        const imagePath = response.path || `/uploads/${response.name}`;
-
-                        // Show the image inline
-                        const imageMessage = {
-                            id: generateId('msg'),
-                            role: 'user',
-                            type: 'image',
-                            format: 'path',
-                            content: imagePath,
-                            isComplete: true
-                        };
-                        //appendMessage(imageMessage); // Commenting this out to avoid double messages
-                        messages.push(imageMessage);
-                        scrollToBottom();
-
-                        await sendRequest(`Please describe this screenshot that I uploaded (${renamedFile.name})`);
+                        queuePendingUpload(renamedFile, response);
                     } catch (error) {
                         appendSystemMessage(`Error uploading pasted image: ${error.message}`);
                     } finally {
-                        progressBar.style.display = 'none';
+                        if (progressBar) {
+                            progressBar.style.display = 'none';
+                        }
                     }
                 }
             }
@@ -1055,6 +1846,11 @@ function initializeMobileNavigation() {
             clearChatHistory();
             resetTextareaHeight();
             closeMobileMenu();
+            
+            // Start a new conversation
+            if (conversationManager) {
+                conversationManager.startNewConversation();
+            }
         });
     }
 
@@ -1098,8 +1894,6 @@ async function uploadFile(file, progressElement) {
         }
 
         const data = await response.json();
-        appendSystemMessage(`Successfully uploaded ${file.name}`);
-        //sendRequest(`I uploaded ${file.name}`); // Commenting this out to avoid double messages
         return data;
 
     } catch (error) {
@@ -1108,68 +1902,8 @@ async function uploadFile(file, progressElement) {
     }
 }
 
-async function updateFilesList() {
-    try {
-        const response = await fetch(config.getEndpoints().files, {
-            headers: {
-                'X-Session-Id': sessionId,
-                ...getAuthHeaders()
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to fetch files list');
-        }
-
-        const files = await response.json();
-        const uploadedFiles = document.getElementById('uploadedFiles');
-        uploadedFiles.innerHTML = '';
-
-        files.forEach(file => {
-            const fileElement = document.createElement('div');
-            fileElement.className = 'uploaded-file';
-            fileElement.innerHTML = `
-                <span>${file.name} (${formatFileSize(file.size)})</span>
-                <button class="delete-file" data-filename="${file.name}">×</button>
-            `;
-
-            // Add delete button event listener
-            const deleteButton = fileElement.querySelector('.delete-file');
-            deleteButton.addEventListener('click', async () => {
-                try {
-                    const filename = deleteButton.getAttribute('data-filename');
-                    const response = await fetch(`${config.getEndpoints().files}/${encodeURIComponent(filename)}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'X-Session-Id': sessionId,
-                            ...getAuthHeaders()
-                        }
-                    });
-
-                    if (!response.ok) {
-                        const error = await response.json();
-                        throw new Error(error.detail || 'Delete failed');
-                    }
-
-                    // Remove the file element from the UI
-                    fileElement.remove();
-                    appendSystemMessage(`Successfully deleted ${filename}`);
-                } catch (error) {
-                    appendSystemMessage(`Error deleting file: ${error.message}`);
-                }
-            });
-
-            uploadedFiles.appendChild(fileElement);
-        });
-    } catch (error) {
-        console.error('Error updating files list:', error);
-    }
-}
-
-function formatFileSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+function updateFilesList() {
+    renderPendingUploads();
 }
 
 async function downloadConversation() {
@@ -1198,13 +1932,240 @@ async function downloadConversation() {
     }
 }
 
+function shouldIncludeMessageInExport(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type;
+    if (msgType === 'console') {
+        if (isTelemetryConsoleMessage(message)) {
+            return false;
+        }
+        const text = typeof message.content === 'string' ? message.content.trim() : '';
+        return text.length > 0;
+    }
+    return true;
+}
+
+function renderMessageContentForExport(message) {
+    const msgType = message.type || message.message_type || 'message';
+    const format = message.format || message.message_format || '';
+    if (msgType === 'message') {
+        const baseSource = message.content || message.userText || '';
+        const { text: shielded, store } = protectMath(baseSource);
+        let rendered;
+        if (!hasBalancedMath(baseSource)) {
+            rendered = `<pre>${escapeHtml(baseSource)}</pre>`;
+        } else {
+            const parsedMarkdown = marked ? marked.parse(shielded) : shielded;
+            rendered = restoreMath(parsedMarkdown, store);
+        }
+        if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+            const alreadyPresent = /<strong>(?:file|files):<\/strong>/i.test(rendered);
+            const attachmentList = message.attachments
+                .map(att => escapeHtml(att.name))
+                .join(', ');
+            const label = formatAttachmentLabel(message.attachments.length);
+            const prefix = alreadyPresent ? '' : `<p><strong>${label}:</strong> ${attachmentList}</p>`;
+            return `${prefix}${rendered}`;
+        }
+        return rendered;
+    }
+    if (msgType === 'image') {
+        if (format === 'base64.png') {
+            return `<img src="data:image/png;base64,${message.content}" alt="Image">`;
+        }
+        return `<img src="${message.content}" alt="Image">`;
+    }
+    if (msgType === 'code') {
+        if (format === 'html') {
+            return message.content || '';
+        }
+        return `<pre><code class="language-${format || ''}">${escapeHtml(message.content || '')}</code></pre>`;
+    }
+    if (msgType === 'console') {
+        return `<pre>${escapeHtml(message.content || '')}</pre>`;
+    }
+    if (msgType === 'file') {
+        return `<a href="${message.content}" download>Download File</a>`;
+    }
+    return message.content || '';
+}
+
+function isExportCodeMessage(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type;
+    const format = message.format || message.message_format;
+    return msgType === 'code' && format !== 'html' && message.role !== 'user';
+}
+
+function isExportConsoleOutput(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type;
+    const format = message.format || message.message_format;
+    return msgType === 'console' && format !== 'active_line' && !isTelemetryConsoleMessage(message);
+}
+
+function buildStdoutAssociationsForExport(messageElements) {
+    const elementIds = new Set(
+        messageElements.map(element => element.getAttribute('data-id')).filter(Boolean)
+    );
+
+    const fromRuntimeState = new Map();
+    if (codeConsoleMap && codeConsoleMap.size > 0) {
+        codeConsoleMap.forEach((consoleIds = [], codeId) => {
+            if (!elementIds.has(codeId)) {
+                return;
+            }
+            const outputs = consoleIds
+                .map(id => getMessageDataForExport(id))
+                .filter(msg => msg && isExportConsoleOutput(msg))
+                .map(msg => ({
+                    id: msg.id,
+                    content: msg.content || ''
+                }));
+            if (outputs.length > 0) {
+                fromRuntimeState.set(codeId, outputs);
+            }
+        });
+    }
+
+    if (fromRuntimeState.size > 0) {
+        return fromRuntimeState;
+    }
+
+    const fallbackMap = new Map();
+    let lastCodeId = null;
+    messageElements.forEach(element => {
+        const messageId = element.getAttribute('data-id');
+        const messageData = getMessageDataForExport(messageId);
+        if (!messageData) {
+            return;
+        }
+        if (isExportCodeMessage(messageData)) {
+            lastCodeId = messageId;
+        } else if (isExportConsoleOutput(messageData)) {
+            if (lastCodeId) {
+                if (!fallbackMap.has(lastCodeId)) {
+                    fallbackMap.set(lastCodeId, []);
+                }
+                fallbackMap.get(lastCodeId).push({
+                    id: messageId,
+                    content: messageData.content || ''
+                });
+            }
+        } else if ((messageData.type || messageData.message_type) !== 'console') {
+            lastCodeId = null;
+        }
+    });
+    return fallbackMap;
+}
+
+function attachStdoutControlsForExport(contentElement, codeId, outputs) {
+    if (!contentElement || !outputs || outputs.length === 0) return;
+    const controls = document.createElement('div');
+    controls.className = 'stdout-controls';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'stdout-button';
+    button.textContent = 'Show Output';
+    button.setAttribute('data-stdout-target', codeId);
+    button.setAttribute('aria-expanded', 'false');
+    controls.appendChild(button);
+    contentElement.appendChild(controls);
+
+    const panel = document.createElement('div');
+    panel.className = 'stdout-panel';
+    panel.setAttribute('data-stdout-target', codeId);
+    panel.setAttribute('aria-hidden', 'true');
+    panel.innerHTML = outputs.map(item => `
+        <div class="stdout-entry">
+            <pre class="stdout-pre"><code class="stdout-code">${escapeHtml(item.content || '')}</code></pre>
+        </div>
+    `).join('');
+    contentElement.appendChild(panel);
+}
+
+function getMessageDataForExport(messageId) {
+    if (!messageId) return null;
+    
+    if (Array.isArray(messages)) {
+        const inSession = messages.find(msg => msg.id === messageId);
+        if (inSession) {
+            return inSession;
+        }
+    }
+    
+    if (conversationManager && Array.isArray(conversationManager.currentMessages)) {
+        const fromConversation = conversationManager.currentMessages.find(msg => msg.id === messageId);
+        if (fromConversation) {
+            return fromConversation;
+        }
+    }
+    
+    return null;
+}
+
+function prepareChatCloneForExport() {
+    const chatClone = chatDisplay.cloneNode(true);
+    const messageElements = Array.from(chatClone.querySelectorAll('.message'));
+    const stdoutAssociations = buildStdoutAssociationsForExport(messageElements);
+    
+    messageElements.forEach(element => {
+        const messageId = element.getAttribute('data-id');
+        const messageData = getMessageDataForExport(messageId);
+        if (!messageData) {
+            return;
+        }
+        
+        if (!shouldIncludeMessageInExport(messageData)) {
+            element.remove();
+            return;
+        }
+        
+        const contentEl = element.querySelector('.content');
+        if (!contentEl) {
+            return;
+        }
+        
+        contentEl.setAttribute('data-type', messageData.type || messageData.message_type || 'message');
+        contentEl.innerHTML = renderMessageContentForExport(messageData);
+        
+        if (isExportConsoleOutput(messageData)) {
+            element.classList.add('console-output-message');
+        }
+
+        const outputs = stdoutAssociations.get(messageId);
+        if (outputs && outputs.length && isExportCodeMessage(messageData)) {
+            attachStdoutControlsForExport(contentEl, messageId, outputs);
+        }
+    });
+    
+    if (window.Prism && Prism.highlightAllUnder) {
+        Prism.highlightAllUnder(chatClone);
+    }
+    
+    return chatClone;
+}
+
 async function createSelfContainedHTML() {
     // Get all CSS from the current page
     const allCSS = await extractAllCSS();
     
-    // Clone the chat display and process images
-    const chatClone = chatDisplay.cloneNode(true);
-    await processImagesInElement(chatClone);
+    // Prepare export chat content
+    const exportChat = prepareChatCloneForExport();
+    await processImagesInElement(exportChat);
+    
+    const generatedOn = new Date();
+    const generatedDate = generatedOn.toLocaleDateString();
+    const generatedTimestamp = generatedOn.toLocaleString();
+    const downloadedDisplay = generatedOn.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: true,
+        timeZoneName: 'short'
+    });
     
     // Create the complete HTML document
     const htmlTemplate = `<!DOCTYPE html>
@@ -1212,96 +2173,179 @@ async function createSelfContainedHTML() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IDEA Conversation - ${new Date().toLocaleDateString()}</title>
+    <title>IDEA Conversation - ${generatedDate}</title>
     <style>
         ${allCSS}
         
-        /* Additional styles for the exported conversation */
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 1200px;
+        body.export-view {
+            background: var(--body-gradient);
+            min-height: 100vh;
+            padding: clamp(16px, 5vw, 40px);
+            overflow-y: auto !important;
+            overflow-x: hidden;
+        }
+
+        .export-view .chat-container {
+            height: auto;
+            max-height: none;
+        }
+
+        .export-view .chat-display {
+            max-height: none;
+            overflow: visible;
+        }
+
+        .export-chat-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: clamp(18px, 4vw, 32px);
+            background: var(--surface-alt);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .export-chat-panel .chat-display {
+            width: 100%;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .export-view .disclaimer-text {
+            position: static;
             margin: 0 auto;
-            padding: 20px;
-            background: #fff;
+            width: min(1200px, 100%);
         }
-        
-        .export-header {
+
+        .export-header .header-content {
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: clamp(12px, 3vw, 24px);
+        }
+
+        .export-view .message .content pre {
+            background: rgba(1, 4, 5, 0.9);
+            color: #e2e8f0;
+            padding: 14px;
+            border-radius: 12px;
+            overflow-x: auto;
+            position: relative;
+        }
+
+        body.theme-light.export-view .message .content pre {
+            background: #0f172a;
+        }
+
+        .export-view .message .content code {
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+            font-size: 0.92em;
+        }
+
+        .export-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: right;
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .export-title {
+            font-size: 0.95rem;
+        }
+
+        .export-meta-text {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .export-brand-link {
+            color: rgba(255, 255, 255, 0.72);
+            text-decoration: underline;
+        }
+
+        .export-brand-link:visited {
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .export-footer {
+            margin-top: 18px;
             text-align: center;
-            margin-bottom: 40px;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 20px;
+            color: var(--text-muted);
+            font-size: 0.9rem;
         }
-        
-        .export-header h1 {
-            color: #2c3e50;
-            margin-bottom: 10px;
+
+        .export-footer p {
+            margin: 0.25rem 0;
         }
-        
-        .export-header p {
-            color: #7f8c8d;
-            margin: 5px 0;
-        }
-        
-        .chat-display {
-            max-height: none !important;
-            overflow: visible !important;
-        }
-        
-        /* Ensure code blocks are properly styled */
-        pre {
-            background-color: #000000 !important;
-            border-radius: 6px !important;
-            padding: 16px !important;
-            overflow-x: auto !important;
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
-        }
-        
-        code {
-            font-family: 'Courier New', Courier, monospace !important;
-            font-size: 0.9em !important;
-        }
-        
-        /* Ensure images are responsive */
-        img {
-            max-width: 100% !important;
-            height: auto !important;
-            border-radius: 8px !important;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-        }
-        
-        /* Print styles */
+
         @media print {
-            .export-header {
-                break-inside: avoid;
+            body.export-view {
+                padding: 0;
             }
-            
-            .message {
-                break-inside: avoid;
-                margin-bottom: 1em;
+
+            .chat-container {
+                box-shadow: none !important;
             }
-            
-            pre {
-                break-inside: avoid;
+
+            .export-chat-panel {
+                padding: 18px 24px;
+            }
+
+            .export-footer {
+                display: block !important;
+                margin-top: 16px;
+                font-size: 0.85rem;
+                color: #444;
             }
         }
     </style>
 </head>
-<body>
-    <div class="export-header">
-        <h1>IDEA Conversation</h1>
-        <h2><a href="https://github.com/uhsealevelcenter/IDEA" target="_blank">Intelligent Data Exploring Assistant</a></h2>
-        <p>Generated on: ${new Date().toLocaleString()}</p>
-        <p>Total messages: ${messages.length}</p>
-        <p>(Note: equations not displayed)</p>
+<body class="main-app theme-light export-view">
+    <div class="app">
+        <div class="chat-container export-chat-container">
+            <header class="chat-header export-header">
+                <div class="header-content">
+                    <div class="header-brand">
+                        <span class="brand-abbrev">IDEA</span>
+                        <a class="brand-name export-brand-link" href="https://uhslc.soest.hawaii.edu/research/IDEA" target="_blank" rel="noreferrer noopener">Intelligent Data Exploring Assistant</a>
+                    </div>
+                    <div class="export-meta">
+                        <span class="export-title">Downloaded conversation</span>
+                        <span class="export-meta-text">${downloadedDisplay}</span>
+                        <span class="export-meta-text">(Equation rendering requires internet.)</span>
+                    </div>
+                </div>
+            </header>
+            
+            <div class="export-chat-panel">
+                <div class="chat-display">
+                    ${exportChat.innerHTML}
+                </div>
+            </div>
+        </div>
+        <div class="export-footer">
+            <p>
+                IDEA can make mistakes — check important results.
+                <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noreferrer noopener">[More info on GitHub]</a>
+            </p>
+        </div>
     </div>
     
-    <div class="chat-display">
-        ${chatClone.innerHTML}
-    </div>
-    
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+            },
+            svg: { fontCache: 'global' }
+        };
+    </script>
+    <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
     <script>
         // Add some interactivity for the exported file
         document.addEventListener('DOMContentLoaded', function() {
@@ -1312,52 +2356,60 @@ async function createSelfContainedHTML() {
                 }
             });
             
-            // Add click-to-copy functionality for code blocks
-            document.querySelectorAll('pre code').forEach(function(codeBlock) {
-                const pre = codeBlock.parentElement;
-                if (!pre.querySelector('.export-copy-btn')) {
+            const attachCopyButtons = (root = document) => {
+                root.querySelectorAll('pre code').forEach(codeBlock => {
+                    const pre = codeBlock.parentElement;
+                    if (!pre) return;
+                    if (pre.querySelector('.copy-button')) return;
                     const copyBtn = document.createElement('button');
-                    copyBtn.className = 'export-copy-btn';
-                    copyBtn.innerHTML = 'Copy';
-                    copyBtn.style.cssText = \`
-                        position: absolute;
-                        top: 8px;
-                        right: 8px;
-                        background: #007bff;
-                        color: white;
-                        border: none;
-                        border-radius: 4px;
-                        padding: 4px 8px;
-                        font-size: 12px;
-                        cursor: pointer;
-                        opacity: 0.8;
-                    \`;
-                    
-                    pre.style.position = 'relative';
+                    copyBtn.className = 'copy-button';
+                    copyBtn.type = 'button';
+                    copyBtn.textContent = 'Copy';
                     pre.appendChild(copyBtn);
-                    
                     copyBtn.addEventListener('click', function() {
                         navigator.clipboard.writeText(codeBlock.textContent).then(function() {
-                            copyBtn.innerHTML = 'Copied!';
+                            copyBtn.textContent = 'Copied!';
                             setTimeout(function() {
-                                copyBtn.innerHTML = 'Copy';
+                                copyBtn.textContent = 'Copy';
                             }, 2000);
                         }).catch(function() {
-                            // Fallback for older browsers
-                            const textarea = document.createElement('textarea');
-                            textarea.value = codeBlock.textContent;
-                            document.body.appendChild(textarea);
-                            textarea.select();
-                            document.execCommand('copy');
-                            document.body.removeChild(textarea);
-                            copyBtn.innerHTML = 'Copied!';
+                            copyBtn.textContent = 'Error';
                             setTimeout(function() {
-                                copyBtn.innerHTML = 'Copy';
+                                copyBtn.textContent = 'Copy';
                             }, 2000);
                         });
                     });
-                }
+                });
+            };
+            attachCopyButtons();
+
+            document.querySelectorAll('.stdout-button').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    const targetId = button.getAttribute('data-stdout-target');
+                    if (!targetId) return;
+                    const selector = '.stdout-panel[data-stdout-target="' + targetId + '"]';
+                    const panel = document.querySelector(selector);
+                    if (!panel) return;
+                    const isOpen = panel.classList.toggle('open');
+                    panel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+                    button.textContent = isOpen ? 'Hide Output' : 'Show Output';
+                    button.setAttribute('aria-expanded', String(isOpen));
+                    if (isOpen) {
+                        panel.scrollTop = panel.scrollHeight;
+                        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                        attachCopyButtons(panel);
+                    }
+                });
             });
+
+            const typesetMath = () => {
+                if (window.MathJax && MathJax.typesetPromise) {
+                    MathJax.typesetPromise().catch(err => console.warn('MathJax typeset error:', err));
+                } else if (!(window.MathJax && MathJax.typesetPromise)) {
+                    setTimeout(typesetMath, 150);
+                }
+            };
+            typesetMath();
         });
     </script>
 </body>

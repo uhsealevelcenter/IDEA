@@ -172,9 +172,9 @@ data/**
 !data/prompts/
 !data/prompts/*.json
 
-# Except, allow UHSLC metadata (GEOJSON)
-!data/metadata/
-!data/metadata/*.geojson   
+# # Except, allow UHSLC metadata (GEOJSON)
+# !data/metadata/
+# !data/metadata/*.geojson   
 
 # Except, allow UHSLC benchmarks (JSON files)
 !data/benchmarks/
@@ -204,3 +204,5 @@ Example_Output/
 
 # Untracked system prompts (legacy; pre-prompt management)
 utils/untracked_system_prompts/
+# Ignore local_scripts
+local_scripts/
