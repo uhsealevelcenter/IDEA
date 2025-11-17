@@ -202,5 +202,7 @@ node_modules/
 # Example Output
 Example_Output/
 
+# Untracked system prompts (legacy; pre-prompt management)
+utils/untracked_system_prompts/
 # Ignore local_scripts
 local_scripts/
