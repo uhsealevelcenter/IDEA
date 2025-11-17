@@ -1076,7 +1076,8 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         interpreter.llm.supports_vision = True
 
         ## OpenAI Models
-        interpreter.llm.model = "gpt-5-2025-08-07" # "Reasoning" model
+        interpreter.llm.model = "gpt-5.1-2025-11-13" # "Reasoning" model
+        #interpreter.llm.model = "gpt-5-2025-08-07" # "Reasoning" model
         #interpreter.llm.model = "gpt-4.1-2025-04-14" # "Intelligence" model
         #interpreter.llm.model = "gpt-4o-2024-11-20" # "Intelligence" model
         # interpreter.llm.model = "gpt-4o"
@@ -1091,8 +1092,9 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         # interpreter.llm.supports_functions = False  # Set to True if your model supports functions (optional)
 
         ## Specific settings for LLMs
-        # Reasoning models (e.g, GPT5)
-        interpreter.llm.reasoning_effort = "minimal" # GPT-5 "minimal" | "low" | "medium" | "high"
+        # Reasoning models (e.g, GPT5+)
+        interpreter.llm.reasoning_effort = "low" # GPT-5.1 "none" | "low" | "medium" | "high"
+        #interpreter.llm.reasoning_effort = "minimal" # GPT-5 "minimal" | "low" | "medium" | "high"
         interpreter.llm.temperature = 0.2 # Temperature not used by reasoning models, set to default (e.g., GPT-5)
         interpreter.llm.context_window = 400000 # GPT-5 (max context window)
         interpreter.llm.max_completion_tokens = 64000 # GPT-5 (128K, previously max_tokens, max tokens generated per request (prompt + max_completion_tokens can not exceed context_window)
