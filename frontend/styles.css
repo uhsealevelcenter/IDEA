@@ -1193,12 +1193,13 @@ pre {
     .prompt-actions {
         flex-direction: column;
         gap: 8px;
-        min-width: 100px;
+        min-width: 88px;
     }
 
     .prompt-actions button {
         min-width: 0;
-        height: 40px;
+        height: 38px;
+        padding: 0 12px;
     }
 
     #messageInput {
@@ -1242,6 +1243,14 @@ pre {
 
     .chat-footer {
         padding: 10px 10px 12px;
+    }
+
+    .prompt-actions {
+        min-width: 80px;
+    }
+
+    .prompt-actions button {
+        height: 36px;
     }
 }
 
