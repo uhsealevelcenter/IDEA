@@ -99,7 +99,12 @@
 
             <div class="mobile-overlay" id="mobileOverlay"></div>
 
-            <div id="chatDisplay" class="chat-display"></div>
+            <div id="chatDisplay" class="chat-display">
+                <div id="chatWelcome" class="chat-welcome">
+                    <p class="chat-welcome-title">How may I assist?</p>
+                    <div id="promptIdeasContainer"></div>
+                </div>
+            </div>
             <footer class="chat-footer">
                 <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.pdf,.md,.mat,.tif,.png,.jpg" style="display: none">
                 <div class="prompt-row">
@@ -135,8 +140,6 @@
                     </div>
                 </div>
             </footer>
-
-            <div id="promptIdeasContainer"></div>
             <div class="disclaimer-text">
                 <span>IDEA can make mistakes — check important results. Inputs may be used to improve services by UHSLC and/or LLM providers.</span>
                 <a href="https://github.com/uhsealevelcenter/IDEA"> [More info on GitHub]</a>
