@@ -311,44 +311,94 @@ async function removePendingAttachment(attachmentId) {
     }
 }
 
+function ensureWelcomeSection() {
+    if (!chatDisplay) return null;
+    let welcome = document.getElementById('chatWelcome');
+    if (!welcome) {
+        welcome = document.createElement('div');
+        welcome.id = 'chatWelcome';
+        welcome.className = 'chat-welcome';
+
+        const title = document.createElement('p');
+        title.className = 'chat-welcome-title';
+        title.textContent = 'How may I assist?';
+        welcome.appendChild(title);
+    }
+
+    if (!chatDisplay.contains(welcome)) {
+        chatDisplay.prepend(welcome);
+    }
+
+    let ideasContainer = document.getElementById('promptIdeasContainer');
+    if (!ideasContainer) {
+        ideasContainer = document.createElement('div');
+        ideasContainer.id = 'promptIdeasContainer';
+        welcome.appendChild(ideasContainer);
+    } else if (ideasContainer.parentElement !== welcome) {
+        ideasContainer.parentElement.removeChild(ideasContainer);
+        welcome.appendChild(ideasContainer);
+    }
+
+    return { welcome, ideasContainer };
+}
+
+function showWelcomeSection() {
+    const section = ensureWelcomeSection();
+    if (section?.welcome) {
+        section.welcome.classList.remove('hidden');
+    }
+    return section;
+}
+
+function hideWelcomeSection() {
+    const welcome = document.getElementById('chatWelcome');
+    if (welcome) {
+        welcome.classList.add('hidden');
+    }
+}
+
 function createPromptIdeas() {
-    const container = document.getElementById('promptIdeasContainer');
+    const section = showWelcomeSection();
+    const container = section?.ideasContainer;
+    if (!container) {
+        return null;
+    }
+
     container.innerHTML = '';
     const promptsContainer = document.createElement('div');
     promptsContainer.className = 'prompt-ideas';
     promptsContainer.id = 'promptIdeas';
-    console.log("Creating prompt ideas");
+
     const prompts = [
         {
-            title: "Explore data", // Explore Popular Datasets
-            prompt: "Explore a popular dataset for me, such as global population, climate data, or economic indicators. Load the data, clean it, and provide summaries or visualizations like interactive maps, time-series plots, or bar charts to help me understand the data better."
+            title: "Introduce", // Introduction to IDEA
+            prompt: "Introduce yourself and explain how you can help me."
         },
         {
-            title: "Analyze data", // Perform Data Analysis
-            prompt: "Analyze a dataset for me. Calculate trends, perform statistical analysis, or apply machine learning models. Show me the code, results, and visualizations step-by-step."
+            title: "Explore", // Explore Popular Datasets
+            prompt: "Explore a dataset for me, such as climate data. Load the data, analyze it, and provide visualizations like time series plots, or bar charts to help me understand the data better."
         },
         {
-            title: "Create maps", // Create Interactive Maps
-            prompt: "Create an interactive map for me using geospatial data. For example, map population density, weather patterns, or transportation networks. Fetch the data, process it, and generate a map I can interact with."
+            title: "Analyze", // Perform Data Analysis
+            prompt: "Analyze a dataset for me, such as climate data. Perform statistical analyses and calculate trends, then show me visualizations and your interpretation."
         },
         {
-            title: "Process files", // Generate Insights from Files
-            prompt: "Process and analyze a file I upload, such as a CSV, Excel, or JSON file. Clean the data, extract insights, and create visualizations or reports for me."
+            title: "Create", // Create Interactive Maps
+            prompt: "Create a web page for me to view the El Nino-Southern Oscillation index as a time series. Include background information and an interactive map showing locations of common ENSO indices. Save the web page so that I can open it here."
         },
+        // {
+        //     title: "Process", // Generate Insights from Files
+        //     prompt: "Process and analyze a file I upload, such as a CSV, Excel, or JSON file. Clean the data, extract insights, and create visualizations or reports for me."
+        // },
         {
-            title: "Brainstorm ideas", // Brainstorm Research Ideas
-            prompt: "Help me brainstorm research ideas using publicly available datasets. Suggest interesting questions, guide me through the initial analysis, and create visualizations to support the findings. If I don’t have a specific topic in mind, suggest one for me."
+            title: "Brainstorm", // Brainstorm Research Ideas
+            prompt: "Help me brainstorm research ideas using an available dataset such as about El Niño. Suggest interesting questions, guide me through the initial analysis, and create visualizations to support the findings."
         },
-        {
-            title: "Fetch data", // Interact with APIs
-            prompt: "Fetch data from an API or scrape data from a website (ethically and within legal boundaries). For example, retrieve weather data, stock prices, or other real-time information and analyze it for me."
-        }
+        // {
+        //     title: "Fetch", // Interact with APIs
+        //     prompt: "Fetch data from an API or scrape data from a website (ethically and within legal boundaries). For example, retrieve weather data, stock prices, or other real-time information and analyze it for me."
+        // }
     ];
-
-    const promptTitle = document.createElement('p');
-    // promptTitle.className = 'prompt-title';
-    // promptTitle.textContent = 'Prompt Ideas:';
-    promptsContainer.appendChild(promptTitle);
 
     prompts.forEach(prompt => {
         const button = document.createElement('button');
@@ -361,24 +411,32 @@ function createPromptIdeas() {
         });
         promptsContainer.appendChild(button);
     });
+
     container.appendChild(promptsContainer);
     return promptsContainer;
 }
 
 function showPromptIdeas() {
-    if (!promptIdeasVisible) {
-        const existingIdeas = document.getElementById('promptIdeas');
-        if (existingIdeas) existingIdeas.remove();
-        
-        createPromptIdeas();
+    const existingIdeas = document.getElementById('promptIdeas');
+    if (promptIdeasVisible && existingIdeas) {
+        showWelcomeSection();
+        return;
+    }
+
+    if (existingIdeas) existingIdeas.remove();
+
+    if (createPromptIdeas()) {
         promptIdeasVisible = true;
     }
 }
 
 function hidePromptIdeas() {
     const container = document.getElementById('promptIdeasContainer');
-    container.innerHTML = '';
+    if (container) {
+        container.innerHTML = '';
+    }
     promptIdeasVisible = false;
+    hideWelcomeSection();
 }
 
 showPromptIdeas();
@@ -1098,13 +1156,13 @@ async function clearChatHistory() {
         isGenerating = false;
         controller = null;
         chatDisplay.innerHTML = '';
+        promptIdeasVisible = false;
         resetStdoutState();
         
         // Clear uploaded files list in UI
         pendingUploads = [];
         renderPendingUploads();
 
-        appendSystemMessage("Begin a new conversation.");
         showPromptIdeas();
         resetTextareaHeight();
 
@@ -1626,7 +1684,13 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
 
     messages = [];
     chatDisplay.innerHTML = '';
+    promptIdeasVisible = false;
     resetStdoutState();
+    if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
+        showPromptIdeas();
+    } else {
+        hideWelcomeSection();
+    }
 
     rawMessages.forEach(rawMessage => {
         if (!rawMessage) {

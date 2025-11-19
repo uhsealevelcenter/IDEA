@@ -540,6 +540,29 @@ body.theme-dark .toggle-slider {
     scrollbar-width: thin;
 }
 
+.chat-welcome {
+    padding: 24px 18px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.chat-welcome-title {
+    font-weight: 700;
+    font-size: 1.15rem;
+    color: var(--text-primary);
+}
+
+.chat-welcome.hidden {
+    display: none;
+}
+
+@media (max-width: 720px) {
+    .chat-welcome {
+        padding: 18px 12px 6px;
+    }
+}
+
 .chat-display::-webkit-scrollbar {
     width: 12px;
 }
@@ -924,44 +947,40 @@ pre {
 #promptIdeasContainer {
     width: 100%;
     flex: 0 0 auto;
-    padding: 0 18px 12px;
-    margin-top: 4px;
 }
 
 #promptIdeasContainer:empty {
-    padding: 0;
-    margin-top: 0;
+    display: none;
 }
 
 .prompt-ideas {
-    margin: 4px;
-    padding: 12px;
-    background: var(--pill-bg);
-    border: 1px solid var(--pill-border);
-    border-radius: 16px;
-    text-align: center;
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
     gap: 10px;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    justify-content: flex-start;
 }
 
 .prompt-button {
-    padding: 10px 16px;
-    border-radius: 12px;
-    border: 1px solid var(--input-border);
-    background: var(--surface);
-    color: var(--text-primary);
+    padding: 10px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--user-border);
+    background: var(--user-bg);
+    color: var(--user-text);
+    font-weight: 600;
     cursor: pointer;
     font-size: 13px;
     transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
-    box-shadow: 0 12px 25px -20px rgba(1, 4, 5, 0.3);
+    box-shadow: 0 14px 28px -18px rgba(13, 110, 167, 0.85);
 }
 
 .prompt-button:hover {
     transform: translateY(-1px);
-    background: var(--assistant-bg);
-    border-color: var(--assistant-border);
+    background: var(--primary-hover);
+    border-color: var(--user-border);
 }
 
 .active-line {
