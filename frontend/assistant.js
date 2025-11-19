@@ -384,7 +384,7 @@ function createPromptIdeas() {
         },
         {
             title: "Create", // Create Interactive Maps
-            prompt: "Create a web page for me to view the El Nino-Southern Oscillation index as a time series. Include background information and an interactive map showing locations of common ENSO indices. Save the web page so that I can open it here."
+            prompt: "Create a web page for me to view the El Niño-Southern Oscillation index as a time series. Include background information and an interactive map showing locations of common ENSO indices. Save the web page so that I can open it here."
         },
         // {
         //     title: "Process", // Generate Insights from Files
