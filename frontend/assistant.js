@@ -1972,8 +1972,6 @@ function updateFilesList() {
 
 async function downloadConversation() {
     try {
-        appendSystemMessage("Preparing conversation for download...");
-        
         // Create a complete, self-contained HTML document
         const htmlContent = await createSelfContainedHTML();
         
@@ -1988,8 +1986,7 @@ async function downloadConversation() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
-        appendSystemMessage("Conversation downloaded successfully!");
+        appendSystemMessage("Conversation downloaded");
     } catch (err) {
         console.error("Download failed:", err);
         appendSystemMessage("Failed to download conversation. Please try again.");
@@ -2252,6 +2249,7 @@ async function createSelfContainedHTML() {
         .export-view .chat-container {
             height: auto;
             max-height: none;
+            overflow: visible;
         }
 
         .export-view .chat-display {
