@@ -95,7 +95,14 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
                 print(results)
             -- After web_search returns, summarize each unique item with title/topic, a brief summary, and a link.
 
+            CUSTOM FUNCTION USAGE NOTE (important):
+            -- The functions get_datetime, get_station_info, get_climate_index, and web_search are already defined in the host environment (do not import them).
+            -- Call them directly as plain functions, e.g.:
+                now = get_datetime()
+                info = get_station_info("Honolulu, HI")
+
             CRITICAL:
             -- Always attempt to execute code, unless the user explicitly requested otherwise (e.g., "show me example code").
-
+            -- When executing, format the tool call exactly as execute({{"language": "python", "code": "<code>"}}). Do not send bare dictionaries like {{"language": "...", "code": "..."}}.
+            -- Keep execution calls standalone: explanations go in a prior assistant message, and the execute(...) call is sent alone without mixing prose and code.
         """
