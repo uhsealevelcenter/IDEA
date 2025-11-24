@@ -714,6 +714,12 @@ body.theme-dark .toggle-slider {
     backdrop-filter: blur(2px);
 }
 
+@media (max-width: 720px) {
+    .message .content {
+        max-width: 92%;
+    }
+}
+
 .message.user .content {
     background: var(--user-bg);
     border-color: var(--user-border);
