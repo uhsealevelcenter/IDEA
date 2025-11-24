@@ -40,6 +40,7 @@ let conversationManager;
 
 // Authentication state
 let authToken = localStorage.getItem('authToken');
+let currentUserFirstName = null;
 
 // Authentication functions
 async function checkAuthentication() {
@@ -80,8 +81,48 @@ function getAuthHeaders() {
 
 function logout() {
     localStorage.removeItem('authToken');
-   authToken = null;
-   redirectToLogin();
+    authToken = null;
+    redirectToLogin();
+}
+
+function deriveFirstName(fullName) {
+    if (!fullName || typeof fullName !== 'string') return null;
+    const trimmed = fullName.trim();
+    if (!trimmed) return null;
+    return trimmed.split(/\s+/)[0] || null;
+}
+
+function getWelcomeGreeting() {
+    const name = currentUserFirstName || 'there';
+    return `What should we work on, ${name}?`;
+}
+
+function updateWelcomeTitle() {
+    const title = document.querySelector('#chatWelcome .chat-welcome-title');
+    if (title) {
+        title.textContent = getWelcomeGreeting();
+    }
+}
+
+async function loadCurrentUserProfile() {
+    try {
+        const response = await fetch(config.getEndpoints().userProfile, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                ...getAuthHeaders()
+            }
+        });
+        if (!response.ok) {
+            throw new Error('Failed to load user profile');
+        }
+        const profile = await response.json();
+        currentUserFirstName = deriveFirstName(profile.full_name);
+        updateWelcomeTitle();
+    } catch (error) {
+        console.warn('Unable to load user profile for greeting:', error);
+        currentUserFirstName = null;
+    }
 }
 
 function applyTheme() {
@@ -321,7 +362,7 @@ function ensureWelcomeSection() {
 
         const title = document.createElement('p');
         title.className = 'chat-welcome-title';
-        title.textContent = 'How may I assist?';
+        title.textContent = getWelcomeGreeting();
         welcome.appendChild(title);
     }
 
@@ -329,17 +370,9 @@ function ensureWelcomeSection() {
         chatDisplay.prepend(welcome);
     }
 
-    let ideasContainer = document.getElementById('promptIdeasContainer');
-    if (!ideasContainer) {
-        ideasContainer = document.createElement('div');
-        ideasContainer.id = 'promptIdeasContainer';
-        welcome.appendChild(ideasContainer);
-    } else if (ideasContainer.parentElement !== welcome) {
-        ideasContainer.parentElement.removeChild(ideasContainer);
-        welcome.appendChild(ideasContainer);
-    }
+    updateWelcomeTitle();
 
-    return { welcome, ideasContainer };
+    return { welcome };
 }
 
 function showWelcomeSection() {
@@ -357,13 +390,29 @@ function hideWelcomeSection() {
     }
 }
 
+function showPromptExamplesSection() {
+    const examplesSection = document.getElementById('promptExamplesSection');
+    if (examplesSection) {
+        examplesSection.classList.remove('hidden');
+    }
+}
+
+function hidePromptExamplesSection() {
+    const examplesSection = document.getElementById('promptExamplesSection');
+    if (examplesSection) {
+        examplesSection.classList.add('hidden');
+    }
+}
+
 function createPromptIdeas() {
-    const section = showWelcomeSection();
-    const container = section?.ideasContainer;
+    showWelcomeSection();
+    const container = document.getElementById('promptIdeasContainer');
     if (!container) {
+        hidePromptExamplesSection();
         return null;
     }
 
+    showPromptExamplesSection();
     container.innerHTML = '';
     const promptsContainer = document.createElement('div');
     promptsContainer.className = 'prompt-ideas';
@@ -420,6 +469,7 @@ function showPromptIdeas() {
     const existingIdeas = document.getElementById('promptIdeas');
     if (promptIdeasVisible && existingIdeas) {
         showWelcomeSection();
+        showPromptExamplesSection();
         return;
     }
 
@@ -437,6 +487,7 @@ function hidePromptIdeas() {
     }
     promptIdeasVisible = false;
     hideWelcomeSection();
+    hidePromptExamplesSection();
 }
 
 showPromptIdeas();
@@ -1733,6 +1784,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Initialize conversation manager
     resetStdoutState();
     conversationManager = new ConversationManager();
+
+    await loadCurrentUserProfile();
 
     try {
         const response = await fetch(config.getEndpoints().history, {
