@@ -31,6 +31,9 @@ let pendingConsoleParentId = null;
 const codeConsoleMap = new Map();
 let activeLineCodeId = null;
 let isActiveLineRunning = false;
+let userProfilePromise = null;
+let welcomeRenderPromise = null;
+let welcomeRendered = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
 const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
@@ -93,36 +96,73 @@ function deriveFirstName(fullName) {
 }
 
 function getWelcomeGreeting() {
-    const name = currentUserFirstName || 'there';
-    return `What should we work on, ${name}?`;
-}
-
-function updateWelcomeTitle() {
-    const title = document.querySelector('#chatWelcome .chat-welcome-title');
-    if (title) {
-        title.textContent = getWelcomeGreeting();
+    if (currentUserFirstName) {
+        return `What should we work on, ${currentUserFirstName}?`;
     }
+    return 'What should we work on?';
 }
 
 async function loadCurrentUserProfile() {
-    try {
-        const response = await fetch(config.getEndpoints().userProfile, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-                ...getAuthHeaders()
+    if (userProfilePromise) return userProfilePromise;
+    userProfilePromise = (async () => {
+        try {
+            const response = await fetch(config.getEndpoints().userProfile, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...getAuthHeaders()
+                }
+            });
+            if (!response.ok) {
+                throw new Error('Failed to load user profile');
             }
-        });
-        if (!response.ok) {
-            throw new Error('Failed to load user profile');
+            const profile = await response.json();
+            currentUserFirstName = deriveFirstName(profile.full_name);
+        } catch (error) {
+            console.warn('Unable to load user profile for greeting:', error);
+            currentUserFirstName = null;
         }
-        const profile = await response.json();
-        currentUserFirstName = deriveFirstName(profile.full_name);
-        updateWelcomeTitle();
-    } catch (error) {
-        console.warn('Unable to load user profile for greeting:', error);
-        currentUserFirstName = null;
+    })();
+    return userProfilePromise;
+}
+
+async function waitForNameOrTimeout(timeoutMs = 1000) {
+    let resolvedName = null;
+    const timeout = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    const profile = loadCurrentUserProfile().then(() => {
+        resolvedName = currentUserFirstName;
+    }).catch(() => {
+        resolvedName = null;
+    });
+    await Promise.race([profile, timeout]);
+    return resolvedName || currentUserFirstName || null;
+}
+
+async function renderWelcomeGreeting() {
+    // If we've already rendered once, just ensure it's visible and up to date.
+    if (welcomeRendered) {
+        const section = ensureWelcomeSection();
+        const title = section?.welcome?.querySelector('.chat-welcome-title');
+        if (title) {
+            title.textContent = getWelcomeGreeting();
+            section.welcome.classList.remove('hidden');
+        }
+        return Promise.resolve();
     }
+    if (welcomeRenderPromise) return welcomeRenderPromise;
+    welcomeRenderPromise = (async () => {
+        const name = await waitForNameOrTimeout(1000);
+        const greeting = name ? `What should we work on, ${name}?` : 'What should we work on?';
+        const section = ensureWelcomeSection();
+        const title = section?.welcome?.querySelector('.chat-welcome-title');
+        if (!section || !title) return;
+        title.textContent = greeting;
+        section.welcome.classList.remove('hidden');
+        welcomeRendered = true;
+    })().finally(() => {
+        welcomeRenderPromise = null;
+    });
+    return welcomeRenderPromise;
 }
 
 function applyTheme() {
@@ -359,28 +399,38 @@ function ensureWelcomeSection() {
         welcome = document.createElement('div');
         welcome.id = 'chatWelcome';
         welcome.className = 'chat-welcome';
+    }
+
+    let bubble = welcome.querySelector('.chat-welcome-bubble');
+    if (!bubble) {
+        welcome.innerHTML = '';
+
+        bubble = document.createElement('div');
+        bubble.className = 'message assistant chat-welcome-bubble';
+
+        const content = document.createElement('div');
+        content.className = 'content chat-welcome-content';
 
         const title = document.createElement('p');
         title.className = 'chat-welcome-title';
-        title.textContent = getWelcomeGreeting();
-        welcome.appendChild(title);
+        title.textContent = '';
+
+        content.appendChild(title);
+        bubble.appendChild(content);
+        welcome.appendChild(bubble);
     }
+
+    welcome.classList.add('hidden');
 
     if (!chatDisplay.contains(welcome)) {
         chatDisplay.prepend(welcome);
     }
 
-    updateWelcomeTitle();
-
     return { welcome };
 }
 
 function showWelcomeSection() {
-    const section = ensureWelcomeSection();
-    if (section?.welcome) {
-        section.welcome.classList.remove('hidden');
-    }
-    return section;
+    return ensureWelcomeSection();
 }
 
 function hideWelcomeSection() {
@@ -405,7 +455,7 @@ function hidePromptExamplesSection() {
 }
 
 function createPromptIdeas() {
-    showWelcomeSection();
+    renderWelcomeGreeting();
     const container = document.getElementById('promptIdeasContainer');
     if (!container) {
         hidePromptExamplesSection();
@@ -468,7 +518,7 @@ function createPromptIdeas() {
 function showPromptIdeas() {
     const existingIdeas = document.getElementById('promptIdeas');
     if (promptIdeasVisible && existingIdeas) {
-        showWelcomeSection();
+        renderWelcomeGreeting();
         showPromptExamplesSection();
         return;
     }
@@ -1785,7 +1835,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     resetStdoutState();
     conversationManager = new ConversationManager();
 
-    await loadCurrentUserProfile();
+    loadCurrentUserProfile();
 
     try {
         const response = await fetch(config.getEndpoints().history, {
