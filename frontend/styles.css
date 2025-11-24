@@ -953,6 +953,27 @@ pre {
     display: none;
 }
 
+.prompt-examples-section {
+    padding: 12px 18px 10px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+}
+
+.prompt-examples-section.hidden {
+    display: none;
+}
+
+.prompt-examples-title {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.prompt-examples-section .prompt-ideas {
+    margin-top: 2px;
+}
+
 .prompt-ideas {
     display: flex;
     flex-wrap: wrap;
