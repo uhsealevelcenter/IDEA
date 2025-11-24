@@ -547,19 +547,32 @@ body.theme-dark .toggle-slider {
     gap: 12px;
 }
 
-.chat-welcome-title {
-    font-weight: 700;
-    font-size: 1.15rem;
-    color: var(--text-primary);
-}
-
 .chat-welcome.hidden {
     display: none;
+}
+
+.chat-welcome-bubble {
+    min-width: 240px;
+}
+
+.chat-welcome-content {
+    padding: 14px 18px;
+}
+
+.chat-welcome-title {
+    margin: 0;
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--assistant-text);
 }
 
 @media (max-width: 720px) {
     .chat-welcome {
         padding: 18px 12px 6px;
+    }
+
+    .chat-welcome-bubble {
+        min-width: 220px;
     }
 }
 
