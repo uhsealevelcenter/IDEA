@@ -104,7 +104,7 @@ class PromptManager:
                     "- Filter: `properties.uhslc_id_fmt == \"{station_id}\"`\n"
                     "- Use `geometry.coordinates[:2]` for [lon, lat]; do not use `properties.lat/lon`\n"
                     "- Benchmark fields: `benchmark`, `description`, `level_date`, `type`, `level` (mm or “N/A”)\n"
-                    "- Photos: build URLs as  \n"
+                    "- Photos: properties.photo_files may be a list of strings or dicts; for dicts, filename 'file'; build URLs as  \n"
                     "`http://uhslc.soest.hawaii.edu/stations/images/benchmark_photos/{filename}`\n"
                     "-- Show up to 3 thumbnails\n"
                     "- Mapping: allow Esri World Imagery; center using station or average benchmark coords\n"
