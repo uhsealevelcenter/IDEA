@@ -29,17 +29,45 @@ def fractional_year_to_datetime(year):
     days_in_year = (datetime(year_int + 1, 1, 1) - start_of_year).days
     return start_of_year + timedelta(days=fraction * days_in_year)
 
+# def get_station_info(station_query):
+#     # LiteLLM 
+#     station_query_response = completion(
+#         model="gpt-5-mini",
+#         messages=[
+#             {"role": "system", "content": station_list_appendix},
+#             {"role": "user", "content": station_query}
+#         ],
+#         stream=False
+#     )
+#     return {"station_query_response": station_query_response.choices[0].message.content}
+
+def extract_text_from_station_response(response_dict):
+    r = response_dict.get("station_query_response")
+    if r is None or not hasattr(r, "output"):
+        return None
+
+    for item in r.output:
+        if getattr(item, "type", None) == "message":
+            for c in getattr(item, "content", []):
+                if hasattr(c, "text"):
+                    return c.text
+
+    return None
+
 def get_station_info(station_query):
     # LiteLLM 
-    station_query_response = completion(
-        model="gpt-5-mini",
-        messages=[
+    station_query_response = responses(
+        model="openai/gpt-5-mini-2025-08-07",
+        reasoning={"effort": "low"},
+        input=[
             {"role": "system", "content": station_list_appendix},
             {"role": "user", "content": station_query}
         ],
         stream=False
     )
-    return {"station_query_response": station_query_response.choices[0].message.content}
+    return extract_text_from_station_response(
+        {"station_query_response": station_query_response}
+    )
 
 def get_climate_index(climate_index_name):
     # Parameters:
