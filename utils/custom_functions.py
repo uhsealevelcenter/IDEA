@@ -6,6 +6,7 @@ import numpy as np
 import requests
 from io import StringIO
 from datetime import datetime, timedelta, timezone
+from litellm import responses 
 from litellm import completion 
 from utils.station_list_appendix import station_list_appendix # Station List Appendix (id and name)
 import os
@@ -154,15 +155,50 @@ def get_climate_index(climate_index_name):
         return data[["time", "value"]]
     raise ValueError(f"Unhandled climate index: {climate_index_name}")
 
+# def web_search(web_query):
+#     # LiteLLM 
+#     web_query_response = completion(
+#         model="gpt-4o-search-preview",
+#         messages=[
+#             {"role": "system", "content": "You are a concise research assistant."},
+#             {"role": "user", "content": web_query}
+#         ],
+#         stream=False
+#     )
+#     return {"web_query_response": web_query_response.choices[0].message.content}    
+
+def extract_web_query_response(web_query_response):
+    # Find the first output message
+    output_msg = next(
+        (item for item in web_query_response.output if getattr(item, "type", None) == "message"),
+        None
+    )
+    if not output_msg:
+        return {"content": None, "urls": []}
+
+    texts, urls = [], []
+    for part in getattr(output_msg, "content", []):
+        if getattr(part, "text", None):
+            texts.append(part.text)
+            for ann in getattr(part, "annotations", []) or []:
+                if getattr(ann, "type", "") == "url_citation":
+                    urls.append({"title": ann.title, "url": ann.url})
+    return {"content": "\\n\\n".join(texts) if texts else None, "urls": urls}
+
 def web_search(web_query):
-    # LiteLLM 
-    web_query_response = completion(
-        model="gpt-4o-search-preview",
-        messages=[
-            {"role": "system", "content": "You are a concise research assistant."},
+    web_query_response = responses(
+        model="openai/gpt-5-mini-2025-08-07",
+        reasoning={"effort": "low"},
+        input=[
+            {"role": "system", "content": "You are a concise research assistant that only searches the web and only responds with search results."},
             {"role": "user", "content": web_query}
         ],
+        tools=[{
+            "type": "web_search"  # enables web search with default medium context size
+        }],
         stream=False
     )
-    return {"web_query_response": web_query_response.choices[0].message.content}    
+    #return {"web_query_response": web_query_response}
+    return extract_web_query_response(web_query_response)
+    
 """
