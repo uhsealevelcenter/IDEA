@@ -7,19 +7,35 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
     if mcp_tools:
         mcp_section = """
 
-4. MCP TOOLS (Model Context Protocol):
-You have access to the following MCP tools from external services:
+5. MCP TOOLS (Model Context Protocol):
+You have access to external MCP tools via the call_mcp_tool function. Available tools:
 
 """ + "\n".join(mcp_tools) + """
 
-How to use MCP tools in this chat:
-- Do NOT import or execute MCP code yourself.
-- Instead, clearly request the operation (e.g., “Use the GitHub MCP to list my repositories”).
-- The system will automatically invoke relevant MCP tools and stream the results as 'computer' messages.
-- Prefer MCP tools over writing your own implementation for the same data.
+How to use MCP tools:
+- Use the call_mcp_tool(tool_id, **kwargs) function directly in your Python code.
+- The tool_id is the function name shown above (e.g., 'mcp_abc123def456_search_repositories').
+- Pass tool arguments as keyword arguments.
 
-Result format:
-- Results may arrive as JSON or as text containing JSON; if JSON is embedded as text, parse it before using.
+Example usage:
+    # List repositories
+    result = call_mcp_tool('mcp_abc123def456_list_repositories', owner='username')
+    print(result)
+    
+    # Search for datasets
+    result = call_mcp_tool('mcp_abc123def456_search_datasets', query='sea surface temperature')
+    print(result)
+
+To discover available tools dynamically:
+    tools = list_mcp_tools()
+    for tool_id, info in tools.items():
+        print(f"{tool_id}: {info['description']}")
+
+Important notes:
+- The functions call_mcp_tool and list_mcp_tools are already available in your environment (do not import them).
+- Prefer MCP tools over writing your own implementation for the same data source.
+- MCP tool results are returned as dictionaries; parse them to extract the data you need.
+- If a tool call fails, the result will contain an 'error' key with details.
 """
     return f"""
             The host is {host}.
@@ -116,10 +132,11 @@ Result format:
             -- After web_search returns, summarize each unique item with title/topic, a brief summary, and a link.
 
             CUSTOM FUNCTION USAGE NOTE (important):
-            -- The functions get_datetime, get_station_info, get_climate_index, and web_search are already defined in the host environment (do not import them).
+            -- The functions get_datetime, get_station_info, get_climate_index, web_search, call_mcp_tool, and list_mcp_tools are already defined in the host environment (do not import them).
             -- Call them directly as plain functions, e.g.:
                 now = get_datetime()
                 info = get_station_info("Honolulu, HI")
+                mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
 
             CRITICAL:
             -- Always attempt to execute code, unless the user explicitly requested otherwise (e.g., "show me example code").
