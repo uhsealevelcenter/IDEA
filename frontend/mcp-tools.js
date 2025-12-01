@@ -396,9 +396,8 @@
         elements.toolArguments.disabled = false;
         elements.runToolButton.disabled = false;
 
-        if (!elements.toolArguments.value.trim()) {
-            elements.toolArguments.value = buildArgumentTemplate(state.selectedTool) || '{}';
-        }
+        // Always update arguments when a new tool is selected
+        elements.toolArguments.value = buildArgumentTemplate(state.selectedTool) || '{}';
     }
 
     function updateResourceActionPanel() {

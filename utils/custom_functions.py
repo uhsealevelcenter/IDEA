@@ -11,6 +11,9 @@ from litellm import completion
 from utils.station_list_appendix import station_list_appendix # Station List Appendix (id and name)
 import os
 
+# MCP Tools Support
+from mcp_tools import call_mcp_tool, list_available_tools as list_mcp_tools
+
 def get_datetime():
     now_utc = datetime.now(timezone.utc)
     if now_utc.microsecond >= 500_000:

@@ -14,21 +14,22 @@ def call_mcp_tool(tool_id: str, **kwargs) -> Dict[str, Any]:
     """
     Call an MCP tool by its ID.
 
-    The tool_id format is: mcp_{connection_id}_{tool_name}
+    The tool_id format is: mcp_{connection_id_prefix}_{tool_name}
+    where connection_id_prefix is the first 12 characters of the connection UUID hex.
 
     Examples:
         # List ERDDAP servers
-        result = call_mcp_tool('mcp_27cf12b7b85f4ab9ac48edb82cbd2eb1_list_servers')
+        result = call_mcp_tool('mcp_27cf12b7b85f_list_servers')
 
         # Search for datasets
         result = call_mcp_tool(
-            'mcp_27cf12b7b85f4ab9ac48edb82cbd2eb1_search_datasets',
+            'mcp_27cf12b7b85f_search_datasets',
             query='sea surface temperature',
             server_url='https://coastwatch.pfeg.noaa.gov/erddap'
         )
 
     Args:
-        tool_id: The MCP tool identifier (format: mcp_{connection_id}_{tool_name})
+        tool_id: The MCP tool identifier (format: mcp_{connection_id_prefix}_{tool_name})
         **kwargs: Tool-specific arguments
 
     Returns:
@@ -42,30 +43,39 @@ def call_mcp_tool(tool_id: str, **kwargs) -> Dict[str, Any]:
     if len(parts) != 2:
         return {"error": f"Invalid tool_id format: {tool_id}. Expected format: mcp_{{connection_id}}_{{tool_name}}"}
 
-    connection_id_str, tool_name = parts
-
-    # Convert connection_id back to UUID format (add hyphens)
-    if len(connection_id_str) != 32:
-        return {"error": f"Invalid connection ID in tool_id: {connection_id_str}"}
-
-    connection_id_formatted = f"{connection_id_str[:8]}-{connection_id_str[8:12]}-{connection_id_str[12:16]}-{connection_id_str[16:20]}-{connection_id_str[20:]}"
-
-    try:
-        connection_uuid = UUID(connection_id_formatted)
-    except ValueError as e:
-        return {"error": f"Invalid UUID in tool_id: {connection_id_formatted}: {e}"}
+    connection_id_prefix, tool_name = parts
 
     # Import here to avoid circular dependencies
     from models import MCPConnection
-    from sqlmodel import Session
+    from sqlmodel import Session, select
     from core.db import engine
     from core.mcp_manager import mcp_manager
+    import crud
 
-    # Query database for the connection
+    # Query database for the connection by prefix matching
     with Session(engine) as session:
-        connection = session.get(MCPConnection, connection_uuid)
+        connection = None
+        
+        # Try full UUID first (32 chars)
+        if len(connection_id_prefix) == 32:
+            connection_id_formatted = f"{connection_id_prefix[:8]}-{connection_id_prefix[8:12]}-{connection_id_prefix[12:16]}-{connection_id_prefix[16:20]}-{connection_id_prefix[20:]}"
+            try:
+                connection_uuid = UUID(connection_id_formatted)
+                connection = session.get(MCPConnection, connection_uuid)
+            except ValueError:
+                pass
+        
+        # Fall back to prefix matching (12 chars)
+        if connection is None and len(connection_id_prefix) >= 12:
+            # Get all active connections and find one that matches the prefix
+            connections = crud.list_active_mcp_connections(session=session)
+            for conn in connections:
+                if conn.id.hex[:len(connection_id_prefix)] == connection_id_prefix:
+                    connection = conn
+                    break
+        
         if not connection:
-            return {"error": f"MCP connection not found: {connection_uuid}"}
+            return {"error": f"MCP connection not found for prefix: {connection_id_prefix}"}
 
         if not connection.is_active:
             return {"error": f"MCP connection is inactive: {connection.name}"}
@@ -128,7 +138,12 @@ def list_available_tools() -> Dict[str, Any]:
                     if not tool_name:
                         continue
 
-                    tool_id = f"mcp_{connection.id.hex}_{tool_name}".replace("-", "_")
+                    # Use 12-char prefix format consistent with gather_available_mcp_tools
+                    import re
+                    prefix = f"mcp_{connection.id.hex[:12]}_"
+                    slug = re.sub(r"[^a-zA-Z0-9_]", "_", str(tool_name)).lower()
+                    tool_id = f"{prefix}{slug}"
+                    
                     tools_info[tool_id] = {
                         "connection_id": str(connection.id),
                         "connection_name": connection.name,
