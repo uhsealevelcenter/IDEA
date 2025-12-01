@@ -1512,14 +1512,15 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
                 }
                 interpreter_messages.append(interpreter_msg)
             elif msg.get("role") == "computer":
-                # For computer messages, convert to assistant with appropriate type
+                # For computer messages, convert to user with appropriate type (computer outputs are shown as user messages)
                 msg_type = msg.get("message_type", "message")
                 if msg_type == "console":
                     # Skip console messages entirely as they're not needed for context
+                    # (Python environment state is not preserved between sessions)
                     continue
                 else:
                     interpreter_msg = {
-                        "role": "assistant",
+                        "role": "user", # "assistant", # Changed to "user" as assistant role does not support image output
                         "type": msg_type if msg_type in ["code", "message", "image"] else "message",
                         "content": msg.get("content", "")
                     }

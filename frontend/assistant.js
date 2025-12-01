@@ -31,6 +31,9 @@ let pendingConsoleParentId = null;
 const codeConsoleMap = new Map();
 let activeLineCodeId = null;
 let isActiveLineRunning = false;
+let userProfilePromise = null;
+let welcomeRenderPromise = null;
+let welcomeRendered = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
 const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
@@ -40,6 +43,7 @@ let conversationManager;
 
 // Authentication state
 let authToken = localStorage.getItem('authToken');
+let currentUserFirstName = null;
 
 // Authentication functions
 async function checkAuthentication() {
@@ -80,8 +84,85 @@ function getAuthHeaders() {
 
 function logout() {
     localStorage.removeItem('authToken');
-   authToken = null;
-   redirectToLogin();
+    authToken = null;
+    redirectToLogin();
+}
+
+function deriveFirstName(fullName) {
+    if (!fullName || typeof fullName !== 'string') return null;
+    const trimmed = fullName.trim();
+    if (!trimmed) return null;
+    return trimmed.split(/\s+/)[0] || null;
+}
+
+function getWelcomeGreeting() {
+    if (currentUserFirstName) {
+        return `What should we work on, ${currentUserFirstName}?`;
+    }
+    return 'What should we work on?';
+}
+
+async function loadCurrentUserProfile() {
+    if (userProfilePromise) return userProfilePromise;
+    userProfilePromise = (async () => {
+        try {
+            const response = await fetch(config.getEndpoints().userProfile, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...getAuthHeaders()
+                }
+            });
+            if (!response.ok) {
+                throw new Error('Failed to load user profile');
+            }
+            const profile = await response.json();
+            currentUserFirstName = deriveFirstName(profile.full_name);
+        } catch (error) {
+            console.warn('Unable to load user profile for greeting:', error);
+            currentUserFirstName = null;
+        }
+    })();
+    return userProfilePromise;
+}
+
+async function waitForNameOrTimeout(timeoutMs = 1000) {
+    let resolvedName = null;
+    const timeout = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    const profile = loadCurrentUserProfile().then(() => {
+        resolvedName = currentUserFirstName;
+    }).catch(() => {
+        resolvedName = null;
+    });
+    await Promise.race([profile, timeout]);
+    return resolvedName || currentUserFirstName || null;
+}
+
+async function renderWelcomeGreeting() {
+    // If we've already rendered once, just ensure it's visible and up to date.
+    if (welcomeRendered) {
+        const section = ensureWelcomeSection();
+        const title = section?.welcome?.querySelector('.chat-welcome-title');
+        if (title) {
+            title.textContent = getWelcomeGreeting();
+            section.welcome.classList.remove('hidden');
+        }
+        return Promise.resolve();
+    }
+    if (welcomeRenderPromise) return welcomeRenderPromise;
+    welcomeRenderPromise = (async () => {
+        const name = await waitForNameOrTimeout(1000);
+        const greeting = name ? `What should we work on, ${name}?` : 'What should we work on?';
+        const section = ensureWelcomeSection();
+        const title = section?.welcome?.querySelector('.chat-welcome-title');
+        if (!section || !title) return;
+        title.textContent = greeting;
+        section.welcome.classList.remove('hidden');
+        welcomeRendered = true;
+    })().finally(() => {
+        welcomeRenderPromise = null;
+    });
+    return welcomeRenderPromise;
 }
 
 function applyTheme() {
@@ -311,44 +392,112 @@ async function removePendingAttachment(attachmentId) {
     }
 }
 
+function ensureWelcomeSection() {
+    if (!chatDisplay) return null;
+    let welcome = document.getElementById('chatWelcome');
+    if (!welcome) {
+        welcome = document.createElement('div');
+        welcome.id = 'chatWelcome';
+        welcome.className = 'chat-welcome';
+    }
+
+    let bubble = welcome.querySelector('.chat-welcome-bubble');
+    if (!bubble) {
+        welcome.innerHTML = '';
+
+        bubble = document.createElement('div');
+        bubble.className = 'message assistant chat-welcome-bubble';
+
+        const content = document.createElement('div');
+        content.className = 'content chat-welcome-content';
+
+        const title = document.createElement('p');
+        title.className = 'chat-welcome-title';
+        title.textContent = '';
+
+        content.appendChild(title);
+        bubble.appendChild(content);
+        welcome.appendChild(bubble);
+    }
+
+    welcome.classList.add('hidden');
+
+    if (!chatDisplay.contains(welcome)) {
+        chatDisplay.prepend(welcome);
+    }
+
+    return { welcome };
+}
+
+function showWelcomeSection() {
+    return ensureWelcomeSection();
+}
+
+function hideWelcomeSection() {
+    const welcome = document.getElementById('chatWelcome');
+    if (welcome) {
+        welcome.classList.add('hidden');
+    }
+}
+
+function showPromptExamplesSection() {
+    const examplesSection = document.getElementById('promptExamplesSection');
+    if (examplesSection) {
+        examplesSection.classList.remove('hidden');
+    }
+}
+
+function hidePromptExamplesSection() {
+    const examplesSection = document.getElementById('promptExamplesSection');
+    if (examplesSection) {
+        examplesSection.classList.add('hidden');
+    }
+}
+
 function createPromptIdeas() {
+    renderWelcomeGreeting();
     const container = document.getElementById('promptIdeasContainer');
+    if (!container) {
+        hidePromptExamplesSection();
+        return null;
+    }
+
+    showPromptExamplesSection();
     container.innerHTML = '';
     const promptsContainer = document.createElement('div');
     promptsContainer.className = 'prompt-ideas';
     promptsContainer.id = 'promptIdeas';
-    console.log("Creating prompt ideas");
+
     const prompts = [
         {
-            title: "Explore data", // Explore Popular Datasets
-            prompt: "Explore a popular dataset for me, such as global population, climate data, or economic indicators. Load the data, clean it, and provide summaries or visualizations like interactive maps, time-series plots, or bar charts to help me understand the data better."
+            title: "Introduce", // Introduction to IDEA
+            prompt: "Introduce yourself and explain how you can help me."
         },
         {
-            title: "Analyze data", // Perform Data Analysis
-            prompt: "Analyze a dataset for me. Calculate trends, perform statistical analysis, or apply machine learning models. Show me the code, results, and visualizations step-by-step."
+            title: "Explore", // Explore Popular Datasets
+            prompt: "Explore a dataset for me, such as climate data. Load the data, analyze it, and provide visualizations like time series plots, or bar charts to help me understand the data better."
         },
         {
-            title: "Create maps", // Create Interactive Maps
-            prompt: "Create an interactive map for me using geospatial data. For example, map population density, weather patterns, or transportation networks. Fetch the data, process it, and generate a map I can interact with."
+            title: "Analyze", // Perform Data Analysis
+            prompt: "Analyze a dataset for me, such as climate data. Perform statistical analyses and calculate trends, then show me visualizations and your interpretation."
         },
         {
-            title: "Process files", // Generate Insights from Files
-            prompt: "Process and analyze a file I upload, such as a CSV, Excel, or JSON file. Clean the data, extract insights, and create visualizations or reports for me."
+            title: "Create", // Create Interactive Maps
+            prompt: "Create a web page for me to view the El Niño-Southern Oscillation index as a time series. Include background information and an interactive map showing locations of common ENSO indices. Save the web page so that I can open it here."
         },
+        // {
+        //     title: "Process", // Generate Insights from Files
+        //     prompt: "Process and analyze a file I upload, such as a CSV, Excel, or JSON file. Clean the data, extract insights, and create visualizations or reports for me."
+        // },
         {
-            title: "Brainstorm ideas", // Brainstorm Research Ideas
-            prompt: "Help me brainstorm research ideas using publicly available datasets. Suggest interesting questions, guide me through the initial analysis, and create visualizations to support the findings. If I don’t have a specific topic in mind, suggest one for me."
+            title: "Brainstorm", // Brainstorm Research Ideas
+            prompt: "Help me brainstorm research ideas using an available dataset such as about El Niño. Suggest interesting questions, guide me through the initial analysis, and create visualizations to support the findings."
         },
-        {
-            title: "Fetch data", // Interact with APIs
-            prompt: "Fetch data from an API or scrape data from a website (ethically and within legal boundaries). For example, retrieve weather data, stock prices, or other real-time information and analyze it for me."
-        }
+        // {
+        //     title: "Fetch", // Interact with APIs
+        //     prompt: "Fetch data from an API or scrape data from a website (ethically and within legal boundaries). For example, retrieve weather data, stock prices, or other real-time information and analyze it for me."
+        // }
     ];
-
-    const promptTitle = document.createElement('p');
-    // promptTitle.className = 'prompt-title';
-    // promptTitle.textContent = 'Prompt Ideas:';
-    promptsContainer.appendChild(promptTitle);
 
     prompts.forEach(prompt => {
         const button = document.createElement('button');
@@ -361,24 +510,34 @@ function createPromptIdeas() {
         });
         promptsContainer.appendChild(button);
     });
+
     container.appendChild(promptsContainer);
     return promptsContainer;
 }
 
 function showPromptIdeas() {
-    if (!promptIdeasVisible) {
-        const existingIdeas = document.getElementById('promptIdeas');
-        if (existingIdeas) existingIdeas.remove();
-        
-        createPromptIdeas();
+    const existingIdeas = document.getElementById('promptIdeas');
+    if (promptIdeasVisible && existingIdeas) {
+        renderWelcomeGreeting();
+        showPromptExamplesSection();
+        return;
+    }
+
+    if (existingIdeas) existingIdeas.remove();
+
+    if (createPromptIdeas()) {
         promptIdeasVisible = true;
     }
 }
 
 function hidePromptIdeas() {
     const container = document.getElementById('promptIdeasContainer');
-    container.innerHTML = '';
+    if (container) {
+        container.innerHTML = '';
+    }
     promptIdeasVisible = false;
+    hideWelcomeSection();
+    hidePromptExamplesSection();
 }
 
 showPromptIdeas();
@@ -1155,13 +1314,13 @@ async function clearChatHistory() {
         isGenerating = false;
         controller = null;
         chatDisplay.innerHTML = '';
+        promptIdeasVisible = false;
         resetStdoutState();
         
         // Clear uploaded files list in UI
         pendingUploads = [];
         renderPendingUploads();
 
-        appendSystemMessage("Begin a new conversation.");
         showPromptIdeas();
         resetTextareaHeight();
 
@@ -1683,7 +1842,13 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
 
     messages = [];
     chatDisplay.innerHTML = '';
+    promptIdeasVisible = false;
     resetStdoutState();
+    if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
+        showPromptIdeas();
+    } else {
+        hideWelcomeSection();
+    }
 
     rawMessages.forEach(rawMessage => {
         if (!rawMessage) {
@@ -1726,6 +1891,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Initialize conversation manager
     resetStdoutState();
     conversationManager = new ConversationManager();
+
+    loadCurrentUserProfile();
 
     try {
         const response = await fetch(config.getEndpoints().history, {
@@ -1965,8 +2132,6 @@ function updateFilesList() {
 
 async function downloadConversation() {
     try {
-        appendSystemMessage("Preparing conversation for download...");
-        
         // Create a complete, self-contained HTML document
         const htmlContent = await createSelfContainedHTML();
         
@@ -1981,8 +2146,7 @@ async function downloadConversation() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
-        appendSystemMessage("Conversation downloaded successfully!");
+        appendSystemMessage("Conversation downloaded");
     } catch (err) {
         console.error("Download failed:", err);
         appendSystemMessage("Failed to download conversation. Please try again.");
@@ -2245,6 +2409,7 @@ async function createSelfContainedHTML() {
         .export-view .chat-container {
             height: auto;
             max-height: none;
+            overflow: visible;
         }
 
         .export-view .chat-display {
