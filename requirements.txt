@@ -636,7 +636,7 @@ numpy==1.26.4
     #   xarray
     #   yfinance
     #   zarr
-open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@166cd2cd42371eb26f37afcc27a9d888583b3fe2
+open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@efecd4a2ed369486c4bafd6fbac53987d8c6846b
     # via idea
 openai==1.102.0
     # via
@@ -1064,6 +1064,8 @@ statsmodels==0.14.5
 streamlit==1.39.0
     # via idea
 tabulate==0.9.0
+    # via idea
+tadc @ git+https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator@ab1cf683fd96c2db9504ca57f1a4f68312544bf5
     # via idea
 tantivy==0.24.0
     # via paper-qa
