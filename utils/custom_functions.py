@@ -231,5 +231,71 @@ def web_search(web_query):
     )
     #return {"web_query_response": web_query_response}
     return extract_web_query_response(web_query_response)
+
+def query_knowledge_base(query, user_id):
+    \"\"\"Query the user's knowledge base using PaperQA.
+    
+    This function uses the persistent index approach to query papers in the user's
+    knowledge base. It preserves media content for future extraction.
+    
+    Parameters:
+        query (str): The question to ask about the papers.
+        user_id (str): The user's ID to load their specific paper directory.
+    
+    Returns:
+        str: The formatted answer with references from the knowledge base.
+    
+    Note for future: Will eventually return deduplicated base64 image dataUrls 
+    from context.text.media along with the answer.
+    \"\"\"
+    import asyncio
+    from paperqa import Docs
+    from paperqa.agents.search import get_directory_index
+    from utils.pqa_multi_tenant import get_user_settings
+    
+    async def _query_async():
+        # Step 1: Get user-specific settings
+        settings = get_user_settings(user_id)
+        
+        # Step 2: Build/reuse the persistent index
+        # This will persist the index to disk and reuse it on subsequent calls
+        index = await get_directory_index(settings=settings)
+        
+        # Check if there are any indexed files
+        index_files = await index.index_files
+        if not index_files:
+            return "No papers found in your knowledge base. Please upload papers first."
+        
+        # Step 3: Create a Docs object and add documents from the index
+        docs = Docs()
+        paper_directory = settings.agent.index.paper_directory
+        
+        for file_path in index_files.keys():
+            full_path = paper_directory / file_path
+            if full_path.exists():
+                await docs.aadd(full_path, settings=settings)
+        
+        # Step 4: Query with docs.aquery() - this returns PQASession WITHOUT auto-filtering
+        # This means media content is preserved for future extraction
+        session = await docs.aquery(query=query, settings=settings)
+        
+        # Return the string representation (answer + references)
+        # Future: Extract and return deduplicated base64 image dataUrls from context.text.media
+        return str(session)
+    
+    # Handle async execution from sync context
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    
+    if loop and loop.is_running():
+        # We're in an async context, need to run in a new thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, _query_async())
+            return future.result()
+    else:
+        return asyncio.run(_query_async())
     
 """

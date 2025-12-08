@@ -1,8 +1,12 @@
+import asyncio
 import os
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
+
+from paperqa import Settings
+from paperqa.settings import AgentSettings, IndexSettings
+from paperqa.agents.search import get_directory_index, SearchIndex
 
 # Roots derived from environment
 PQA_HOME = Path(os.getenv("PQA_HOME", "/app/data"))
@@ -72,35 +76,58 @@ def ensure_user_pqa_settings(user_id: Any) -> Path:
     return user_settings_path
 
 
-def _has_built_index(user_id: Any) -> bool:
-    """Detect whether at least one current index exists and contains metadata for this user."""
+def get_user_settings(user_id: Any) -> Settings:
+    """Build a PaperQA Settings object for the user.
+    
+    This creates a Settings object configured with the user's paper and index directories.
+    """
+    ensure_user_pqa_settings(user_id)  # Ensure JSON config and directories exist
+    
+    user_papers_dir = get_user_papers_dir(user_id)
     user_index_dir = get_user_index_dir(user_id)
-    if not user_index_dir.exists():
-        return False
-    for child in user_index_dir.iterdir():
-        if child.is_dir() and child.name.startswith("pqa_index_"):
-            index_meta = child / "index" / "meta.json"
-            files_zip = child / "files.zip"
-            if index_meta.exists() and files_zip.exists():
-                return True
-    return False
+    
+    # Build Settings object with user-specific paths
+    settings = Settings(
+        paper_directory=user_papers_dir,
+        index_directory=user_index_dir,
+        agent=AgentSettings(
+            index=IndexSettings(
+                paper_directory=user_papers_dir,
+                index_directory=user_index_dir,
+                use_absolute_paper_directory=False,
+                sync_with_paper_directory=True,
+                recurse_subdirectories=False,
+            ),
+        ),
+    )
+    return settings
 
 
-def ensure_user_index_built(user_id: Any) -> None:
-    """If the per-user index is missing, build it once via the PaperQA CLI."""
-    if _has_built_index(user_id):
-        return
-    # Build the index with the CLI to guarantee on-disk structures
-    settings_name = get_user_settings_name(user_id)
-    papers_dir = str(get_user_papers_dir(user_id))
+async def build_user_index(user_id: Any) -> SearchIndex:
+    """Build/reuse the user's PaperQA index using Python API.
+    
+    This replaces the subprocess-based CLI approach with direct Python calls.
+    The index is persisted to disk and reused on subsequent calls.
+    """
+    settings = get_user_settings(user_id)
+    return await get_directory_index(settings=settings)
+
+
+def build_user_index_sync(user_id: Any) -> SearchIndex:
+    """Synchronous wrapper for build_user_index.
+    
+    Use this from synchronous code (e.g., OpenInterpreter).
+    """
     try:
-        subprocess.run(
-            ["/opt/venv/bin/pqa", "-s", settings_name, "index", papers_dir],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except Exception as e:
-        # Best-effort: leave to runtime build if CLI fails
-        # You can add logging here if desired
-        pass 
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    
+    if loop and loop.is_running():
+        # We're in an async context, create a new thread to run the coroutine
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, build_user_index(user_id))
+            return future.result()
+    else:
+        return asyncio.run(build_user_index(user_id))

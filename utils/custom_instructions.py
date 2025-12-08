@@ -1,5 +1,5 @@
 # Custom instructions to LLM and OpenInterpreter (Generic Assistant)
-def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, pqa_settings_name, mcp_tools=None):
+def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, mcp_tools=None):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     ##  Removed station_id parameter
     mcp_tools = mcp_tools or []
@@ -52,15 +52,18 @@ Important notes:
             image = Image.open(image_path)
             image.show()
 
-            COMMAND LINE TOOL:
-            You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
-            pqa -s {pqa_settings_name} ask "<query>"
+            KNOWLEDGE BASE FUNCTION:
+            You have access to a function that can fetch facts from scientific papers in the user's knowledge base.
+            Use it by calling: query_knowledge_base("<query>", "{user_id}")
             Use it when:
                 1. Asked to perform literature review or "Knowledge Base" review.
                 2. The query involves specific scientific methods, findings, or technical details.
                 3. The answer requires citation from a primary source.
                 4. General knowledge may not provide a complete or accurate response.
             If unsure, call the function to retrieve papers and then summarize the results for the user.
+            Example usage:
+                result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}")
+                print(result)
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.
@@ -132,10 +135,11 @@ Important notes:
             -- After web_search returns, summarize each unique item with title/topic, a brief summary, and a link.
 
             CUSTOM FUNCTION USAGE NOTE (important):
-            -- The functions get_datetime, get_station_info, get_climate_index, web_search, call_mcp_tool, and list_mcp_tools are already defined in the host environment (do not import them).
+            -- The functions get_datetime, get_station_info, get_climate_index, web_search, query_knowledge_base, call_mcp_tool, and list_mcp_tools are already defined in the host environment (do not import them).
             -- Call them directly as plain functions, e.g.:
                 now = get_datetime()
                 info = get_station_info("Honolulu, HI")
+                kb_result = query_knowledge_base("What is sea level rise?", "{user_id}")
                 mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
 
             CRITICAL:
