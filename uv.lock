@@ -2026,6 +2026,7 @@ dependencies = [
     { name = "statsmodels" },
     { name = "streamlit" },
     { name = "tabulate" },
+    { name = "tadc" },
     { name = "tenacity" },
     { name = "termcolor" },
     { name = "tiktoken" },
@@ -2167,7 +2168,7 @@ requires-dist = [
     { name = "nltk", specifier = "==3.9.1" },
     { name = "numcodecs", specifier = "==0.14.1" },
     { name = "numpy", specifier = ">=1.24.0,<2.0" },
-    { name = "open-interpreter", git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.1_robust-exec-mod" },
+    { name = "open-interpreter", git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.2_robust-exec-mod" },
     { name = "openai", specifier = ">=1.61.0" },
     { name = "openpyxl" },
     { name = "outcome", specifier = "==1.3.0.post0" },
@@ -2238,6 +2239,7 @@ requires-dist = [
     { name = "statsmodels" },
     { name = "streamlit", specifier = "==1.39.0" },
     { name = "tabulate" },
+    { name = "tadc", git = "https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator" },
     { name = "tenacity", specifier = "==9.0.0" },
     { name = "termcolor", specifier = "==2.3.0" },
     { name = "tiktoken", specifier = "==0.7.0" },
@@ -3173,7 +3175,7 @@ wheels = [
 [[package]]
 name = "open-interpreter"
 version = "0.4.3"
-source = { git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.1_robust-exec-mod#166cd2cd42371eb26f37afcc27a9d888583b3fe2" }
+source = { git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.2_robust-exec-mod#efecd4a2ed369486c4bafd6fbac53987d8c6846b" }
 dependencies = [
     { name = "anthropic" },
     { name = "astor" },
@@ -4969,6 +4971,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/ec/fe/802052aecb21e3797
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/44/4a5f08c96eb108af5cb50b41f76142f0afa346dfa99d5296fe7202a11854/tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f", size = 35252, upload-time = "2022-10-06T17:21:44.262Z" },
 ]
+
+[[package]]
+name = "tadc"
+version = "2.0.0"
+source = { git = "https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator#ab1cf683fd96c2db9504ca57f1a4f68312544bf5" }
 
 [[package]]
 name = "tantivy"
