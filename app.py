@@ -60,7 +60,7 @@ from auth import (
 )
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
-from utils.pqa_multi_tenant import ensure_user_pqa_settings, ensure_user_index_built
+from utils.pqa_multi_tenant import ensure_user_pqa_settings
 from core.mcp_manager import mcp_manager
 
 #import interpreter.core.llm.llm as llm_mod
@@ -1294,13 +1294,9 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         logger.info(f"Received messages for session {session_key}")
         interpreter = get_or_create_interpreter(session_key, token, db)
 
-        pqa_settings_path = ensure_user_pqa_settings(user.id)
-        pqa_settings_name = Path(str(pqa_settings_path)).stem
-        # Build user index once if not present
-        try:
-            ensure_user_index_built(user.id)
-        except Exception:
-            pass
+        # Ensure user PQA directories and settings exist
+        # Index building now happens lazily in query_knowledge_base()
+        ensure_user_pqa_settings(user.id)
 
         # Gather MCP tools first so we can include them in custom instructions
         tool_defs = []
@@ -1332,7 +1328,6 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             session_id=session_id,
             static_dir=STATIC_DIR,
             upload_dir=UPLOAD_DIR,
-            pqa_settings_name=pqa_settings_name,
             mcp_tools=mcp_tool_descriptions,
         )
 
