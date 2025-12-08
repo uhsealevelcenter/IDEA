@@ -104,7 +104,8 @@ dependencies = [
   #"open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@reasoning-effort", # Chat Completions API (sends reasoning effort)
   #"open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@responses_v3.0.0", # Responses API
   #"open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@responses_v3.0.1", # Responses API (Improved console log messaging)
-  "open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@responses_v3.0.1_robust-exec-mod", # Responses API (Improved console log messaging and code execution)
+  #"open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@responses_v3.0.1_robust-exec-mod", # Responses API (Improved console log messaging and code execution)
+  "open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@responses_v3.0.2_robust-exec-mod", # Responses API (Improved console log messaging and code execution; Developer message reminder about execute tool call)
   "openai>=1.61.0",
   "outcome==1.3.0.post0",
   "packaging==24.1",
@@ -225,6 +226,7 @@ dependencies = [
   "statsmodels",
   "pdfminer.six",
   "python-docx",
+  "tadc @ git+https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator",
 ]
 
 [tool.uv]
