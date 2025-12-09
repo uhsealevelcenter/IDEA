@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and platform_python_implementation != 'PyPy'",
@@ -1188,16 +1188,17 @@ wheels = [
 
 [[package]]
 name = "fhaviary"
-version = "0.23.0"
+version = "0.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docstring-parser" },
     { name = "httpx" },
+    { name = "httpx-aiohttp" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/e3/9594acc20df8effb6deb22ecb3a7b438854c061b5c02078bd37efb2cd1da/fhaviary-0.23.0.tar.gz", hash = "sha256:67f6b9d6d8fa7f90c6292b161329b29d89086c2674dbc75ea7a70ed4ac15c667", size = 5732117, upload-time = "2025-08-05T17:51:51.439Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/02/28fe8673629ca0a8ae9f5f025177a8ad48cb779c1dddbd9b01de94de47aa/fhaviary-0.28.0.tar.gz", hash = "sha256:3b49c4caa5fc7c80adf48f131651536ec41e3472d2753c9b3cacfcbb10cca473", size = 5786184, upload-time = "2025-10-28T16:18:01.539Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/e7/0046747957ce5fd0cbbb51e992f5d94c7e8ee012775f912fa7818164e9aa/fhaviary-0.23.0-py3-none-any.whl", hash = "sha256:390665e66b5a07576d4efa8dd20b1bb34604279f0fbba80d6c3ff3fc52dd080c", size = 57493, upload-time = "2025-08-05T17:51:47.348Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/03/4e24a1f34998fc483f166ec6f91990dc47fe72ec56626aecba79a5b610e0/fhaviary-0.28.0-py3-none-any.whl", hash = "sha256:fb7bc1ed0f45353b9e55c5c1856c13e93494c78f490829de0e305206320db953", size = 59703, upload-time = "2025-10-28T16:17:56.808Z" },
 ]
 
 [package.optional-dependencies]
@@ -1209,7 +1210,7 @@ llm = [
 
 [[package]]
 name = "fhlmi"
-version = "0.30.0"
+version = "0.42.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "coredis" },
@@ -1220,9 +1221,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/a5/6fae68fa2b7bce5271c67b526ccf46740609f5e34250287ee9427ab9dd12/fhlmi-0.30.0.tar.gz", hash = "sha256:2bba2e39a93b0d222896b141668377d54659adb675cc56a42f2af0a6c67abae6", size = 225681, upload-time = "2025-07-09T19:39:51.985Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/d4/952232905e46593b80088cd7afde19ebca59679945ce401ae63e7813c383/fhlmi-0.42.0.tar.gz", hash = "sha256:c68e3c0028b92a6c9c6a32cd0b9667f3129b3fa5774faab7d87cc02f97f2b5f3", size = 423656, upload-time = "2025-11-21T17:25:42.446Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/bf/3914ddc0fd98e9a55c835d3e801491ebbd244b59f95670e95727d0b4fd56/fhlmi-0.30.0-py3-none-any.whl", hash = "sha256:13303bc06f88cfff92645309128e5ea7a7d2946353f48b30c864ac6f29882bbe", size = 39417, upload-time = "2025-07-09T19:39:51.153Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/b9/7027a143dad0732ed09fd2caefb0f56b9e3703c853163dbb232d04d12a9c/fhlmi-0.42.0-py3-none-any.whl", hash = "sha256:84b819fa1529fdf400cae048294d62b016a7cfe774539391c54d06456e279080", size = 44696, upload-time = "2025-11-21T17:25:40.838Z" },
 ]
 
 [[package]]
@@ -1818,6 +1819,19 @@ wheels = [
 ]
 
 [[package]]
+name = "httpx-aiohttp"
+version = "0.1.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e2/72/6a2efc66bd387ec7daddf6c5d015fb540d9fa23ea0145f15f22eeb9a9177/httpx_aiohttp-0.1.10.tar.gz", hash = "sha256:0d49841c836aaa0824b603b2e28bcaa0e20f808b31d1ef8930be107cdbceeffd", size = 275745, upload-time = "2025-12-07T12:31:09.902Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/af/b124971acdeaff2c64acb86104bdb41b7c98fc8a33057f166e4564ec3f7f/httpx_aiohttp-0.1.10-py3-none-any.whl", hash = "sha256:ce2e2772863646a2a4ae3232f5821eee4e8c965bea9172d962bf8a25c494592b", size = 6352, upload-time = "2025-12-07T12:31:08.607Z" },
+]
+
+[[package]]
 name = "httpx-sse"
 version = "0.4.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1962,6 +1976,8 @@ dependencies = [
     { name = "packaging" },
     { name = "pandas" },
     { name = "paper-qa" },
+    { name = "paper-qa-pymupdf" },
+    { name = "paper-qa-pypdf" },
     { name = "parso" },
     { name = "passlib", extra = ["bcrypt"] },
     { name = "pdfminer-six" },
@@ -2174,7 +2190,9 @@ requires-dist = [
     { name = "outcome", specifier = "==1.3.0.post0" },
     { name = "packaging", specifier = "==24.1" },
     { name = "pandas", specifier = ">=2.2.0,<2.3" },
-    { name = "paper-qa", specifier = "==5.29.1" },
+    { name = "paper-qa", git = "https://github.com/Future-House/paper-qa.git?rev=931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c" },
+    { name = "paper-qa-pymupdf", git = "https://github.com/Future-House/paper-qa.git?subdirectory=packages%2Fpaper-qa-pymupdf&rev=931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c" },
+    { name = "paper-qa-pypdf", git = "https://github.com/Future-House/paper-qa.git?subdirectory=packages%2Fpaper-qa-pypdf&rev=931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c" },
     { name = "parso", specifier = "==0.8.4" },
     { name = "passlib", extras = ["bcrypt"], specifier = "==1.7.4" },
     { name = "pdfminer-six" },
@@ -3305,15 +3323,15 @@ wheels = [
 
 [[package]]
 name = "paper-qa"
-version = "5.29.1"
-source = { registry = "https://pypi.org/simple" }
+version = "5.29.2.dev118+g931d39f2b"
+source = { git = "https://github.com/Future-House/paper-qa.git?rev=931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c#931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c" }
 dependencies = [
-    { name = "aiohttp" },
     { name = "anyio" },
     { name = "fhaviary", extra = ["llm"] },
     { name = "fhlmi" },
     { name = "html2text" },
     { name = "httpx" },
+    { name = "httpx-aiohttp" },
     { name = "numpy" },
     { name = "paper-qa-pypdf" },
     { name = "pybtex" },
@@ -3325,22 +3343,23 @@ dependencies = [
     { name = "tenacity" },
     { name = "tiktoken" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/6a/be74dd213749007fdc2ce1df27b37db7eeb6fad9f1e234adb3d6c4c84f87/paper_qa-5.29.1.tar.gz", hash = "sha256:c7c6b5403867d3c8b147d25053d4083cc9979152476fd8a535b7a3257e7b68fa", size = 4378256, upload-time = "2025-08-26T21:41:41.136Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/85/0f/91f37ee9aff695ad2e1c478d5d1c19ccfd5703b359a984ab11141a77ac88/paper_qa-5.29.1-py3-none-any.whl", hash = "sha256:bdd5ff496e8cfdf661f749e71b2491a112cbe8ac7f707670c7e396ee69b9c003", size = 520237, upload-time = "2025-08-26T21:41:37.193Z" },
+
+[[package]]
+name = "paper-qa-pymupdf"
+version = "5.29.2.dev118+g931d39f2b"
+source = { git = "https://github.com/Future-House/paper-qa.git?subdirectory=packages%2Fpaper-qa-pymupdf&rev=931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c#931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c" }
+dependencies = [
+    { name = "paper-qa" },
+    { name = "pymupdf" },
 ]
 
 [[package]]
 name = "paper-qa-pypdf"
-version = "5.29.1"
-source = { registry = "https://pypi.org/simple" }
+version = "5.29.2.dev118+g931d39f2b"
+source = { git = "https://github.com/Future-House/paper-qa.git?subdirectory=packages%2Fpaper-qa-pypdf&rev=931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c#931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c" }
 dependencies = [
     { name = "paper-qa" },
     { name = "pypdf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/23/0f/edf2a28d7f33192b65f91c30036cf090211ce3264dfcc29b9a09bf4dff05/paper_qa_pypdf-5.29.1.tar.gz", hash = "sha256:36520c7f9d96c56b584bfa345e363f6ca8dd31c81dfbbdef187a6f09b50d66b4", size = 8483, upload-time = "2025-08-26T21:41:42.786Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/ed/2b3a350f9c514e75986e34bcbf97be9e60f9549e636fcd0a080e37d0a113/paper_qa_pypdf-5.29.1-py3-none-any.whl", hash = "sha256:5311c0ad2b2ba1ca68174259023e1776230007da7d3738ece0ff63b1b90ccd01", size = 11295, upload-time = "2025-08-26T21:41:39.932Z" },
 ]
 
 [[package]]
@@ -3844,6 +3863,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/dd/37/c384631908029676d8e7213dd956bb686af303a80db7afbc9be36bc49495/pympler-1.1.tar.gz", hash = "sha256:1eaa867cb8992c218430f1708fdaccda53df064144d1c5656b1e6f1ee6000424", size = 179954, upload-time = "2024-06-28T19:56:06.563Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/4f/a6a2e2b202d7fd97eadfe90979845b8706676b41cbd3b42ba75adf329d1f/Pympler-1.1-py3-none-any.whl", hash = "sha256:5b223d6027d0619584116a0cbc28e8d2e378f7a79c1e5e024f9ff3b673c58506", size = 165766, upload-time = "2024-06-28T19:56:05.087Z" },
+]
+
+[[package]]
+name = "pymupdf"
+version = "1.26.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/d7/a6f0e03a117fa2ad79c4b898203bb212b17804f92558a6a339298faca7bb/pymupdf-1.26.6.tar.gz", hash = "sha256:a2b4531cd4ab36d6f1f794bb6d3c33b49bda22f36d58bb1f3e81cbc10183bd2b", size = 84322494, upload-time = "2025-11-05T15:20:46.786Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/5c/dec354eee5fe4966c715f33818ed4193e0e6c986cf8484de35b6c167fb8e/pymupdf-1.26.6-cp310-abi3-macosx_10_9_x86_64.whl", hash = "sha256:e46f320a136ad55e5219e8f0f4061bdf3e4c12b126d2740d5a49f73fae7ea176", size = 23178988, upload-time = "2025-11-05T14:31:19.834Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/a0/11adb742d18142bd623556cd3b5d64649816decc5eafd30efc9498657e76/pymupdf-1.26.6-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:6844cd2396553c0fa06de4869d5d5ecb1260e6fc3b9d85abe8fa35f14dd9d688", size = 22469764, upload-time = "2025-11-05T14:32:34.654Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/c8/377cf20e31f58d4c243bfcf2d3cb7466d5b97003b10b9f1161f11eb4a994/pymupdf-1.26.6-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:617ba69e02c44f0da1c0e039ea4a26cf630849fd570e169c71daeb8ac52a81d6", size = 23502227, upload-time = "2025-11-06T11:03:56.934Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/bf/6e02e3d84b32c137c71a0a3dcdba8f2f6e9950619a3bc272245c7c06a051/pymupdf-1.26.6-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:7777d0b7124c2ebc94849536b6a1fb85d158df3b9d873935e63036559391534c", size = 24115381, upload-time = "2025-11-05T14:33:54.338Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/9d/30f7fcb3776bfedde66c06297960debe4883b1667294a1ee9426c942e94d/pymupdf-1.26.6-cp310-abi3-win32.whl", hash = "sha256:8f3ef05befc90ca6bb0f12983200a7048d5bff3e1c1edef1bb3de60b32cb5274", size = 17203613, upload-time = "2025-11-05T17:19:47.494Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/e8/989f4eaa369c7166dc24f0eaa3023f13788c40ff1b96701f7047421554a8/pymupdf-1.26.6-cp310-abi3-win_amd64.whl", hash = "sha256:ce02ca96ed0d1acfd00331a4d41a34c98584d034155b06fd4ec0f051718de7ba", size = 18405680, upload-time = "2025-11-05T14:34:48.672Z" },
 ]
 
 [[package]]
