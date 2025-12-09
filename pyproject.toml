@@ -49,7 +49,6 @@ dependencies = [
   "frozenlist==1.4.1",
   "fsspec==2024.12.0",
   "geopandas==1.0.1",
-  
   "gitdb==4.0.11",
   "GitPython==3.1.43",
   "google-ai-generativelanguage==0.6.6",
@@ -204,7 +203,9 @@ dependencies = [
   "clamd==1.0.2",
   "slowapi==0.1.9",
   "python-magic==0.4.27",
-  "paper-qa==5.29.1",
+  "paper-qa @ git+https://github.com/Future-House/paper-qa.git@931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c",
+  "paper-qa-pymupdf @ git+https://github.com/Future-House/paper-qa.git@931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c#subdirectory=packages/paper-qa-pymupdf",
+  "paper-qa-pypdf @ git+https://github.com/Future-House/paper-qa.git@931d39f2bf4b71323fe4e3c1b4ea2680b0fcb45c#subdirectory=packages/paper-qa-pypdf",
   "geopy",
   "plotly",
   "nbformat",
@@ -226,12 +227,14 @@ dependencies = [
   "statsmodels",
   "pdfminer.six",
   "python-docx",
-  "tadc @ git+https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator",
+  "tadc @ git+https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator"
 ]
 
 [tool.uv]
 dev-dependencies = []
 
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = [
