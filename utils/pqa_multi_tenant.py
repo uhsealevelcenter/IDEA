@@ -79,18 +79,71 @@ def ensure_user_pqa_settings(user_id: Any) -> Path:
 def get_user_settings(user_id: Any) -> Settings:
     """Build a PaperQA Settings object for the user.
     
-    This creates a Settings object configured with the user's paper and index directories.
+    This loads the base configuration from pqa_settings.json and applies
+    user-specific paper and index directories.
     """
-    ensure_user_pqa_settings(user_id)  # Ensure JSON config and directories exist
+    # Ensure JSON config and directories exist, returns path to user settings
+    user_settings_path = ensure_user_pqa_settings(user_id)
     
     user_papers_dir = get_user_papers_dir(user_id)
     user_index_dir = get_user_index_dir(user_id)
     
-    # Build Settings object with user-specific paths
-    settings = Settings(
-        paper_directory=user_papers_dir,
-        index_directory=user_index_dir,
-        agent=AgentSettings(
+    # Load settings from the user-specific JSON (which includes base settings + user paths)
+    settings_data: dict = {}
+    if user_settings_path.exists():
+        try:
+            settings_data = json.loads(user_settings_path.read_text())
+        except Exception:
+            settings_data = {}
+    
+    # Extract nested settings for proper object construction
+    answer_data = settings_data.pop("answer", None)
+    parsing_data = settings_data.pop("parsing", None)
+    prompts_data = settings_data.pop("prompts", None)
+    agent_data = settings_data.pop("agent", None)
+    
+    # Build nested settings objects
+    from paperqa.settings import AnswerSettings, ParsingSettings, PromptSettings, MultimodalOptions
+    
+    # Handle multimodal enum conversion in parsing
+    if parsing_data and "multimodal" in parsing_data:
+        multimodal_str = parsing_data["multimodal"]
+        if isinstance(multimodal_str, str):
+            # Convert string to enum
+            multimodal_map = {
+                "off": MultimodalOptions.OFF,
+                "on": MultimodalOptions.ON,
+                "on_without_enrichment": MultimodalOptions.ON_WITHOUT_ENRICHMENT,
+            }
+            parsing_data["multimodal"] = multimodal_map.get(
+                multimodal_str.lower(), 
+                MultimodalOptions.OFF
+            )
+        # Remove reader_config if present (not a valid ParsingSettings field)
+        parsing_data.pop("reader_config", None)
+    
+    answer_settings = AnswerSettings(**answer_data) if answer_data else None
+    parsing_settings = ParsingSettings(**parsing_data) if parsing_data else None
+    prompts_settings = PromptSettings(**prompts_data) if prompts_data else None
+    
+    # Build agent settings with user-specific paths
+    agent_settings = None
+    if agent_data:
+        agent_index = agent_data.pop("index", {}) or {}
+        # Remove potentially unsupported fields from agent_data
+        agent_data.pop("agent_llm_config", None)  # LiteLLM handles this via environment
+        
+        # Override paths with user-specific directories
+        agent_index["paper_directory"] = user_papers_dir
+        agent_index["index_directory"] = user_index_dir
+        agent_index["use_absolute_paper_directory"] = False
+        agent_index["sync_with_paper_directory"] = True
+        agent_index["recurse_subdirectories"] = False
+        
+        index_settings = IndexSettings(**agent_index)
+        agent_settings = AgentSettings(index=index_settings, **agent_data)
+    else:
+        agent_settings = AgentSettings(
             index=IndexSettings(
                 paper_directory=user_papers_dir,
                 index_directory=user_index_dir,
@@ -98,7 +151,31 @@ def get_user_settings(user_id: Any) -> Settings:
                 sync_with_paper_directory=True,
                 recurse_subdirectories=False,
             ),
-        ),
+        )
+    
+    # Filter out fields that might not be directly supported by Settings constructor
+    # These are handled separately or not needed
+    unsupported_fields = {
+        "llm_config",      # LiteLLM handles this via environment
+        "embedding_config", # Not directly supported
+        "manifest_file",    # Usually None
+    }
+    filtered_settings = {
+        k: v for k, v in settings_data.items() 
+        if v is not None and k not in unsupported_fields
+    }
+    
+    # Build the main Settings object with all configuration
+    settings = Settings(
+        paper_directory=user_papers_dir,
+        index_directory=user_index_dir,
+        agent=agent_settings,
+        **({k: v for k, v in {
+            "answer": answer_settings,
+            "parsing": parsing_settings,
+            "prompts": prompts_settings,
+        }.items() if v is not None}),
+        **filtered_settings,
     )
     return settings
 

@@ -249,53 +249,61 @@ def query_knowledge_base(query, user_id):
     from context.text.media along with the answer.
     \"\"\"
     import asyncio
+    import nest_asyncio
     from paperqa import Docs
     from paperqa.agents.search import get_directory_index
     from utils.pqa_multi_tenant import get_user_settings
     
+    # Apply nest_asyncio to allow nested event loops (needed when running from Open Interpreter)
+    nest_asyncio.apply()
+    
     async def _query_async():
+        print("[PQA] Step 1: Loading user settings...")
         # Step 1: Get user-specific settings
         settings = get_user_settings(user_id)
+        print(f"[PQA] Settings loaded. LLM: {settings.llm}, Embedding: {settings.embedding}")
         
+        print("[PQA] Step 2: Building/loading index...")
         # Step 2: Build/reuse the persistent index
         # This will persist the index to disk and reuse it on subsequent calls
         index = await get_directory_index(settings=settings)
+        print("[PQA] Index loaded.")
         
         # Check if there are any indexed files
         index_files = await index.index_files
         if not index_files:
             return "No papers found in your knowledge base. Please upload papers first."
+        print(f"[PQA] Found {len(index_files)} indexed files.")
         
         # Step 3: Create a Docs object and add documents from the index
+        print("[PQA] Step 3: Adding documents to Docs object...")
         docs = Docs()
         paper_directory = settings.agent.index.paper_directory
         
         for file_path in index_files.keys():
             full_path = paper_directory / file_path
             if full_path.exists():
+                print(f"[PQA]   Adding: {file_path}")
                 await docs.aadd(full_path, settings=settings)
+        print("[PQA] All documents added.")
         
         # Step 4: Query with docs.aquery() - this returns PQASession WITHOUT auto-filtering
         # This means media content is preserved for future extraction
+        print(f"[PQA] Step 4: Querying with: '{query}'...")
         session = await docs.aquery(query=query, settings=settings)
+        print("[PQA] Query complete.")
         
         # Return the string representation (answer + references)
         # Future: Extract and return deduplicated base64 image dataUrls from context.text.media
         return str(session)
     
-    # Handle async execution from sync context
+    # With nest_asyncio applied, we can safely use asyncio.run() or get_event_loop()
     try:
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
     except RuntimeError:
-        loop = None
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     
-    if loop and loop.is_running():
-        # We're in an async context, need to run in a new thread
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, _query_async())
-            return future.result()
-    else:
-        return asyncio.run(_query_async())
+    return loop.run_until_complete(_query_async())
     
 """

@@ -1,24 +1,69 @@
 {
-    "llm": "gpt-4.1-2025-04-14",
-    "summary_llm": "gpt-4.1-2025-04-14",
-    "answer": {
-      "evidence_k": 5,
-      "evidence_summary_length": "about 100 words",
-      "answer_max_sources": 3,
-      "answer_length": "about 200 words, but can be longer",
-      "max_concurrent_requests": 5
-    },
-    "parsing": {
-      "use_doc_details": false
-    },
-    "prompts": {
-      "use_json": false,
-      "context_inner": "{name}: {text}"
-    },
-    "agent": {
-      "agent_type": "fake",
-      "index":{
-        "paper_directory": "/app/data/papers"
+  "llm": "gpt-4.1-2025-04-14",
+  "llm_config": {
+    "model_list": [
+      {
+        "model_name": "gpt-4.1-2025-04-14",
+        "litellm_params": {
+          "model": "gpt-4.1-2025-04-14",
+          "temperature": 0.1,
+          "max_tokens": 4096
+        }
       }
+    ]
+  },
+  "summary_llm": "gpt-4.1-2025-04-14",
+  "embedding": "text-embedding-3-small",
+  "embedding_config": {},
+  "temperature": 0.1,
+  "batch_size": 1,
+  "verbosity": 1,
+  "manifest_file": null,
+  "paper_directory": "/app/data/papers",
+  "index_directory": "/app/data/papers/index",
+  "answer": {
+    "evidence_k": 5,
+    "evidence_detailed_citations": true,
+    "evidence_retrieval": true,
+    "evidence_summary_length": "about 100 words",
+    "evidence_skip_summary": false,
+    "answer_max_sources": 5,
+    "max_answer_attempts": null,
+    "answer_length": "about 200 words, but can be longer",
+    "max_concurrent_requests": 10
+  },
+  "parsing": {
+    "chunk_size": 5000,
+    "overlap": 250,
+    "multimodal": "on_without_enrichment",
+    "reader_config": {
+      "chunk_chars": 5000,
+      "overlap": 250,
+      "full_page": true
+    }
+  },
+  "prompts": {
+    "pre": null,
+    "post": null,
+    "use_json": true,
+    "summary_json_system": "Provide a summary of the relevant information that could help answer the question based on the excerpt. Your summary, combined with many others, will be given to the model to generate an answer. Respond with the following JSON format:\n\n{{\n  \"summary\": \"...\",\n  \"relevance_score\": 0-10,\n  \"used_images\": \"...\"\n}}\n\nwhere `summary` is relevant information from the text - {summary_length} words. `relevance_score` is an integer 0-10 for the relevance of `summary` to the question. `used_images` is a boolean flag indicating if any images present in a multimodal message were used, and if no images were present it should be false.\n\nThe excerpt may or may not contain relevant information. If not, leave `summary` empty, and make `relevance_score` be 0.\n\n**IMPORTANT: When describing figures, tables, or images, always include the page number where they appear (e.g., 'Figure 2 on page 5 shows...'). This is critical for user reference.**"
+  },
+  "agent": {
+    "agent_llm": "gpt-4.1-2025-04-14",
+    "agent_llm_config": {
+      "model_list": [
+        {
+          "model_name": "gpt-4.1-2025-04-14",
+          "litellm_params": {
+            "model": "gpt-4.1-2025-04-14"
+          }
+        }
+      ]
+    },
+    "search_count": 8,
+    "index": {
+      "paper_directory": "/app/data/papers",
+      "index_directory": "/app/data/papers/index"
     }
   }
+}
