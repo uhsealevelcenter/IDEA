@@ -60,6 +60,7 @@ Important notes:
                 2. The query involves specific scientific methods, findings, or technical details.
                 3. The answer requires citation from a primary source.
                 4. General knowledge may not provide a complete or accurate response.
+                5. Give as detailed query as possible to match the user's query.
             If unsure, call the function to retrieve papers and then summarize the results for the user.
             Example usage:
                 result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}")
