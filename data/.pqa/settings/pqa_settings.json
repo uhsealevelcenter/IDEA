@@ -1,6 +1,7 @@
 {
-    "llm": "gpt-4.1-2025-04-14",
-    "summary_llm": "gpt-4.1-2025-04-14",
+    "llm": "openai/gpt-5.2-2025-12-11", 
+    "summary_llm": "openai/gpt-5.2-2025-12-11",
+    "temperature": 1,
     "answer": {
       "evidence_k": 5,
       "evidence_summary_length": "about 100 words",
@@ -9,7 +10,15 @@
       "max_concurrent_requests": 5
     },
     "parsing": {
-      "use_doc_details": false
+      "citation_prompt": "citation_prompt",
+      "structured_citation_prompt": "structured_citation_prompt",
+      "multimodal": 2, 
+      "parse_pdf": "paperqa_pypdf.reader.parse_pdf_to_pages",
+      "reader_config": {
+        "chunk_chars": 5000,
+        "overlap": 250,
+        "full_page": true
+      }
     },
     "prompts": {
       "use_json": false,

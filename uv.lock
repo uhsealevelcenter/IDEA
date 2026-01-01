@@ -1187,16 +1187,17 @@ wheels = [
 
 [[package]]
 name = "fhaviary"
-version = "0.23.0"
+version = "0.30.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docstring-parser" },
     { name = "httpx" },
+    { name = "httpx-aiohttp" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/e3/9594acc20df8effb6deb22ecb3a7b438854c061b5c02078bd37efb2cd1da/fhaviary-0.23.0.tar.gz", hash = "sha256:67f6b9d6d8fa7f90c6292b161329b29d89086c2674dbc75ea7a70ed4ac15c667", size = 5732117, upload-time = "2025-08-05T17:51:51.439Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/70/2167545488710a9c9d92d883b3120f0da37388f72747f33170bddb1c638a/fhaviary-0.30.0.tar.gz", hash = "sha256:112238849f166e870d6ee2a0d46f1c7200b8a0a82773e138a53a3a2e68b44865", size = 5862670, upload-time = "2025-12-18T05:30:05.157Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/e7/0046747957ce5fd0cbbb51e992f5d94c7e8ee012775f912fa7818164e9aa/fhaviary-0.23.0-py3-none-any.whl", hash = "sha256:390665e66b5a07576d4efa8dd20b1bb34604279f0fbba80d6c3ff3fc52dd080c", size = 57493, upload-time = "2025-08-05T17:51:47.348Z" },
+    { url = "https://files.pythonhosted.org/packages/97/8a/ae321e473b459f71763a425d9df0b31a8ddb1d1fbee7ff9bbd694bc39a72/fhaviary-0.30.0-py3-none-any.whl", hash = "sha256:9324796fd7abde2858022e25fe3d054dcfe3f1404cecfccbeb745e3db8c6a95c", size = 59996, upload-time = "2025-12-18T05:29:58.267Z" },
 ]
 
 [package.optional-dependencies]
@@ -1208,7 +1209,7 @@ llm = [
 
 [[package]]
 name = "fhlmi"
-version = "0.30.0"
+version = "0.42.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "coredis" },
@@ -1219,9 +1220,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/a5/6fae68fa2b7bce5271c67b526ccf46740609f5e34250287ee9427ab9dd12/fhlmi-0.30.0.tar.gz", hash = "sha256:2bba2e39a93b0d222896b141668377d54659adb675cc56a42f2af0a6c67abae6", size = 225681, upload-time = "2025-07-09T19:39:51.985Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/d4/952232905e46593b80088cd7afde19ebca59679945ce401ae63e7813c383/fhlmi-0.42.0.tar.gz", hash = "sha256:c68e3c0028b92a6c9c6a32cd0b9667f3129b3fa5774faab7d87cc02f97f2b5f3", size = 423656, upload-time = "2025-11-21T17:25:42.446Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/bf/3914ddc0fd98e9a55c835d3e801491ebbd244b59f95670e95727d0b4fd56/fhlmi-0.30.0-py3-none-any.whl", hash = "sha256:13303bc06f88cfff92645309128e5ea7a7d2946353f48b30c864ac6f29882bbe", size = 39417, upload-time = "2025-07-09T19:39:51.153Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/b9/7027a143dad0732ed09fd2caefb0f56b9e3703c853163dbb232d04d12a9c/fhlmi-0.42.0-py3-none-any.whl", hash = "sha256:84b819fa1529fdf400cae048294d62b016a7cfe774539391c54d06456e279080", size = 44696, upload-time = "2025-11-21T17:25:40.838Z" },
 ]
 
 [[package]]
@@ -1817,6 +1818,19 @@ wheels = [
 ]
 
 [[package]]
+name = "httpx-aiohttp"
+version = "0.1.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/63/2c/b894861cecf030fb45675ea24aa55b5722e97c602a163d872fca66c5a6d8/httpx_aiohttp-0.1.12.tar.gz", hash = "sha256:81feec51fd82c0ecfa0e9aaf1b1a6c2591260d5e2bcbeb7eb0277a78e610df2c", size = 275945, upload-time = "2025-12-12T10:12:15.283Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/8d/85c9701e9af72ca132a1783e2a54364a90c6da832304416a30fc11196ab2/httpx_aiohttp-0.1.12-py3-none-any.whl", hash = "sha256:5b0eac39a7f360fa7867a60bcb46bb1024eada9c01cbfecdb54dc1edb3fb7141", size = 6367, upload-time = "2025-12-12T10:12:14.018Z" },
+]
+
+[[package]]
 name = "huggingface-hub"
 version = "0.25.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2159,7 +2173,7 @@ requires-dist = [
     { name = "outcome", specifier = "==1.3.0.post0" },
     { name = "packaging", specifier = "==24.1" },
     { name = "pandas", specifier = ">=2.2.0,<2.3" },
-    { name = "paper-qa", specifier = "==5.29.1" },
+    { name = "paper-qa", specifier = "==2025.12.17" },
     { name = "parso", specifier = "==0.8.4" },
     { name = "passlib", extras = ["bcrypt"], specifier = "==1.7.4" },
     { name = "pdfminer-six" },
@@ -3268,15 +3282,15 @@ wheels = [
 
 [[package]]
 name = "paper-qa"
-version = "5.29.1"
+version = "2025.12.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohttp" },
     { name = "anyio" },
     { name = "fhaviary", extra = ["llm"] },
     { name = "fhlmi" },
     { name = "html2text" },
     { name = "httpx" },
+    { name = "httpx-aiohttp" },
     { name = "numpy" },
     { name = "paper-qa-pypdf" },
     { name = "pybtex" },
@@ -3288,9 +3302,9 @@ dependencies = [
     { name = "tenacity" },
     { name = "tiktoken" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/6a/be74dd213749007fdc2ce1df27b37db7eeb6fad9f1e234adb3d6c4c84f87/paper_qa-5.29.1.tar.gz", hash = "sha256:c7c6b5403867d3c8b147d25053d4083cc9979152476fd8a535b7a3257e7b68fa", size = 4378256, upload-time = "2025-08-26T21:41:41.136Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/3b/94ba9b4397b2c6c34685f66fd138c03552fd454e333ccba895ee7cb0f585/paper_qa-2025.12.17.tar.gz", hash = "sha256:eb907197e72cc8e729ef94b3871962df7c04b51d437558063efc1ee9ab2188c0", size = 27401194, upload-time = "2025-12-18T04:59:37.794Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/85/0f/91f37ee9aff695ad2e1c478d5d1c19ccfd5703b359a984ab11141a77ac88/paper_qa-5.29.1-py3-none-any.whl", hash = "sha256:bdd5ff496e8cfdf661f749e71b2491a112cbe8ac7f707670c7e396ee69b9c003", size = 520237, upload-time = "2025-08-26T21:41:37.193Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/9d/7b9eda293a783de65da6a65dd095eadb1ee31ec847b45ef4ea08fe840f9b/paper_qa-2025.12.17-py3-none-any.whl", hash = "sha256:8ff60a2a78189231af29ddee2676888395ec0d732aa8193b029665c3a22b1c98", size = 534715, upload-time = "2025-12-18T04:59:29.661Z" },
 ]
 
 [[package]]
