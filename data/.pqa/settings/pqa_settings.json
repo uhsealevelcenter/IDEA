@@ -25,9 +25,6 @@
       "context_inner": "{name}: {text}"
     },
     "agent": {
-      "agent_type": "fake",
-      "index":{
-        "paper_directory": "/app/data/papers"
-      }
+      "agent_llm": "openai/gpt-5.2-2025-12-11"
     }
   }
