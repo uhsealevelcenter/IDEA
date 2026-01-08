@@ -4,19 +4,19 @@ description: Create distinctive, production-grade frontend interfaces with high 
 license: Complete terms in LICENSE.txt
 ---
 
-This skill guides creation of distinctive, production-grade frontend interfaces that avoid generic "AI slop" aesthetics. Implement real working code with exceptional attention to aesthetic details and creative choices.
+This skill specifies how to produce distinctive, production-grade frontend interfaces while avoiding generic, low-signal aesthetics. Deliver working code with rigorous attention to visual detail and deliberate creative decisions.
 
 The user provides frontend requirements: a component, page, application, or interface to build. They may include context about the purpose, audience, or technical constraints.
 
 ## Design Thinking
 
-Before coding, understand the context and commit to a BOLD aesthetic direction:
+Before coding, analyze the context and commit to a clear, high-contrast aesthetic direction:
 - **Purpose**: What problem does this interface solve? Who uses it?
-- **Tone**: Pick an extreme: brutally minimal, maximalist chaos, retro-futuristic, organic/natural, luxury/refined, playful/toy-like, editorial/magazine, brutalist/raw, art deco/geometric, soft/pastel, industrial/utilitarian, etc. There are so many flavors to choose from. Use these for inspiration but design one that is true to the aesthetic direction.
+- **Tone**: Select a strong, falsifiable stance: brutally minimal, maximalist, retro-futuristic, organic, luxury, playful, editorial, brutalist, art deco, pastel, industrial, etc. Use these as priors, then refine to a single, consistent visual hypothesis.
 - **Constraints**: Technical requirements (framework, performance, accessibility).
-- **Differentiation**: What makes this UNFORGETTABLE? What's the one thing someone will remember?
+- **Differentiation**: Identify the primary memory anchor. What will a viewer recall after one glance?
 
-**CRITICAL**: Choose a clear conceptual direction and execute it with precision. Bold maximalism and refined minimalism both work - the key is intentionality, not intensity.
+**CRITICAL**: Choose a clear conceptual direction and execute it with precision. Maximalism and minimalism are both valid; the non-negotiable is intentionality.
 
 Then implement working code (HTML/CSS/JS, React, Vue, etc.) that is:
 - Production-grade and functional
@@ -33,12 +33,12 @@ Focus on:
 - **Spatial Composition**: Unexpected layouts. Asymmetry. Overlap. Diagonal flow. Grid-breaking elements. Generous negative space OR controlled density.
 - **Backgrounds & Visual Details**: Create atmosphere and depth rather than defaulting to solid colors. Add contextual effects and textures that match the overall aesthetic. Apply creative forms like gradient meshes, noise textures, geometric patterns, layered transparencies, dramatic shadows, decorative borders, custom cursors, and grain overlays.
 
-NEVER use generic AI-generated aesthetics like overused font families (Inter, Roboto, Arial, system fonts), cliched color schemes (particularly purple gradients on white backgrounds), predictable layouts and component patterns, and cookie-cutter design that lacks context-specific character.
+NEVER use generic AI-generated aesthetics such as overused font families (Inter, Roboto, Arial, system fonts), clichéd color schemes (especially purple gradients on white), predictable layouts, or cookie-cutter patterns that lack context-specific character.
 
-Interpret creatively and make unexpected choices that feel genuinely designed for the context. No design should be the same. Vary between light and dark themes, different fonts, different aesthetics. NEVER converge on common choices (Space Grotesk, for example) across generations.
+Interpret the brief creatively and make unexpected choices that are defensible within the context. No two outputs should converge. Vary light vs. dark, typographic pairings, and overall aesthetic regimes. Avoid recurrent defaults (e.g., Space Grotesk) across generations.
 
-**IMPORTANT**: Match implementation complexity to the aesthetic vision. Maximalist designs need elaborate code with extensive animations and effects. Minimalist or refined designs need restraint, precision, and careful attention to spacing, typography, and subtle details. Elegance comes from executing the vision well.
+**IMPORTANT**: Match implementation complexity to the aesthetic vision. Maximalist designs warrant elaborate code and effects; minimalist or refined designs require restraint, precision, and careful handling of spacing, typography, and subtle detail. Elegance is a function of execution quality.
 
-Remember: IDEA is capable of extraordinary creative work. Don't hold back, show what can truly be created when thinking outside the box and committing fully to a distinctive vision.
+Remember: IDEA is capable of exceptional creative output. Commit fully to a distinctive vision and execute with discipline.
 
 **CRITICAL**: Save the web page as a self-contained HTML file (embedded CSS + JS; external assets allowed/ CDNs permitted, prefer pinned versions.) and provide a clickable link.
