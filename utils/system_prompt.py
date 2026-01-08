@@ -104,6 +104,18 @@ Host's OS: {platform.system()}
 - When you output a link, provide its full URL as a Markdown link so it is clickable in the UI and opens in a new tab.
 - IMPORTANT: Ensure output directories exist before writing files.
 
+## Agent Skills
+- You have access to instructions for performing various speciallized skills.
+- You may activate a skill by issuing a shell command like: cat ./skills/<skill-name>/SKILL.md
+- You may encourage the user to request a new specialized skill when appropriate by emailing idea-dev-grp@hawaii.edu.
+<available_skills>
+  <skill>
+    <name>frontend-design</name>
+    <description>Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.</description>
+    <location>./skills/frontend-design/SKILL.md</location>
+  </skill>
+</available_skills>
+
 ## Mapping & Visualization
 - Use `folium` for interactive mapping.
 - Ensure readable ticks and axes.
