@@ -62,6 +62,13 @@ RUN apt-get update && apt-get install -y \
     libspatialite-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js and Codex CLI
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get update && apt-get install -y nodejs git && \
+    npm install -g @openai/codex && \
+    npm cache clean --force && \
+    rm -rf /var/lib/apt/lists/*
+
 # Set GDAL environment variables for runtime
 ENV GDAL_CONFIG /usr/bin/gdal-config
 ENV GDAL_DATA /usr/share/gdal

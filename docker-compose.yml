@@ -13,11 +13,13 @@ services:
       - .env
     volumes:
       - idea_persistent_data:/app/data
+      - ./.codex:/app/.codex # CODEX_HOME: for Codex CLI authentication, config, and agent working agreements
     environment:
       - PYTHONUNBUFFERED=1
       - LOCAL_DEV=0
       - PQA_HOME=/app/data
       - PROMPT_DIRECTORY=/app/data/prompts
+      - CODEX_HOME=/app/.codex
     command: uvicorn app:app --host 0.0.0.0 --port 8001
     depends_on:
       - redis
