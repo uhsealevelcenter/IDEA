@@ -210,4 +210,5 @@ local_scripts/
 
 # Codex
 .codex/auth.json
+.codex/sessions/
 Codex_Sandbox/
