@@ -1,6 +1,6 @@
 ---
 name: review-code
-description: Review and explore GitHub code repositories using Codex. Immediately after any codex exec ... command returns, run cd /app in a separate shell step before doing anything else.
+description: Review and explore GitHub code repositories using Codex.
 ---
 
 This skill specifies how to use Codex to explore code repositories.
@@ -21,7 +21,6 @@ You have access to the command-line tool `codex`.
   - Temporary files: `${CODEX_SANDBOX}/tmp`
 - Never execute outside of `${CODEX_SANDBOX}` or modify system-level files.
 - IMPORTANT: Confirm that `${CODEX_SANDBOX}` exists prior to running Codex.
-- CRITICAL: Always cd to /app after running Codex to avoid path issues.
 
 ## Example Workflow (Command Line)
 cd ${CODEX_SANDBOX} # Navigate to Codex workspace
@@ -30,7 +29,6 @@ cd ${CODEX_SANDBOX}/repos # Clone a repository to explore
 git clone https://github.com/uhsealevelcenter/IDEA IDEA
 cd ${CODEX_SANDBOX}/repos/IDEA # Enter repository and analyze
 codex exec "Print to terminal a high-level overview of this repo"
-cd /app # Navigate to starting place
 
 ## Example Codex Commands
 codex exec "Print to terminal the full code for the data processing module"

@@ -50,8 +50,6 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
                 - Keep commands clear and descriptive to guide Codex effectively.
                 - Remind the user that Codex operations may take time.
                 - IMPORTANT: Confirm that `${CODEX_SANDBOX}` exists prior to running Codex.
-            CRITICAL: 
-                - Immediately after any codex exec ... command returns, run cd /app in a separate shell step before doing anything else.
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.
