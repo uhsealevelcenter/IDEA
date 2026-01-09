@@ -2,8 +2,8 @@
 def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, pqa_settings_name):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     ##  Removed station_id parameter
-    CODEX_HOME="./.codex"
-    CODEX_SANDBOX=f"./static/{user_id}/{session_id}/Codex_Sandbox"
+    CODEX_HOME="/app/.codex"
+    CODEX_SANDBOX=f"/app/static/{user_id}/{session_id}/Codex_Sandbox"
     return f"""
             The host is {host}.
             The user_id is {user_id}.
@@ -15,7 +15,7 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
             -- If the user submits a filepath, you will also see the image. The filepath and user image will both be in the user's message.
             -- If you use `plt.show()`, the resulting image will be sent to you. However, if you use `PIL.Image.show()`, the resulting image will NOT be sent to you.
             -- For all plots that you create, open and show the specified image, then describe the image using your vision capability.
-            image_path = './static/{user_id}/{session_id}/FILENAME' OR image_path = './static/{user_id}/{session_id}/{upload_dir}/FILENAME'
+            image_path = '/app/static/{user_id}/{session_id}/FILENAME' OR image_path = '/app/static/{user_id}/{session_id}/{upload_dir}/FILENAME'
             image = Image.open(image_path)
             image.show()
 

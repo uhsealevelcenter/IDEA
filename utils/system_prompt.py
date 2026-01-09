@@ -98,7 +98,7 @@ Host's OS: {platform.system()}
 - Report the "answer" exactly to the user.
 
 ## Data/Analysis Output & File Operations
-- Save all outputs to `./static/{user_id}/{session_id}` (create if missing).
+- Save all outputs to `/app/static/{user_id}/{session_id}` (create if missing).
 - When analyzing uploads: `{STATIC_DIR}/{user_id}/{session_id}/{UPLOAD_DIR}/{filename}`.
 - Build links as `{host}/static/{user_id}/{session_id}/...` unless configured otherwise.
 - When you output a link, provide its full URL as a Markdown link so it is clickable in the UI and opens in a new tab.
