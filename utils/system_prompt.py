@@ -106,18 +106,18 @@ Host's OS: {platform.system()}
 
 ## Agent Skills
 - You have access to instructions for performing various speciallized skills.
-- You may activate a skill by issuing a shell command like: cat ./skills/<skill-name>/SKILL.md
+- You may activate a skill by issuing a shell command like: cat /app/skills/<skill-name>/SKILL.md
 - You may encourage the user to request a new specialized skill when appropriate by emailing idea-dev-grp@hawaii.edu.
 <available_skills>
   <skill>
     <name>frontend-design</name>
     <description>Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.</description>
-    <location>./skills/frontend-design/SKILL.md</location>
+    <location>/app/skills/frontend-design/SKILL.md</location>
   </skill>
   <skill>
     <name>review-code</name>
     <description>Review and explore GitHub code repositories using Codex.</description>
-    <location>./.codex/skills/review-code/SKILL.md</location>
+    <location>/app/skills/review-code/SKILL.md</location>
   </skill>
 </available_skills>
 
