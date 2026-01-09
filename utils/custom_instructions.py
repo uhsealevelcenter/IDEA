@@ -34,7 +34,10 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
                 - Make sure that `${CODEX_SANDBOX}` exists before running Codex.
                 - cd to the Codex_Sandbox: cd ${CODEX_SANDBOX}
                 - Then call: codex exec "<instruction>"
-                - Login happens automatically using an authentication file: codex login WILL NOT WORK in this environment.
+                - Login should happen automatically using an authentication file (usually no need to manually login).
+                - If login fails, then you may authenticate it by logging in with the environment variable:
+                    printenv OPENAI_API_KEY | codex login --with-api-key
+                - IMPORTANT: Do not expose the OPENAI_API_KEY or any authentication tokens in your responses to the user.
             Use Codex when:
                 - The user requests a code explanation, refactor, or improvement.
                 - You need to summarize, analyze, or document a repository.
