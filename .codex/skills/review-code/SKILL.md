@@ -1,6 +1,6 @@
 ---
 name: review-code
-description: Review and explore GitHub code repositories.
+description: Review and explore GitHub code repositories using Codex.
 ---
 
 This skill specifies how to use Codex to explore code repositories.
