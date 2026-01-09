@@ -31,6 +31,7 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
 
             2. You have access to a command line coding agent called Codex.
             Codex can explore, summarize, edit, and run code in the local workspace.
+                - Make sure that `${CODEX_SANDBOX}` exists before running Codex.
                 - cd to the Codex_Sandbox: cd ${CODEX_SANDBOX}
                 - Then call: codex exec "<instruction>"
                 - Login happens automatically using an authentication file: codex login WILL NOT WORK in this environment.
@@ -44,10 +45,13 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
                 - Work only within ${CODEX_SANDBOX}:
                     * Repositories: ${CODEX_SANDBOX}/repos
                     * Temporary files: ${CODEX_SANDBOX}/tmp
-                - Configuration and authentication files are in ${CODEX_HOME}.
+                - Configuration, Agent working agreements, Skills, and Authentication files are in ${CODEX_HOME}.
                 - Do not modify files outside these paths.
                 - Keep commands clear and descriptive to guide Codex effectively.
                 - Remind the user that Codex operations may take time.
+                - IMPORTANT: Confirm that `${CODEX_SANDBOX}` exists prior to running Codex.
+            CRITICAL: 
+                - Immediately after any codex exec ... command returns, run cd /app in a separate shell step before doing anything else.
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.

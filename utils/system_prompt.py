@@ -116,7 +116,7 @@ Host's OS: {platform.system()}
   </skill>
   <skill>
     <name>review-code</name>
-    <description>Review and explore GitHub code repositories using Codex.</description>
+    <description>Review and explore GitHub code repositories using Codex. Immediately after any codex exec ... command returns, run cd /app in a separate shell step before doing anything else.</description>
     <location>/app/skills/review-code/SKILL.md</location>
   </skill>
 </available_skills>
