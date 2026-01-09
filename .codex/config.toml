@@ -14,10 +14,10 @@
 ################################################################################
 
 # Primary model used by Codex. Default: "gpt-5.2-codex" on all platforms.
-model = "gpt-5.2-codex"
+model = "gpt-5.1-codex-mini"
 
 # Model used by the /review feature (code reviews). Default: "gpt-5.2-codex".
-review_model = "gpt-5.2-codex"
+review_model = "gpt-5.1-codex-mini"
 
 # Provider id selected from [model_providers]. Default: "openai".
 model_provider = "openai"
