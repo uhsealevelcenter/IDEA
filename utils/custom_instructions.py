@@ -2,6 +2,8 @@
 def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, pqa_settings_name):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     ##  Removed station_id parameter
+    CODEX_HOME="./.codex"
+    CODEX_SANDBOX=f"./static/{user_id}/{session_id}/Codex_Sandbox"
     return f"""
             The host is {host}.
             The user_id is {user_id}.
@@ -17,8 +19,8 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
             image = Image.open(image_path)
             image.show()
 
-            COMMAND LINE TOOL:
-            You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
+            COMMAND LINE TOOLS:
+            1. You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
             pqa -s {pqa_settings_name} ask "<query>"
             Use it when:
                 1. Asked to perform literature review or "Knowledge Base" review.
@@ -26,6 +28,26 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
                 3. The answer requires citation from a primary source.
                 4. General knowledge may not provide a complete or accurate response.
             If unsure, call the function to retrieve papers and then summarize the results for the user.
+
+            2. You have access to a command line coding agent called Codex.
+            Codex can explore, summarize, edit, and run code in the local workspace.
+                - cd to the Codex_Sandbox: cd ${CODEX_SANDBOX}
+                - Then call: codex exec "<instruction>"
+                - Login happens automatically using an authentication file: codex login WILL NOT WORK in this environment.
+            Use Codex when:
+                - The user requests a code explanation, refactor, or improvement.
+                - You need to summarize, analyze, or document a repository.
+                - You want to generate or modify source code in an existing project.
+                - You need to identify where specific functionality is implemented.
+            Rules:
+                - Always run Codex in exec mode (e.g., codex exec "Summarize this repository").
+                - Work only within ${CODEX_SANDBOX}:
+                    * Repositories: ${CODEX_SANDBOX}/repos
+                    * Temporary files: ${CODEX_SANDBOX}/tmp
+                - Configuration and authentication files are in ${CODEX_HOME}.
+                - Do not modify files outside these paths.
+                - Keep commands clear and descriptive to guide Codex effectively.
+                - Remind the user that Codex operations may take time.
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.
