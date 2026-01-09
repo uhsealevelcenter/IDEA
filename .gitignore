@@ -209,5 +209,5 @@ utils/untracked_system_prompts/
 local_scripts/
 
 # Codex
-.codex/
+.codex/auth.json
 Codex_Sandbox/
