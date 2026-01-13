@@ -91,7 +91,8 @@ approval_policy = "on-request"
 # - read-only (default)
 # - workspace-write
 # - danger-full-access (no sandbox; extremely risky)
-sandbox_mode = "read-only"
+#sandbox_mode = "read-only"
+sandbox_mode = "workspace-write" # Allow Codex to write in the Sandbox
 
 ################################################################################
 # Authentication & Login
