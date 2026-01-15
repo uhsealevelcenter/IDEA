@@ -1114,8 +1114,12 @@ function updateMessageContent(id, content) {
             // 5) Highlight code blocks using Prism
             prismHighlightUnder(contentDiv);
 
-            // 6) Typeset math (don’t wait for message.isComplete)
-            typeset(contentDiv);
+            // 6) Typeset math only once after the message is complete
+            const shouldTypeset = (message.isComplete !== false) && hasMathDelimiters(raw);
+            if (shouldTypeset && !message.__mathTypeset) {
+                message.__mathTypeset = true;
+                typeset(contentDiv);
+            }
         } else if (message.type === 'image') {
             if (message.format && message.format.startsWith('base64.')) {
                 const mime = message.format.replace('base64.', 'image/');
@@ -1816,7 +1820,7 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
     });
 
     scrollToBottom();
-    typeset(document.getElementById('chatDisplay'));
+    // MathJax typesetting happens per message when complete.
 }
 
 window.hydrateChatWithMessages = hydrateChatWithMessages;
