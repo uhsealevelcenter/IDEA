@@ -1114,7 +1114,10 @@ function updateMessageContent(id, content) {
             // 5) Highlight code blocks using Prism
             prismHighlightUnder(contentDiv);
 
-            // 6) Typeset math only once after the message is complete
+            // // 6) Typeset math (don’t wait for message.isComplete) - extremely high memory usage
+            // typeset(contentDiv);
+
+            // 6) Typeset math only once after the message is complete - reduces memory usage significantly
             const shouldTypeset = (message.isComplete !== false) && hasMathDelimiters(raw);
             if (shouldTypeset && !message.__mathTypeset) {
                 message.__mathTypeset = true;
@@ -1820,6 +1823,7 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
     });
 
     scrollToBottom();
+    // typeset(document.getElementById('chatDisplay')); // Removed full-chat typeset pass to reduce memory usage
     // MathJax typesetting happens per message when complete.
 }
 
