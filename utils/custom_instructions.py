@@ -53,18 +53,43 @@ Important notes:
             image.show()
 
             KNOWLEDGE BASE FUNCTION:
-            You have access to a function that can fetch facts from scientific papers in the user's knowledge base.
-            Use it by calling: query_knowledge_base("<query>", "{user_id}")
+            You have access to a function that can fetch facts and figures from scientific papers in the user's knowledge base.
+            Use it by calling: query_knowledge_base("<query>", "{user_id}", "{session_id}")
             Use it when:
                 1. Asked to perform literature review or "Knowledge Base" review.
                 2. The query involves specific scientific methods, findings, or technical details.
                 3. The answer requires citation from a primary source.
                 4. General knowledge may not provide a complete or accurate response.
                 5. Give as detailed query as possible to match the user's query.
+                6. The user asks about figures, tables, or images from papers.
             If unsure, call the function to retrieve papers and then summarize the results for the user.
+            
+            The function returns a dictionary with:
+                - "answer": The text answer with citations
+                - "images": List of extracted figures/images from the papers (if any)
+                    Each image has: "path" (local file path), "relative_path" (for display), 
+                    "page" (page number), "description" (if available), "used_in_answer" (bool)
+            
             Example usage:
-                result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}")
-                print(result)
+                result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}", "{session_id}")
+                print(result["answer"])
+                
+                # If images were extracted, display them:
+                for img in result["images"]:
+                    print(f"Figure from page {{img['page']}}: {{img['path']}}")
+                    # Open and display the image
+                    from PIL import Image
+                    image = Image.open(img["path"])
+                    image.show()
+            
+            When queries ask about figures or images:
+                result = query_knowledge_base("What does Figure 4 show in Chen et al.?", "{user_id}", "{session_id}")
+                print(result["answer"])
+                # The relevant figure images will be saved and available in result["images"]
+                for img in result["images"]:
+                    from PIL import Image
+                    image = Image.open(img["path"])
+                    image.show()
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.
@@ -140,7 +165,10 @@ Important notes:
             -- Call them directly as plain functions, e.g.:
                 now = get_datetime()
                 info = get_station_info("Honolulu, HI")
-                kb_result = query_knowledge_base("What is sea level rise?", "{user_id}")
+                kb_result = query_knowledge_base("What is sea level rise?", "{user_id}", "{session_id}")
+                print(kb_result["answer"])  # Text response with citations
+                for img in kb_result["images"]:  # Any extracted figures
+                    print(f"Image: {{img['path']}}")
                 mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
 
             CRITICAL:
