@@ -80,8 +80,10 @@ Important notes:
                 result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}", "{session_id}")
                 print(result["answer"])
             
-            **FOR FIGURE/IMAGE QUERIES - Show ONLY the relevant image:**
+            **FOR FIGURE/IMAGE QUERIES - Use KB answer text, show image without re-analysis:**
                 result = query_knowledge_base("What does Figure 4 show?", "{user_id}", "{session_id}")
+                # Use the ANSWER text directly as the final response.
+                # Do NOT re-analyze the image if the answer already contains the description.
                 print(result["answer"])
                 
                 # Read the answer and identify which page contains the requested figure.
@@ -96,13 +98,13 @@ Important notes:
                         break
                 
                 if selected:
-                    print(f"\\n--- Figure from page {{selected['page']}} ---")
                     image = Image.open(selected["path"])
-                    image.show()  # View and describe this image
+                    image.show()  # Display only (no re-description)
             
-            **IMPORTANT - NO OCR:**
-            When a figure is shown, read any text directly using your vision capability.
-            Do NOT run OCR, do NOT call any extra text-extraction tools, and do NOT say you will OCR.
+            **IMPORTANT - NO OCR / NO RE-READING IF ANSWER IS COMPLETE:**
+            If the Knowledge Base answer already describes the figure, use that text as-is.
+            Do NOT re-read the image, do NOT run OCR, and do NOT call extra extraction tools.
+            Only open/view the image if the answer is missing the description or explicitly says it cannot answer.
 
             **DO NOT show all images** - only show the one that matches the requested figure.
             If the user asks about "Figure 4", show ONLY the image containing Figure 4, not all extracted pages.
