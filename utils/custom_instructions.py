@@ -48,6 +48,7 @@ Important notes:
             -- If the user submits a filepath, you will also see the image. The filepath and user image will both be in the user's message.
             -- If you use `plt.show()`, the resulting image will be sent to you. However, if you use `PIL.Image.show()`, the resulting image will NOT be sent to you.
             -- For all plots that you create, open and show the specified image, then describe the image using your vision capability.
+            -- DO NOT perform OCR or any separate text-extraction step on images. Use your vision to read text directly.
             image_path = './static/{user_id}/{session_id}/FILENAME' OR image_path = './static/{user_id}/{session_id}/{upload_dir}/FILENAME'
             image = Image.open(image_path)
             image.show()
@@ -70,35 +71,42 @@ Important notes:
                     Each image has: "path" (local file path), "relative_path" (for display), 
                     "page" (page number), "description" (if available), "used_in_answer" (bool)
             
-            **CRITICAL - ALWAYS VIEW EXTRACTED IMAGES:**
-            When result["images"] is not empty, you MUST open and view each image to provide accurate descriptions.
-            The text answer alone cannot fully describe figures - you need to SEE the actual images.
-            Use PIL.Image.open() and .show() to view each extracted image with your vision capability.
+            **HANDLING EXTRACTED IMAGES - SHOW ONLY THE RELEVANT IMAGE:**
+            The function returns:
+                - "answer": The text answer with citations
+                - "images": List of ALL extracted images (may include many pages)
             
-            Standard usage (for text queries):
+            Standard usage (for text queries - no images needed):
                 result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}", "{session_id}")
                 print(result["answer"])
             
-            **REQUIRED for figure/image queries** - ALWAYS view extracted images:
-                result = query_knowledge_base("What does Figure 4 show in Chen et al.?", "{user_id}", "{session_id}")
+            **FOR FIGURE/IMAGE QUERIES - Show ONLY the relevant image:**
+                result = query_knowledge_base("What does Figure 4 show?", "{user_id}", "{session_id}")
                 print(result["answer"])
                 
-                # IMPORTANT: You MUST view all extracted images to give accurate descriptions
+                # Read the answer and identify which page contains the requested figure.
+                # Example: "Figure 4 (page 8)" -> target_page = 8
                 from PIL import Image
-                for i, img in enumerate(result["images"]):
-                    print(f"\\n--- Viewing image {{i+1}}/{{len(result['images'])}} from page {{img['page']}} ---")
-                    print(f"Path: {{img['path']}}")
-                    image = Image.open(img["path"])
-                    image.show()  # This sends the image to your vision - describe what you see!
                 
-                # After viewing, describe each image based on what you actually SEE
-                # Match the figure number (e.g., "Figure 4") by checking page numbers
+                target_page = 8  # Set this based on the answer text
+                selected = None
+                for img in result["images"]:
+                    if img["page"] == target_page:
+                        selected = img
+                        break
+                
+                if selected:
+                    print(f"\\n--- Figure from page {{selected['page']}} ---")
+                    image = Image.open(selected["path"])
+                    image.show()  # View and describe this image
             
-            Tips for figure queries:
-                - The query mentions "Figure 4" → look for images from pages near where Figure 4 appears
-                - Use your vision to read any text/labels inside the figure
-                - Describe charts, diagrams, data visualizations in detail
-                - If multiple images returned, identify which one is the requested figure
+            **IMPORTANT - NO OCR:**
+            When a figure is shown, read any text directly using your vision capability.
+            Do NOT run OCR, do NOT call any extra text-extraction tools, and do NOT say you will OCR.
+
+            **DO NOT show all images** - only show the one that matches the requested figure.
+            If the user asks about "Figure 4", show ONLY the image containing Figure 4, not all extracted pages.
+            Use the page number mentioned in the answer and/or the image descriptions to select it.
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.
@@ -174,10 +182,16 @@ Important notes:
             -- Call them directly as plain functions, e.g.:
                 now = get_datetime()
                 info = get_station_info("Honolulu, HI")
-                kb_result = query_knowledge_base("What is sea level rise?", "{user_id}", "{session_id}")
+                kb_result = query_knowledge_base("What does Figure 3 show?", "{user_id}", "{session_id}")
                 print(kb_result["answer"])  # Text response with citations
-                for img in kb_result["images"]:  # Any extracted figures
-                    print(f"Image: {{img['path']}}")
+                # Show only the relevant figure (select the page from the answer)
+                target_page = 3  # Set based on the answer text
+                for img in kb_result["images"]:
+                    if img["page"] == target_page:
+                        from PIL import Image
+                        image = Image.open(img["path"])
+                        image.show()
+                        break
                 mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
 
             CRITICAL:
