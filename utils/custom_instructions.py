@@ -65,31 +65,40 @@ Important notes:
             If unsure, call the function to retrieve papers and then summarize the results for the user.
             
             The function returns a dictionary with:
-                - "answer": The text answer with citations
+                - "answer": The text answer with citations (text description only)
                 - "images": List of extracted figures/images from the papers (if any)
                     Each image has: "path" (local file path), "relative_path" (for display), 
                     "page" (page number), "description" (if available), "used_in_answer" (bool)
             
-            Example usage:
+            **CRITICAL - ALWAYS VIEW EXTRACTED IMAGES:**
+            When result["images"] is not empty, you MUST open and view each image to provide accurate descriptions.
+            The text answer alone cannot fully describe figures - you need to SEE the actual images.
+            Use PIL.Image.open() and .show() to view each extracted image with your vision capability.
+            
+            Standard usage (for text queries):
                 result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}", "{session_id}")
                 print(result["answer"])
-                
-                # If images were extracted, display them:
-                for img in result["images"]:
-                    print(f"Figure from page {{img['page']}}: {{img['path']}}")
-                    # Open and display the image
-                    from PIL import Image
-                    image = Image.open(img["path"])
-                    image.show()
             
-            When queries ask about figures or images:
+            **REQUIRED for figure/image queries** - ALWAYS view extracted images:
                 result = query_knowledge_base("What does Figure 4 show in Chen et al.?", "{user_id}", "{session_id}")
                 print(result["answer"])
-                # The relevant figure images will be saved and available in result["images"]
-                for img in result["images"]:
-                    from PIL import Image
+                
+                # IMPORTANT: You MUST view all extracted images to give accurate descriptions
+                from PIL import Image
+                for i, img in enumerate(result["images"]):
+                    print(f"\\n--- Viewing image {{i+1}}/{{len(result['images'])}} from page {{img['page']}} ---")
+                    print(f"Path: {{img['path']}}")
                     image = Image.open(img["path"])
-                    image.show()
+                    image.show()  # This sends the image to your vision - describe what you see!
+                
+                # After viewing, describe each image based on what you actually SEE
+                # Match the figure number (e.g., "Figure 4") by checking page numbers
+            
+            Tips for figure queries:
+                - The query mentions "Figure 4" → look for images from pages near where Figure 4 appears
+                - Use your vision to read any text/labels inside the figure
+                - Describe charts, diagrams, data visualizations in detail
+                - If multiple images returned, identify which one is the requested figure
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.
