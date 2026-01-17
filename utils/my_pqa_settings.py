@@ -105,11 +105,18 @@ def create_pqa_settings(
     #               defer_embedding, parse_pdf, configure_pdf_parser, doc_filters,
     #               use_human_readable_clinical_trials, enrichment_llm, enrichment_llm_config,
     #               enrichment_page_radius, enrichment_prompt
+    #
+    # MultimodalOptions:
+    #   - OFF: No multimodal support
+    #   - ON_WITH_ENRICHMENT: Full multimodal with LLM enrichment (images sent to vision LLM for description)
+    #   - ON_WITHOUT_ENRICHMENT: Images extracted but not described by LLM
+    #
+    # Using ON enables the vision LLM to describe figures/images in the answer
     parsing_kwargs = {
         "citation_prompt": citation_prompt,
         "structured_citation_prompt": structured_citation_prompt,
-        "multimodal": MultimodalOptions.ON_WITHOUT_ENRICHMENT,
-        "enrichment_llm": llm,
+        "multimodal": MultimodalOptions.ON_WITH_ENRICHMENT,  # Enable vision LLM to describe images
+        "enrichment_llm": llm,  # Use same LLM for image enrichment (must support vision)
         "reader_config": {
             "chunk_chars": 5000,
             "overlap": 250,
