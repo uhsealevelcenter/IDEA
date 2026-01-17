@@ -232,30 +232,76 @@ def web_search(web_query):
     #return {"web_query_response": web_query_response}
     return extract_web_query_response(web_query_response)
 
-def query_knowledge_base(query, user_id):
+def query_knowledge_base(query, user_id, session_id=None):
     \"\"\"Query the user's knowledge base using PaperQA.
     
     This function uses the persistent index approach to query papers in the user's
-    knowledge base. It preserves media content for future extraction.
+    knowledge base. It extracts and saves media (images/figures) from relevant contexts.
     
     Parameters:
         query (str): The question to ask about the papers.
         user_id (str): The user's ID to load their specific paper directory.
+        session_id (str, optional): Session ID for saving images to the correct directory.
     
     Returns:
-        str: The formatted answer with references from the knowledge base.
-    
-    Note for future: Will eventually return deduplicated base64 image dataUrls 
-    from context.text.media along with the answer.
+        dict: A dictionary containing:
+            - answer (str): The formatted answer with references
+            - images (list): List of dicts with image info (path, page, description, url)
     \"\"\"
     import asyncio
     import nest_asyncio
+    import base64
+    import hashlib
+    from pathlib import Path
     from paperqa import Docs
     from paperqa.agents.search import get_directory_index
     from utils.pqa_multi_tenant import get_user_settings
     
     # Apply nest_asyncio to allow nested event loops (needed when running from Open Interpreter)
     nest_asyncio.apply()
+    
+    def save_base64_image(data_url, output_dir, prefix="kb_figure"):
+        \"\"\"Save a base64 data URL to an image file.
+        
+        Returns the saved file path or None if failed.
+        \"\"\"
+        try:
+            # Parse the data URL: data:image/png;base64,XXXXX
+            if not data_url or not data_url.startswith("data:image"):
+                return None
+            
+            # Extract mime type and base64 data
+            header, b64_data = data_url.split(",", 1)
+            mime_type = header.split(":")[1].split(";")[0]  # e.g., "image/png"
+            
+            # Determine file extension
+            ext_map = {
+                "image/png": ".png",
+                "image/jpeg": ".jpg",
+                "image/jpg": ".jpg",
+                "image/gif": ".gif",
+                "image/webp": ".webp",
+            }
+            ext = ext_map.get(mime_type, ".png")
+            
+            # Create a unique filename based on content hash
+            content_hash = hashlib.md5(b64_data.encode()).hexdigest()[:12]
+            filename = f"{prefix}_{content_hash}{ext}"
+            filepath = output_dir / filename
+            
+            # Skip if file already exists (deduplication)
+            if filepath.exists():
+                return filepath
+            
+            # Decode and save
+            image_data = base64.b64decode(b64_data)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            filepath.write_bytes(image_data)
+            
+            return filepath
+        except Exception as e:
+            print(f"[PQA] Warning: Failed to save image: {e}")
+            return None
     
     async def _query_async():
         print("[PQA] Step 1: Loading user settings...")
@@ -265,14 +311,13 @@ def query_knowledge_base(query, user_id):
         
         print("[PQA] Step 2: Building/loading index...")
         # Step 2: Build/reuse the persistent index
-        # This will persist the index to disk and reuse it on subsequent calls
         index = await get_directory_index(settings=settings)
         print("[PQA] Index loaded.")
         
         # Check if there are any indexed files
         index_files = await index.index_files
         if not index_files:
-            return "No papers found in your knowledge base. Please upload papers first."
+            return {"answer": "No papers found in your knowledge base. Please upload papers first.", "images": []}
         print(f"[PQA] Found {len(index_files)} indexed files.")
         
         # Step 3: Create a Docs object and add documents from the index
@@ -287,15 +332,82 @@ def query_knowledge_base(query, user_id):
                 await docs.aadd(full_path, settings=settings)
         print("[PQA] All documents added.")
         
-        # Step 4: Query with docs.aquery() - this returns PQASession WITHOUT auto-filtering
-        # This means media content is preserved for future extraction
+        # Step 4: Query with docs.aquery() - preserves media content
         print(f"[PQA] Step 4: Querying with: '{query}'...")
         session = await docs.aquery(query=query, settings=settings)
         print("[PQA] Query complete.")
         
-        # Return the string representation (answer + references)
-        # Future: Extract and return deduplicated base64 image dataUrls from context.text.media
-        return str(session)
+        # Step 5: Extract and save images from contexts
+        print("[PQA] Step 5: Extracting images from contexts...")
+        
+        # Determine output directory for images
+        static_dir = Path("static")
+        if session_id:
+            output_dir = static_dir / str(user_id) / session_id / "pqa_media"
+        else:
+            output_dir = static_dir / str(user_id) / "pqa_media"
+        
+        saved_images = []
+        seen_hashes = set()  # For deduplication across contexts
+        
+        # Get contexts that were actually used in the answer
+        used_context_ids = getattr(session, "used_contexts", set())
+        
+        for context in session.contexts:
+            # Prioritize used contexts but also include others with media
+            is_used = context.id in used_context_ids if used_context_ids else True
+            
+            if not hasattr(context, "text") or not hasattr(context.text, "media"):
+                continue
+            
+            for media in context.text.media:
+                try:
+                    data_url = media.to_image_url()
+                    if not data_url:
+                        continue
+                    
+                    # Check for duplicates using content hash
+                    if "," in data_url:
+                        b64_part = data_url.split(",", 1)[1]
+                        content_hash = hashlib.md5(b64_part.encode()).hexdigest()
+                        if content_hash in seen_hashes:
+                            continue
+                        seen_hashes.add(content_hash)
+                    
+                    # Save the image
+                    saved_path = save_base64_image(data_url, output_dir)
+                    if saved_path:
+                        # Get metadata from media info
+                        info = getattr(media, "info", {}) or {}
+                        page_num = info.get("page_num", info.get("page"))
+                        media_type = info.get("type", "image")
+                        description = info.get("enriched_description", "")
+                        
+                        # Build relative URL for frontend
+                        rel_path = saved_path.relative_to(static_dir)
+                        
+                        saved_images.append({
+                            "path": str(saved_path),
+                            "relative_path": str(rel_path),
+                            "page": page_num,
+                            "type": media_type,
+                            "description": description,
+                            "context_id": context.id,
+                            "used_in_answer": is_used,
+                            "chunk_name": getattr(context.text, "name", ""),
+                        })
+                        print(f"[PQA]   Saved: {saved_path.name} (page {page_num})")
+                except Exception as e:
+                    print(f"[PQA] Warning: Failed to process media: {e}")
+                    continue
+        
+        print(f"[PQA] Extracted {len(saved_images)} unique images.")
+        
+        # Return structured result
+        return {
+            "answer": str(session),
+            "images": saved_images,
+        }
     
     # With nest_asyncio applied, we can safely use asyncio.run() or get_event_loop()
     try:
