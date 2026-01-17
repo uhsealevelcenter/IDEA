@@ -203,7 +203,7 @@ dependencies = [
   "clamd==1.0.2",
   "slowapi==0.1.9",
   "python-magic==0.4.27",
-  "paper-qa[pymupdf,pypdf-media,office]==2025.12.17",
+  "paper-qa[pymupdf,pypdf-media,office]>=2026.1.5",
   "geopy",
   "plotly",
   "nbformat",
