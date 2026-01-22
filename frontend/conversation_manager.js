@@ -24,6 +24,9 @@ class ConversationManager {
         this.currentConversationId = null;
         this.conversations = [];
         this.currentMessages = [];
+        this.pageSize = 100;
+        this.totalCount = 0;
+        this.isLoading = false;
         
         // Initialize conversation management
         this.init();
@@ -51,9 +54,21 @@ class ConversationManager {
     /**
      * Load all conversations for the current user
      */
-    async loadConversations() {
+    async loadConversations({ reset = true } = {}) {
+        if (this.isLoading) {
+            return this.conversations;
+        }
+
+        const skip = reset ? 0 : this.conversations.length;
+        const limit = this.pageSize;
+
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/`, {
+            this.isLoading = true;
+            const url = new URL(`${this.apiBaseUrl}/conversations/`);
+            url.searchParams.set('skip', skip);
+            url.searchParams.set('limit', limit);
+
+            const response = await fetch(url.toString(), {
                 headers: {
                     'Content-Type': 'application/json',
                     ...this.getAuthHeaders()
@@ -63,13 +78,38 @@ class ConversationManager {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const data = await response.json();
-            this.conversations = data.data || [];
+            const fetched = data.data || [];
+            const total = typeof data.count === 'number' ? data.count : null;
+            if (reset) {
+                this.conversations = fetched;
+            } else {
+                const existingIds = new Set(this.conversations.map(conv => conv.id));
+                const uniqueFetched = fetched.filter(conv => !existingIds.has(conv.id));
+                this.conversations = this.conversations.concat(uniqueFetched);
+            }
+            if (total !== null) {
+                this.totalCount = total;
+            } else {
+                this.totalCount = Math.max(this.totalCount, this.conversations.length);
+            }
             this.notifyConversationListeners('conversations_loaded', this.conversations);
             return this.conversations;
         } catch (error) {
             console.error('Error loading conversations:', error);
             throw error;
+        } finally {
+            this.isLoading = false;
         }
+    }
+
+    /**
+     * Load the next page of conversations
+     */
+    async loadMoreConversations() {
+        if (!this.hasMoreConversations()) {
+            return this.conversations;
+        }
+        return this.loadConversations({ reset: false });
     }
     
     /**
@@ -94,6 +134,7 @@ class ConversationManager {
             
             const conversation = await response.json();
             this.conversations.unshift(conversation);
+            this.totalCount += 1;
             this.currentConversationId = conversation.id;
             this.currentMessages = [];
             
@@ -205,6 +246,9 @@ class ConversationManager {
             
             // Remove from local list
             this.conversations = this.conversations.filter(c => c.id !== conversationId);
+            if (this.totalCount > 0) {
+                this.totalCount -= 1;
+            }
             
             // If this was the current conversation, clear it
             if (this.currentConversationId === conversationId) {
@@ -354,6 +398,27 @@ class ConversationManager {
      */
     getAllConversations() {
         return this.conversations;
+    }
+
+    /**
+     * Get total conversation count
+     */
+    getTotalConversations() {
+        return this.totalCount;
+    }
+
+    /**
+     * Check if more conversations are available
+     */
+    hasMoreConversations() {
+        return this.totalCount > this.conversations.length;
+    }
+
+    /**
+     * Check if conversation list is loading
+     */
+    isLoadingConversations() {
+        return this.isLoading;
     }
     
     /**
