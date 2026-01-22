@@ -48,7 +48,13 @@ function setupConversationEventListeners() {
     
     // Refresh conversations
     document.getElementById('refreshConversations').addEventListener('click', async () => {
-        await conversationManager.loadConversations();
+        await conversationManager.loadConversations({ reset: true });
+        displayConversations();
+    });
+
+    // Load more conversations
+    document.getElementById('loadMoreConversations').addEventListener('click', async () => {
+        await conversationManager.loadMoreConversations();
         displayConversations();
     });
 }
@@ -113,6 +119,7 @@ function displayConversations() {
                 <p class="empty-state-subtitle">Start a new conversation to see it here</p>
             </div>
         `;
+        updateLoadMoreState();
         return;
     }
     
@@ -158,6 +165,33 @@ function displayConversations() {
             }
         }
     });
+
+    updateLoadMoreState();
+}
+
+function updateLoadMoreState() {
+    const loadMoreButton = document.getElementById('loadMoreConversations');
+    const countLabel = document.getElementById('conversationCount');
+    if (!loadMoreButton || !countLabel) {
+        return;
+    }
+
+    const loadedCount = conversationManager.getAllConversations().length;
+    const totalCount = conversationManager.getTotalConversations();
+    const hasMore = conversationManager.hasMoreConversations();
+    const isLoading = conversationManager.isLoadingConversations();
+
+    if (totalCount > 0) {
+        countLabel.textContent = `Showing ${loadedCount} of ${totalCount}`;
+    } else if (loadedCount > 0) {
+        countLabel.textContent = `Showing ${loadedCount}`;
+    } else {
+        countLabel.textContent = '';
+    }
+
+    loadMoreButton.style.display = hasMore ? 'inline-flex' : 'none';
+    loadMoreButton.disabled = isLoading;
+    loadMoreButton.textContent = isLoading ? 'Loading...' : 'Load more';
 }
 
 function createConversationItem(conversation) {
