@@ -317,7 +317,7 @@ def query_knowledge_base(query, user_id, session_id=None):
         # Check if there are any indexed files
         index_files = await index.index_files
         if not index_files:
-            return {"answer": "No papers found in your knowledge base. Please upload papers first.", "images": []}
+            return {"answer": "No papers found in your Knowledge base. Please upload papers first.", "images": []}
         print(f"[PQA] Found {len(index_files)} indexed files.")
         
         # Step 3: Create a Docs object and add documents from the index
@@ -396,7 +396,7 @@ def query_knowledge_base(query, user_id, session_id=None):
                             "used_in_answer": is_used,
                             "chunk_name": getattr(context.text, "name", ""),
                         })
-                        print(f"[PQA]   Saved: {saved_path.name} (page {page_num})")
+                        print(f"[PQA] Saved: {saved_path.name} (page {page_num})")
                 except Exception as e:
                     print(f"[PQA] Warning: Failed to process media: {e}")
                     continue
