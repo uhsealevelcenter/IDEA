@@ -589,9 +589,9 @@ stopButton.addEventListener('click', () => {
         interruptInterpreter();
         pendingConsoleParentId = null;
         lastExecutableCodeId = null;
-        activeLineCodeId = null;
-        isActiveLineRunning = false;
         removeActiveLineSpinner();
+        isActiveLineRunning = false;
+        activeLineCodeId = null;
     }
 });
 
@@ -819,6 +819,9 @@ function resetButtons() {
     stopButton.disabled = true;
     controller = null;
     isGenerating = false;
+    isActiveLineRunning = false;
+    removeActiveLineSpinner();
+    activeLineCodeId = null;
 }
 
 function shouldStartNewBase64Image(message, chunk) {
