@@ -636,7 +636,7 @@ numpy==1.26.4
     #   xarray
     #   yfinance
     #   zarr
-open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@efecd4a2ed369486c4bafd6fbac53987d8c6846b
+open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@465ab3c6c72e167cf19dd5d2d6cb22d43397dcf2
     # via idea
 openai==1.102.0
     # via

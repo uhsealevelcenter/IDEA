@@ -565,33 +565,11 @@ messageInput.addEventListener('keypress', (e) => {
     // this.style.height = this.scrollHeight + 'px';
 });
 
-async function interruptInterpreter() {
-    try {
-        const endpoint = config.getEndpoints().interrupt;
-        if (!endpoint) return;
-        await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-                'X-Session-Id': sessionId,
-                ...getAuthHeaders()
-            }
-        });
-    } catch (error) {
-        console.error('Interrupt request failed:', error);
-    }
-}
-
 stopButton.addEventListener('click', () => {
     if (isGenerating && controller) {
         isGenerating = false;
         controller.abort();
         appendSystemMessage("Generation stopped by user.");
-        interruptInterpreter();
-        pendingConsoleParentId = null;
-        lastExecutableCodeId = null;
-        removeActiveLineSpinner();
-        isActiveLineRunning = false;
-        activeLineCodeId = null;
     }
 });
 
@@ -819,9 +797,6 @@ function resetButtons() {
     stopButton.disabled = true;
     controller = null;
     isGenerating = false;
-    isActiveLineRunning = false;
-    removeActiveLineSpinner();
-    activeLineCodeId = null;
 }
 
 function shouldStartNewBase64Image(message, chunk) {
