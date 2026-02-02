@@ -233,10 +233,10 @@ def web_search(web_query):
     return extract_web_query_response(web_query_response)
 
 def query_knowledge_base(query, user_id, session_id=None):
-    \"\"\"Query the user's knowledge base using PaperQA.
+    \"\"\"Query the user's Knowledge base using PaperQA.
     
     This function uses the persistent index approach to query papers in the user's
-    knowledge base. It preserves media content for future extraction.
+    Knowledge base. It preserves media content for future extraction.
     
     Parameters:
         query (str): The question to ask about the papers.
