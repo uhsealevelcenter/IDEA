@@ -705,6 +705,7 @@ def clear_session(session_key: str):
         if interpreter:
             # Call reset() to properly terminate all languages and clean up
             interpreter.reset()
+            clear_pending_output_queues(interpreter)
             # Remove from instances dict
             del interpreter_instances[session_key]
 
@@ -732,12 +733,56 @@ def clear_session(session_key: str):
         raise
 
 
+def clear_pending_output_queues(interpreter: OpenInterpreter):
+    """Best-effort drain of any pending stdout/stderr queues on the interpreter."""
+    if not interpreter:
+        return
+
+    def drain_queue(q):
+        if not q:
+            return
+        try:
+            # Queue-like interface
+            while True:
+                q.get_nowait()
+        except Exception:
+            pass
+        try:
+            # Deque-like storage
+            if hasattr(q, "queue"):
+                q.queue.clear()
+        except Exception:
+            pass
+
+    queue_attr_names = (
+        "output_queue",
+        "_output_queue",
+        "stdout_queue",
+        "stderr_queue",
+        "_stdout_queue",
+        "_stderr_queue",
+    )
+
+    targets = [
+        interpreter,
+        getattr(interpreter, "computer", None),
+        getattr(interpreter, "terminal", None),
+    ]
+
+    for target in targets:
+        if not target:
+            continue
+        for attr in queue_attr_names:
+            drain_queue(getattr(target, attr, None))
+
+
 def clear_all_interpreter_instances():
     """Clear all interpreter instances to force recreation with new system message"""
     try:
         for session_key, interpreter in list(interpreter_instances.items()):
             try:
                 interpreter.reset()
+                clear_pending_output_queues(interpreter)
                 logger.info(f"Reset interpreter for session {session_key}")
             except Exception as e:
                 logger.error(f"Error resetting interpreter for session {session_key}: {str(e)}")
@@ -929,6 +974,30 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
         raise HTTPException(status_code=500, detail="Failed to clear chat history")
     except Exception as e:
         logger.error(f"Unexpected error in clear_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/interrupt")
+def interrupt_endpoint(request: Request, token: str = Depends(get_auth_token)):
+    try:
+        session_id = request.headers.get("x-session-id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="x-session-id header is required")
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        session_key = make_session_key(user.id, session_id)
+        interpreter = interpreter_instances.get(session_key)
+        if interpreter:
+            try:
+                interpreter.reset()
+            finally:
+                clear_pending_output_queues(interpreter)
+
+        return {"status": "Interpreter interrupted"}
+    except Exception as e:
+        logger.error(f"Unexpected error in interrupt_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
