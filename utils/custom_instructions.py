@@ -7,7 +7,7 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, m
     if mcp_tools:
         mcp_section = """
 
-5. MCP TOOLS (Model Context Protocol):
+6. MCP TOOLS (Model Context Protocol):
 You have access to external MCP tools via the call_mcp_tool function. Available tools:
 
 """ + "\n".join(mcp_tools) + """
@@ -53,62 +53,9 @@ Important notes:
             image = Image.open(image_path)
             image.show()
 
-            KNOWLEDGE BASE FUNCTION:
-            You have access to a function that can fetch facts and figures from scientific papers in the user's knowledge base.
-            Use it by calling: query_knowledge_base("<query>", "{user_id}", "{session_id}")
-            Use it when:
-                1. Asked to perform literature review or "Knowledge Base" review.
-                2. The query involves specific scientific methods, findings, or technical details.
-                3. The answer requires citation from a primary source.
-                4. General knowledge may not provide a complete or accurate response.
-                5. Give as detailed query as possible to match the user's query.
-                6. The user asks about figures, tables, or images from papers.
-            If unsure, call the function to retrieve papers and then summarize the results for the user.
-            
-            The function returns a dictionary with:
-                - "answer": The text answer with citations (text description only)
-                - "images": List of extracted figures/images from the papers (if any)
-                    Each image has: "path" (local file path), "relative_path" (for display), 
-                    "page" (page number), "description" (if available), "used_in_answer" (bool)
-            
-            **HANDLING EXTRACTED IMAGES - SHOW ONLY THE RELEVANT IMAGE:**
-            The function returns:
-                - "answer": The text answer with citations
-                - "images": List of ALL extracted images (may include many pages)
-            
-            Standard usage (for text queries - no images needed):
-                result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}", "{session_id}")
-                print(result["answer"])
-            
-            **FOR FIGURE/IMAGE QUERIES - Use KB answer text, show image without re-analysis:**
-                result = query_knowledge_base("What does Figure 4 show?", "{user_id}", "{session_id}")
-                # Use the ANSWER text directly as the final response.
-                # Do NOT re-analyze the image if the answer already contains the description.
-                print(result["answer"])
-                
-                # Read the answer and identify which page contains the requested figure.
-                # Example: "Figure 4 (page 8)" -> target_page = 8
-                from PIL import Image
-                
-                target_page = 8  # Set this based on the answer text
-                selected = None
-                for img in result["images"]:
-                    if img["page"] == target_page:
-                        selected = img
-                        break
-                
-                if selected:
-                    image = Image.open(selected["path"])
-                    image.show()  # Display only (no re-description)
-            
-            **IMPORTANT - NO OCR / NO RE-READING IF ANSWER IS COMPLETE:**
-            If the Knowledge Base answer already describes the figure, use that text as-is.
-            Do NOT re-read the image, do NOT run OCR, and do NOT call extra extraction tools.
-            Only open/view the image if the answer is missing the description or explicitly says it cannot answer.
-
-            **DO NOT show all images** - only show the one that matches the requested figure.
-            If the user asks about "Figure 4", show ONLY the image containing Figure 4, not all extracted pages.
-            Use the page number mentioned in the answer and/or the image descriptions to select it.
+            COMMAND LINE INTERFACE (CLI) TOOLS:
+            You have access to many command line tools, including the following specific tools:
+            1. Additional CLI tools will be provided as needed.
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.
@@ -184,17 +131,71 @@ Important notes:
             -- Call them directly as plain functions, e.g.:
                 now = get_datetime()
                 info = get_station_info("Honolulu, HI")
-                kb_result = query_knowledge_base("What does Figure 3 show?", "{user_id}", "{session_id}")
-                print(kb_result["answer"])  # Text response with citations
+                result = query_knowledge_base("What does Figure 3 show?", "{user_id}", "{session_id}")
+                print(result["answer"])  # Text response with citations
                 # Show only the relevant figure (select the page from the answer)
                 target_page = 3  # Set based on the answer text
-                for img in kb_result["images"]:
+                for img in result["images"]:
                     if img["page"] == target_page:
                         from PIL import Image
                         image = Image.open(img["path"])
                         image.show()
                         break
                 mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
+
+            5.  query_knowledge_base ("<query>", "{user_id}", "{session_id}")
+            You have access to a function that can fetch facts, figures, and understanding from documents that the user has uploaded to IDEA (via the "Knowledge" interface).
+            Use query_knowledge_base when:
+                i. Asked to review scientific literature or other documents in the "Knowledge" base of IDEA.
+                ii. The query involves specific scientific methods, findings, or technical details.
+                iii. The answer requires citation from a primary source.
+                iv. General knowledge may not provide a complete or accurate response.
+                v. The user asks about figures, tables, or images from papers.
+            If unsure, call the function to query papers and then summarize the results for the user.
+            Enhance the user's query to provide as detailed a query as possible.
+            
+            The function returns a dictionary with:
+                - "answer": The text answer with citations (text description only)
+                - "images": List of extracted figures/images from the papers (if any; may include many pages)
+                    Each image has: "path" (local file path), "relative_path" (for display), 
+                    "page" (page number), "description" (if available), "used_in_answer" (bool)
+
+            **STANDARD USAGE (for text queries - no images needed)**
+                result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}", "{session_id}")
+                print(result["answer"])
+                    
+            **FOR FIGURE/IMAGE QUERIES - Use answer text, show only the relevant image(s)**
+                result = query_knowledge_base("What does Figure 4 show?", "{user_id}", "{session_id}")
+                - Use the ANSWER text directly as the final response.
+                - If the answer already well describes the image, do NOT re-analyze the image.
+                    Example: print(result["answer"])         
+                - Read the answer and identify which page contains the requested figure.
+                    Example: "Figure 4 (page 8)" -> target_page = 8
+                - Extract show only that image(s))
+                    Example:
+                    from PIL import Image
+                    
+                    target_page = 8  # Set this based on the answer text
+                    selected = None
+                    for img in result["images"]:
+                        if img["page"] == target_page:
+                            selected = img
+                            break
+                    
+                    if selected:
+                        image = Image.open(selected["path"])
+                        image.show()  # Display only (no re-description)
+            
+            **IMPORTANT - NO OCR / NO RE-READING IF ANSWER IS COMPLETE:**
+            - If the Knowledge Base answer already describes the figure, use that answer text as-is.
+            - Do NOT re-read the image, do NOT run OCR, and do NOT call extra extraction tools.
+            - Only open/view the image if the answer is missing an image description or explicitly says it cannot answer.
+
+            **DO NOT show all images** - only show the one that matches the requested figure.
+            - If the user asks about "Figure 4", show ONLY the image containing Figure 4, not all extracted pages.
+            - Use the page number mentioned in the answer and/or the image descriptions to select it.    
+
+            END OF CUSTOM FUNCTION USAGE NOTE
 
             CRITICAL:
             -- Always attempt to execute code, unless the user explicitly requested otherwise (e.g., "show me example code").
