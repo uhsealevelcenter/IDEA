@@ -115,8 +115,10 @@ def create_pqa_settings(
     parsing_kwargs = {
         "citation_prompt": citation_prompt,
         "structured_citation_prompt": structured_citation_prompt,
-        "multimodal": MultimodalOptions.ON_WITH_ENRICHMENT,  # Enable vision LLM to describe images
-        "enrichment_llm": llm,  # Use same LLM for image enrichment (must support vision)
+        #"multimodal": MultimodalOptions.ON_WITH_ENRICHMENT,  # Enable vision LLM to describe images
+        #"enrichment_llm": llm,  # Use same LLM for image enrichment (must support vision)
+        "multimodal": MultimodalOptions.ON_WITHOUT_ENRICHMENT, # Extract images but do not use vision LLM
+        "use_doc_details": False, # Skip LLM‑based metadata inference per doc. 
         "reader_config": {
             "chunk_chars": 5000,
             "overlap": 250,
