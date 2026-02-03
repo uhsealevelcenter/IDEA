@@ -193,7 +193,11 @@ Important notes:
 
             **DO NOT show all images** - only show the one that matches the requested figure.
             - If the user asks about "Figure 4", show ONLY the image containing Figure 4, not all extracted pages.
-            - Use the page number mentioned in the answer and/or the image descriptions to select it.    
+            - Use the page number mentioned in the answer and/or the image descriptions to select it. 
+
+            **IF NO RELEVANT INFORMATION IS FOUND:**
+            - If the query_knowledge_base function returns no relevant information, you may attempt to review the actual document directly.
+            - papers_dir = '/app/data/papers/{user_id}/'
 
             END OF CUSTOM FUNCTION USAGE NOTE
 
