@@ -2153,7 +2153,7 @@ requires-dist = [
     { name = "nltk", specifier = "==3.9.1" },
     { name = "numcodecs", specifier = "==0.14.1" },
     { name = "numpy", specifier = ">=1.24.0,<2.0" },
-    { name = "open-interpreter", git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.3_robust-exec-mod-AND-interupt" },
+    { name = "open-interpreter", git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.4_robust-exec-mod-AND-interupt" },
     { name = "openai", specifier = ">=1.61.0" },
     { name = "openpyxl" },
     { name = "outcome", specifier = "==1.3.0.post0" },
@@ -3138,7 +3138,7 @@ wheels = [
 [[package]]
 name = "open-interpreter"
 version = "0.4.3"
-source = { git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.3_robust-exec-mod-AND-interupt#465ab3c6c72e167cf19dd5d2d6cb22d43397dcf2" }
+source = { git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.4_robust-exec-mod-AND-interupt#26dceb13e28a19ab97543034d58c4d5b4cb835bf" }
 dependencies = [
     { name = "anthropic" },
     { name = "astor" },
