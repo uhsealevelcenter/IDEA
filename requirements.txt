@@ -691,7 +691,7 @@ olefile==0.47
     # via
     #   msoffcrypto-tool
     #   python-oxmsg
-open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@efecd4a2ed369486c4bafd6fbac53987d8c6846b
+open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@26dceb13e28a19ab97543034d58c4d5b4cb835bf
     # via idea
 openai==1.102.0
     # via

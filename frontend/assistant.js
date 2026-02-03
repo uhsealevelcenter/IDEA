@@ -31,6 +31,8 @@ let pendingConsoleParentId = null;
 const codeConsoleMap = new Map();
 let activeLineCodeId = null;
 let isActiveLineRunning = false;
+let stopRequested = false;
+let stopRequestedCodeId = null;
 let userProfilePromise = null;
 let welcomeRenderPromise = null;
 let welcomeRendered = false;
@@ -567,6 +569,8 @@ messageInput.addEventListener('keypress', (e) => {
 
 stopButton.addEventListener('click', () => {
     if (isGenerating && controller) {
+        stopRequested = true;
+        stopRequestedCodeId = activeLineCodeId || lastExecutableCodeId || pendingConsoleParentId;
         isGenerating = false;
         controller.abort();
         appendSystemMessage("Generation stopped by user.");
@@ -636,6 +640,42 @@ function buildAttachmentInstruction(attachments = []) {
         return `- ${att.name}${mimeType}${relPath ? ` | relative path: ${relPath}` : ''}`;
     }).join('\n');
     return `Files uploaded in this message:\nSession ID: ${sessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.`;
+}
+
+function getMessageById(messageId) {
+    return messages.find(msg => msg.id === messageId) || null;
+}
+
+function isShellCodeMessage(message) {
+    if (!message || message.type !== 'code') return false;
+    const format = (message.format || '').toLowerCase();
+    return ['shell', 'bash', 'sh', 'zsh', 'powershell', 'pwsh', 'cmd'].includes(format);
+}
+
+function hasInterruptionNotice(codeId) {
+    if (!codeId) return false;
+    const outputs = getConsoleMessagesForCode(codeId);
+    return outputs.some(msg => {
+        const text = typeof msg?.content === 'string' ? msg.content : '';
+        return /interrupt|interrupted|keyboardinterrupt|stopped before completion/i.test(text);
+    });
+}
+
+function appendPrematureStopNotice(codeId, reason = 'Execution stopped before completion.') {
+    if (!codeId || hasInterruptionNotice(codeId)) return;
+    const messageId = generateId('msg');
+    const noticeMessage = {
+        id: messageId,
+        role: 'computer',
+        type: 'console',
+        format: 'output',
+        content: reason,
+        associatedCodeId: codeId
+    };
+    messages.push(noticeMessage);
+    appendMessage(noticeMessage);
+    addConsoleMapping(codeId, messageId);
+    refreshStdoutPanel(codeId, { autoScroll: true });
 }
 
 function serializeMessagesForRequest(messageList = []) {
@@ -797,6 +837,20 @@ function resetButtons() {
     stopButton.disabled = true;
     controller = null;
     isGenerating = false;
+    if (stopRequested || isActiveLineRunning) {
+        const codeId = stopRequestedCodeId || activeLineCodeId || lastExecutableCodeId || pendingConsoleParentId;
+        if (codeId && !hasInterruptionNotice(codeId)) {
+            const codeMessage = getMessageById(codeId);
+            if (isShellCodeMessage(codeMessage) || stopRequested || isActiveLineRunning) {
+                appendPrematureStopNotice(codeId);
+            }
+        }
+    }
+    stopRequested = false;
+    stopRequestedCodeId = null;
+    isActiveLineRunning = false;
+    removeActiveLineSpinner();
+    activeLineCodeId = null;
 }
 
 function shouldStartNewBase64Image(message, chunk) {
