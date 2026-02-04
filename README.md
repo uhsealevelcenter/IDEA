@@ -7,12 +7,12 @@ IDEA is a tool-using AI assistant for scientific data exploration. It is designe
 - **IDEA** is the general-purpose framework for creating and working with custom data analysis assistants.
 - **SEA (Station Explorer Assistant)** is a special-purpose IDEA configured for sea level data analysis.
 
-![IDEA](https://github.com/uhsealevelcenter/IDEA/blob/main/Example_IDEA_forGitHub_3Feb2026.mp4)
-
 **Web access:**
 - **SEA (no login required):** https://uhslc.soest.hawaii.edu/research/SEA
 - **IDEA (login required):** https://uhslc.soest.hawaii.edu/research/IDEA
 - **Account requests:** idea-dev-grp@hawaii.edu
+
+https://github.com/uhsealevelcenter/IDEA/blob/main/Example_IDEA_forGitHub_3Feb2026.mp4
 
 ## Why IDEA (vs. a chat-only assistant)
 
