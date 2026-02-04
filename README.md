@@ -1,6 +1,6 @@
 # Intelligent Data Exploring Assistant (IDEA)
 
-IDEA is a tool-using AI assistant for scientific data exploration. It is designed to help researchers go from question to analysis and figures quickly while keeping results transparent and reproducible. IDEA is a framework for building domain-focused assistants that can run code, generate plots, save outputs, and work directly with uploaded datasets.
+IDEA is a tool-using AI assistant for scientific data exploration. It is designed to help researchers go from question to analysis and figures quickly while keeping results transparent and reproducible. IDEA is a framework for building domain-focused assistants that run code, generate plots, save outputs, work directly with uploaded datasets, and pull data from the web via its internet-connected environment.
 
 ## IDEA vs. SEA
 
