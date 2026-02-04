@@ -159,7 +159,7 @@ host = (
 app = FastAPI(root_path=root_path)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.mount('/' + str(STATIC_DIR), StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # Serve frontend assets (CSS/JS) for shared pages under a stable, prefixed path
 app.mount('/assets', StaticFiles(directory='frontend'), name='assets')
 

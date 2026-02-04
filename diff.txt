@@ -1,0 +1,1207 @@
+diff --git a/.codex/skills/.system/skill-creator/scripts/init_skill.py b/.codex/skills/.system/skill-creator/scripts/init_skill.py
+new file mode 100644
+index 0000000..8633fe9
+--- /dev/null
++++ b/.codex/skills/.system/skill-creator/scripts/init_skill.py
+@@ -0,0 +1,378 @@
++#!/usr/bin/env python3
++"""
++Skill Initializer - Creates a new skill from template
++
++Usage:
++    init_skill.py <skill-name> --path <path> [--resources scripts,references,assets] [--examples]
++
++Examples:
++    init_skill.py my-new-skill --path skills/public
++    init_skill.py my-new-skill --path skills/public --resources scripts,references
++    init_skill.py my-api-helper --path skills/private --resources scripts --examples
++    init_skill.py custom-skill --path /custom/location
++"""
++
++import argparse
++import re
++import sys
++from pathlib import Path
++
++MAX_SKILL_NAME_LENGTH = 64
++ALLOWED_RESOURCES = {"scripts", "references", "assets"}
++
++SKILL_TEMPLATE = """---
++name: {skill_name}
++description: [TODO: Complete and informative explanation of what the skill does and when to use it. Include WHEN to use this skill - specific scenarios, file types, or tasks that trigger it.]
++---
++
++# {skill_title}
++
++## Overview
++
++[TODO: 1-2 sentences explaining what this skill enables]
++
++## Structuring This Skill
++
++[TODO: Choose the structure that best fits this skill's purpose. Common patterns:
++
++**1. Workflow-Based** (best for sequential processes)
++- Works well when there are clear step-by-step procedures
++- Example: DOCX skill with "Workflow Decision Tree" -> "Reading" -> "Creating" -> "Editing"
++- Structure: ## Overview -> ## Workflow Decision Tree -> ## Step 1 -> ## Step 2...
++
++**2. Task-Based** (best for tool collections)
++- Works well when the skill offers different operations/capabilities
++- Example: PDF skill with "Quick Start" -> "Merge PDFs" -> "Split PDFs" -> "Extract Text"
++- Structure: ## Overview -> ## Quick Start -> ## Task Category 1 -> ## Task Category 2...
++
++**3. Reference/Guidelines** (best for standards or specifications)
++- Works well for brand guidelines, coding standards, or requirements
++- Example: Brand styling with "Brand Guidelines" -> "Colors" -> "Typography" -> "Features"
++- Structure: ## Overview -> ## Guidelines -> ## Specifications -> ## Usage...
++
++**4. Capabilities-Based** (best for integrated systems)
++- Works well when the skill provides multiple interrelated features
++- Example: Product Management with "Core Capabilities" -> numbered capability list
++- Structure: ## Overview -> ## Core Capabilities -> ### 1. Feature -> ### 2. Feature...
++
++Patterns can be mixed and matched as needed. Most skills combine patterns (e.g., start with task-based, add workflow for complex operations).
++
++Delete this entire "Structuring This Skill" section when done - it's just guidance.]
++
++## [TODO: Replace with the first main section based on chosen structure]
++
++[TODO: Add content here. See examples in existing skills:
++- Code samples for technical skills
++- Decision trees for complex workflows
++- Concrete examples with realistic user requests
++- References to scripts/templates/references as needed]
++
++## Resources (optional)
++
++Create only the resource directories this skill actually needs. Delete this section if no resources are required.
++
++### scripts/
++Executable code (Python/Bash/etc.) that can be run directly to perform specific operations.
++
++**Examples from other skills:**
++- PDF skill: `fill_fillable_fields.py`, `extract_form_field_info.py` - utilities for PDF manipulation
++- DOCX skill: `document.py`, `utilities.py` - Python modules for document processing
++
++**Appropriate for:** Python scripts, shell scripts, or any executable code that performs automation, data processing, or specific operations.
++
++**Note:** Scripts may be executed without loading into context, but can still be read by Codex for patching or environment adjustments.
++
++### references/
++Documentation and reference material intended to be loaded into context to inform Codex's process and thinking.
++
++**Examples from other skills:**
++- Product management: `communication.md`, `context_building.md` - detailed workflow guides
++- BigQuery: API reference documentation and query examples
++- Finance: Schema documentation, company policies
++
++**Appropriate for:** In-depth documentation, API references, database schemas, comprehensive guides, or any detailed information that Codex should reference while working.
++
++### assets/
++Files not intended to be loaded into context, but rather used within the output Codex produces.
++
++**Examples from other skills:**
++- Brand styling: PowerPoint template files (.pptx), logo files
++- Frontend builder: HTML/React boilerplate project directories
++- Typography: Font files (.ttf, .woff2)
++
++**Appropriate for:** Templates, boilerplate code, document templates, images, icons, fonts, or any files meant to be copied or used in the final output.
++
++---
++
++**Not every skill requires all three types of resources.**
++"""
++
++EXAMPLE_SCRIPT = '''#!/usr/bin/env python3
++"""
++Example helper script for {skill_name}
++
++This is a placeholder script that can be executed directly.
++Replace with actual implementation or delete if not needed.
++
++Example real scripts from other skills:
++- pdf/scripts/fill_fillable_fields.py - Fills PDF form fields
++- pdf/scripts/convert_pdf_to_images.py - Converts PDF pages to images
++"""
++
++def main():
++    print("This is an example script for {skill_name}")
++    # TODO: Add actual script logic here
++    # This could be data processing, file conversion, API calls, etc.
++
++if __name__ == "__main__":
++    main()
++'''
++
++EXAMPLE_REFERENCE = """# Reference Documentation for {skill_title}
++
++This is a placeholder for detailed reference documentation.
++Replace with actual reference content or delete if not needed.
++
++Example real reference docs from other skills:
++- product-management/references/communication.md - Comprehensive guide for status updates
++- product-management/references/context_building.md - Deep-dive on gathering context
++- bigquery/references/ - API references and query examples
++
++## When Reference Docs Are Useful
++
++Reference docs are ideal for:
++- Comprehensive API documentation
++- Detailed workflow guides
++- Complex multi-step processes
++- Information too lengthy for main SKILL.md
++- Content that's only needed for specific use cases
++
++## Structure Suggestions
++
++### API Reference Example
++- Overview
++- Authentication
++- Endpoints with examples
++- Error codes
++- Rate limits
++
++### Workflow Guide Example
++- Prerequisites
++- Step-by-step instructions
++- Common patterns
++- Troubleshooting
++- Best practices
++"""
++
++EXAMPLE_ASSET = """# Example Asset File
++
++This placeholder represents where asset files would be stored.
++Replace with actual asset files (templates, images, fonts, etc.) or delete if not needed.
++
++Asset files are NOT intended to be loaded into context, but rather used within
++the output Codex produces.
++
++Example asset files from other skills:
++- Brand guidelines: logo.png, slides_template.pptx
++- Frontend builder: hello-world/ directory with HTML/React boilerplate
++- Typography: custom-font.ttf, font-family.woff2
++- Data: sample_data.csv, test_dataset.json
++
++## Common Asset Types
++
++- Templates: .pptx, .docx, boilerplate directories
++- Images: .png, .jpg, .svg, .gif
++- Fonts: .ttf, .otf, .woff, .woff2
++- Boilerplate code: Project directories, starter files
++- Icons: .ico, .svg
++- Data files: .csv, .json, .xml, .yaml
++
++Note: This is a text placeholder. Actual assets can be any file type.
++"""
++
++
++def normalize_skill_name(skill_name):
++    """Normalize a skill name to lowercase hyphen-case."""
++    normalized = skill_name.strip().lower()
++    normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
++    normalized = normalized.strip("-")
++    normalized = re.sub(r"-{2,}", "-", normalized)
++    return normalized
++
++
++def title_case_skill_name(skill_name):
++    """Convert hyphenated skill name to Title Case for display."""
++    return " ".join(word.capitalize() for word in skill_name.split("-"))
++
++
++def parse_resources(raw_resources):
++    if not raw_resources:
++        return []
++    resources = [item.strip() for item in raw_resources.split(",") if item.strip()]
++    invalid = sorted({item for item in resources if item not in ALLOWED_RESOURCES})
++    if invalid:
++        allowed = ", ".join(sorted(ALLOWED_RESOURCES))
++        print(f"[ERROR] Unknown resource type(s): {', '.join(invalid)}")
++        print(f"   Allowed: {allowed}")
++        sys.exit(1)
++    deduped = []
++    seen = set()
++    for resource in resources:
++        if resource not in seen:
++            deduped.append(resource)
++            seen.add(resource)
++    return deduped
++
++
++def create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_examples):
++    for resource in resources:
++        resource_dir = skill_dir / resource
++        resource_dir.mkdir(exist_ok=True)
++        if resource == "scripts":
++            if include_examples:
++                example_script = resource_dir / "example.py"
++                example_script.write_text(EXAMPLE_SCRIPT.format(skill_name=skill_name))
++                example_script.chmod(0o755)
++                print("[OK] Created scripts/example.py")
++            else:
++                print("[OK] Created scripts/")
++        elif resource == "references":
++            if include_examples:
++                example_reference = resource_dir / "api_reference.md"
++                example_reference.write_text(EXAMPLE_REFERENCE.format(skill_title=skill_title))
++                print("[OK] Created references/api_reference.md")
++            else:
++                print("[OK] Created references/")
++        elif resource == "assets":
++            if include_examples:
++                example_asset = resource_dir / "example_asset.txt"
++                example_asset.write_text(EXAMPLE_ASSET)
++                print("[OK] Created assets/example_asset.txt")
++            else:
++                print("[OK] Created assets/")
++
++
++def init_skill(skill_name, path, resources, include_examples):
++    """
++    Initialize a new skill directory with template SKILL.md.
++
++    Args:
++        skill_name: Name of the skill
++        path: Path where the skill directory should be created
++        resources: Resource directories to create
++        include_examples: Whether to create example files in resource directories
++
++    Returns:
++        Path to created skill directory, or None if error
++    """
++    # Determine skill directory path
++    skill_dir = Path(path).resolve() / skill_name
++
++    # Check if directory already exists
++    if skill_dir.exists():
++        print(f"[ERROR] Skill directory already exists: {skill_dir}")
++        return None
++
++    # Create skill directory
++    try:
++        skill_dir.mkdir(parents=True, exist_ok=False)
++        print(f"[OK] Created skill directory: {skill_dir}")
++    except Exception as e:
++        print(f"[ERROR] Error creating directory: {e}")
++        return None
++
++    # Create SKILL.md from template
++    skill_title = title_case_skill_name(skill_name)
++    skill_content = SKILL_TEMPLATE.format(skill_name=skill_name, skill_title=skill_title)
++
++    skill_md_path = skill_dir / "SKILL.md"
++    try:
++        skill_md_path.write_text(skill_content)
++        print("[OK] Created SKILL.md")
++    except Exception as e:
++        print(f"[ERROR] Error creating SKILL.md: {e}")
++        return None
++
++    # Create resource directories if requested
++    if resources:
++        try:
++            create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_examples)
++        except Exception as e:
++            print(f"[ERROR] Error creating resource directories: {e}")
++            return None
++
++    # Print next steps
++    print(f"\n[OK] Skill '{skill_name}' initialized successfully at {skill_dir}")
++    print("\nNext steps:")
++    print("1. Edit SKILL.md to complete the TODO items and update the description")
++    if resources:
++        if include_examples:
++            print("2. Customize or delete the example files in scripts/, references/, and assets/")
++        else:
++            print("2. Add resources to scripts/, references/, and assets/ as needed")
++    else:
++        print("2. Create resource directories only if needed (scripts/, references/, assets/)")
++    print("3. Run the validator when ready to check the skill structure")
++
++    return skill_dir
++
++
++def main():
++    parser = argparse.ArgumentParser(
++        description="Create a new skill directory with a SKILL.md template.",
++    )
++    parser.add_argument("skill_name", help="Skill name (normalized to hyphen-case)")
++    parser.add_argument("--path", required=True, help="Output directory for the skill")
++    parser.add_argument(
++        "--resources",
++        default="",
++        help="Comma-separated list: scripts,references,assets",
++    )
++    parser.add_argument(
++        "--examples",
++        action="store_true",
++        help="Create example files inside the selected resource directories",
++    )
++    args = parser.parse_args()
++
++    raw_skill_name = args.skill_name
++    skill_name = normalize_skill_name(raw_skill_name)
++    if not skill_name:
++        print("[ERROR] Skill name must include at least one letter or digit.")
++        sys.exit(1)
++    if len(skill_name) > MAX_SKILL_NAME_LENGTH:
++        print(
++            f"[ERROR] Skill name '{skill_name}' is too long ({len(skill_name)} characters). "
++            f"Maximum is {MAX_SKILL_NAME_LENGTH} characters."
++        )
++        sys.exit(1)
++    if skill_name != raw_skill_name:
++        print(f"Note: Normalized skill name from '{raw_skill_name}' to '{skill_name}'.")
++
++    resources = parse_resources(args.resources)
++    if args.examples and not resources:
++        print("[ERROR] --examples requires --resources to be set.")
++        sys.exit(1)
++
++    path = args.path
++
++    print(f"Initializing skill: {skill_name}")
++    print(f"   Location: {path}")
++    if resources:
++        print(f"   Resources: {', '.join(resources)}")
++        if args.examples:
++            print("   Examples: enabled")
++    else:
++        print("   Resources: none (create as needed)")
++    print()
++
++    result = init_skill(skill_name, path, resources, args.examples)
++
++    if result:
++        sys.exit(0)
++    else:
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/.codex/skills/.system/skill-creator/scripts/package_skill.py b/.codex/skills/.system/skill-creator/scripts/package_skill.py
+new file mode 100644
+index 0000000..9a03995
+--- /dev/null
++++ b/.codex/skills/.system/skill-creator/scripts/package_skill.py
+@@ -0,0 +1,111 @@
++#!/usr/bin/env python3
++"""
++Skill Packager - Creates a distributable .skill file of a skill folder
++
++Usage:
++    python utils/package_skill.py <path/to/skill-folder> [output-directory]
++
++Example:
++    python utils/package_skill.py skills/public/my-skill
++    python utils/package_skill.py skills/public/my-skill ./dist
++"""
++
++import sys
++import zipfile
++from pathlib import Path
++
++from quick_validate import validate_skill
++
++
++def package_skill(skill_path, output_dir=None):
++    """
++    Package a skill folder into a .skill file.
++
++    Args:
++        skill_path: Path to the skill folder
++        output_dir: Optional output directory for the .skill file (defaults to current directory)
++
++    Returns:
++        Path to the created .skill file, or None if error
++    """
++    skill_path = Path(skill_path).resolve()
++
++    # Validate skill folder exists
++    if not skill_path.exists():
++        print(f"[ERROR] Skill folder not found: {skill_path}")
++        return None
++
++    if not skill_path.is_dir():
++        print(f"[ERROR] Path is not a directory: {skill_path}")
++        return None
++
++    # Validate SKILL.md exists
++    skill_md = skill_path / "SKILL.md"
++    if not skill_md.exists():
++        print(f"[ERROR] SKILL.md not found in {skill_path}")
++        return None
++
++    # Run validation before packaging
++    print("Validating skill...")
++    valid, message = validate_skill(skill_path)
++    if not valid:
++        print(f"[ERROR] Validation failed: {message}")
++        print("   Please fix the validation errors before packaging.")
++        return None
++    print(f"[OK] {message}\n")
++
++    # Determine output location
++    skill_name = skill_path.name
++    if output_dir:
++        output_path = Path(output_dir).resolve()
++        output_path.mkdir(parents=True, exist_ok=True)
++    else:
++        output_path = Path.cwd()
++
++    skill_filename = output_path / f"{skill_name}.skill"
++
++    # Create the .skill file (zip format)
++    try:
++        with zipfile.ZipFile(skill_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
++            # Walk through the skill directory
++            for file_path in skill_path.rglob("*"):
++                if file_path.is_file():
++                    # Calculate the relative path within the zip
++                    arcname = file_path.relative_to(skill_path.parent)
++                    zipf.write(file_path, arcname)
++                    print(f"  Added: {arcname}")
++
++        print(f"\n[OK] Successfully packaged skill to: {skill_filename}")
++        return skill_filename
++
++    except Exception as e:
++        print(f"[ERROR] Error creating .skill file: {e}")
++        return None
++
++
++def main():
++    if len(sys.argv) < 2:
++        print("Usage: python utils/package_skill.py <path/to/skill-folder> [output-directory]")
++        print("\nExample:")
++        print("  python utils/package_skill.py skills/public/my-skill")
++        print("  python utils/package_skill.py skills/public/my-skill ./dist")
++        sys.exit(1)
++
++    skill_path = sys.argv[1]
++    output_dir = sys.argv[2] if len(sys.argv) > 2 else None
++
++    print(f"Packaging skill: {skill_path}")
++    if output_dir:
++        print(f"   Output directory: {output_dir}")
++    print()
++
++    result = package_skill(skill_path, output_dir)
++
++    if result:
++        sys.exit(0)
++    else:
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/.codex/skills/.system/skill-creator/scripts/quick_validate.py b/.codex/skills/.system/skill-creator/scripts/quick_validate.py
+new file mode 100644
+index 0000000..0547b40
+--- /dev/null
++++ b/.codex/skills/.system/skill-creator/scripts/quick_validate.py
+@@ -0,0 +1,101 @@
++#!/usr/bin/env python3
++"""
++Quick validation script for skills - minimal version
++"""
++
++import re
++import sys
++from pathlib import Path
++
++import yaml
++
++MAX_SKILL_NAME_LENGTH = 64
++
++
++def validate_skill(skill_path):
++    """Basic validation of a skill"""
++    skill_path = Path(skill_path)
++
++    skill_md = skill_path / "SKILL.md"
++    if not skill_md.exists():
++        return False, "SKILL.md not found"
++
++    content = skill_md.read_text()
++    if not content.startswith("---"):
++        return False, "No YAML frontmatter found"
++
++    match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
++    if not match:
++        return False, "Invalid frontmatter format"
++
++    frontmatter_text = match.group(1)
++
++    try:
++        frontmatter = yaml.safe_load(frontmatter_text)
++        if not isinstance(frontmatter, dict):
++            return False, "Frontmatter must be a YAML dictionary"
++    except yaml.YAMLError as e:
++        return False, f"Invalid YAML in frontmatter: {e}"
++
++    allowed_properties = {"name", "description", "license", "allowed-tools", "metadata"}
++
++    unexpected_keys = set(frontmatter.keys()) - allowed_properties
++    if unexpected_keys:
++        allowed = ", ".join(sorted(allowed_properties))
++        unexpected = ", ".join(sorted(unexpected_keys))
++        return (
++            False,
++            f"Unexpected key(s) in SKILL.md frontmatter: {unexpected}. Allowed properties are: {allowed}",
++        )
++
++    if "name" not in frontmatter:
++        return False, "Missing 'name' in frontmatter"
++    if "description" not in frontmatter:
++        return False, "Missing 'description' in frontmatter"
++
++    name = frontmatter.get("name", "")
++    if not isinstance(name, str):
++        return False, f"Name must be a string, got {type(name).__name__}"
++    name = name.strip()
++    if name:
++        if not re.match(r"^[a-z0-9-]+$", name):
++            return (
++                False,
++                f"Name '{name}' should be hyphen-case (lowercase letters, digits, and hyphens only)",
++            )
++        if name.startswith("-") or name.endswith("-") or "--" in name:
++            return (
++                False,
++                f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens",
++            )
++        if len(name) > MAX_SKILL_NAME_LENGTH:
++            return (
++                False,
++                f"Name is too long ({len(name)} characters). "
++                f"Maximum is {MAX_SKILL_NAME_LENGTH} characters.",
++            )
++
++    description = frontmatter.get("description", "")
++    if not isinstance(description, str):
++        return False, f"Description must be a string, got {type(description).__name__}"
++    description = description.strip()
++    if description:
++        if "<" in description or ">" in description:
++            return False, "Description cannot contain angle brackets (< or >)"
++        if len(description) > 1024:
++            return (
++                False,
++                f"Description is too long ({len(description)} characters). Maximum is 1024 characters.",
++            )
++
++    return True, "Skill is valid!"
++
++
++if __name__ == "__main__":
++    if len(sys.argv) != 2:
++        print("Usage: python quick_validate.py <skill_directory>")
++        sys.exit(1)
++
++    valid, message = validate_skill(sys.argv[1])
++    print(message)
++    sys.exit(0 if valid else 1)
+diff --git a/.codex/skills/.system/skill-installer/scripts/github_utils.py b/.codex/skills/.system/skill-installer/scripts/github_utils.py
+new file mode 100644
+index 0000000..711f597
+--- /dev/null
++++ b/.codex/skills/.system/skill-installer/scripts/github_utils.py
+@@ -0,0 +1,21 @@
++#!/usr/bin/env python3
++"""Shared GitHub helpers for skill install scripts."""
++
++from __future__ import annotations
++
++import os
++import urllib.request
++
++
++def github_request(url: str, user_agent: str) -> bytes:
++    headers = {"User-Agent": user_agent}
++    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
++    if token:
++        headers["Authorization"] = f"token {token}"
++    req = urllib.request.Request(url, headers=headers)
++    with urllib.request.urlopen(req) as resp:
++        return resp.read()
++
++
++def github_api_contents_url(repo: str, path: str, ref: str) -> str:
++    return f"https://api.github.com/repos/{repo}/contents/{path}?ref={ref}"
+diff --git a/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py b/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py
+new file mode 100644
+index 0000000..1c8ce89
+--- /dev/null
++++ b/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py
+@@ -0,0 +1,308 @@
++#!/usr/bin/env python3
++"""Install a skill from a GitHub repo path into $CODEX_HOME/skills."""
++
++from __future__ import annotations
++
++import argparse
++from dataclasses import dataclass
++import os
++import shutil
++import subprocess
++import sys
++import tempfile
++import urllib.error
++import urllib.parse
++import zipfile
++
++from github_utils import github_request
++DEFAULT_REF = "main"
++
++
++@dataclass
++class Args:
++    url: str | None = None
++    repo: str | None = None
++    path: list[str] | None = None
++    ref: str = DEFAULT_REF
++    dest: str | None = None
++    name: str | None = None
++    method: str = "auto"
++
++
++@dataclass
++class Source:
++    owner: str
++    repo: str
++    ref: str
++    paths: list[str]
++    repo_url: str | None = None
++
++
++class InstallError(Exception):
++    pass
++
++
++def _codex_home() -> str:
++    return os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
++
++
++def _tmp_root() -> str:
++    base = os.path.join(tempfile.gettempdir(), "codex")
++    os.makedirs(base, exist_ok=True)
++    return base
++
++
++def _request(url: str) -> bytes:
++    return github_request(url, "codex-skill-install")
++
++
++def _parse_github_url(url: str, default_ref: str) -> tuple[str, str, str, str | None]:
++    parsed = urllib.parse.urlparse(url)
++    if parsed.netloc != "github.com":
++        raise InstallError("Only GitHub URLs are supported for download mode.")
++    parts = [p for p in parsed.path.split("/") if p]
++    if len(parts) < 2:
++        raise InstallError("Invalid GitHub URL.")
++    owner, repo = parts[0], parts[1]
++    ref = default_ref
++    subpath = ""
++    if len(parts) > 2:
++        if parts[2] in ("tree", "blob"):
++            if len(parts) < 4:
++                raise InstallError("GitHub URL missing ref or path.")
++            ref = parts[3]
++            subpath = "/".join(parts[4:])
++        else:
++            subpath = "/".join(parts[2:])
++    return owner, repo, ref, subpath or None
++
++
++def _download_repo_zip(owner: str, repo: str, ref: str, dest_dir: str) -> str:
++    zip_url = f"https://codeload.github.com/{owner}/{repo}/zip/{ref}"
++    zip_path = os.path.join(dest_dir, "repo.zip")
++    try:
++        payload = _request(zip_url)
++    except urllib.error.HTTPError as exc:
++        raise InstallError(f"Download failed: HTTP {exc.code}") from exc
++    with open(zip_path, "wb") as file_handle:
++        file_handle.write(payload)
++    with zipfile.ZipFile(zip_path, "r") as zip_file:
++        _safe_extract_zip(zip_file, dest_dir)
++        top_levels = {name.split("/")[0] for name in zip_file.namelist() if name}
++    if not top_levels:
++        raise InstallError("Downloaded archive was empty.")
++    if len(top_levels) != 1:
++        raise InstallError("Unexpected archive layout.")
++    return os.path.join(dest_dir, next(iter(top_levels)))
++
++
++def _run_git(args: list[str]) -> None:
++    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
++    if result.returncode != 0:
++        raise InstallError(result.stderr.strip() or "Git command failed.")
++
++
++def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> None:
++    dest_root = os.path.realpath(dest_dir)
++    for info in zip_file.infolist():
++        extracted_path = os.path.realpath(os.path.join(dest_dir, info.filename))
++        if extracted_path == dest_root or extracted_path.startswith(dest_root + os.sep):
++            continue
++        raise InstallError("Archive contains files outside the destination.")
++    zip_file.extractall(dest_dir)
++
++
++def _validate_relative_path(path: str) -> None:
++    if os.path.isabs(path) or os.path.normpath(path).startswith(".."):
++        raise InstallError("Skill path must be a relative path inside the repo.")
++
++
++def _validate_skill_name(name: str) -> None:
++    altsep = os.path.altsep
++    if not name or os.path.sep in name or (altsep and altsep in name):
++        raise InstallError("Skill name must be a single path segment.")
++    if name in (".", ".."):
++        raise InstallError("Invalid skill name.")
++
++
++def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: str) -> str:
++    repo_dir = os.path.join(dest_dir, "repo")
++    clone_cmd = [
++        "git",
++        "clone",
++        "--filter=blob:none",
++        "--depth",
++        "1",
++        "--sparse",
++        "--single-branch",
++        "--branch",
++        ref,
++        repo_url,
++        repo_dir,
++    ]
++    try:
++        _run_git(clone_cmd)
++    except InstallError:
++        _run_git(
++            [
++                "git",
++                "clone",
++                "--filter=blob:none",
++                "--depth",
++                "1",
++                "--sparse",
++                "--single-branch",
++                repo_url,
++                repo_dir,
++            ]
++        )
++    _run_git(["git", "-C", repo_dir, "sparse-checkout", "set", *paths])
++    _run_git(["git", "-C", repo_dir, "checkout", ref])
++    return repo_dir
++
++
++def _validate_skill(path: str) -> None:
++    if not os.path.isdir(path):
++        raise InstallError(f"Skill path not found: {path}")
++    skill_md = os.path.join(path, "SKILL.md")
++    if not os.path.isfile(skill_md):
++        raise InstallError("SKILL.md not found in selected skill directory.")
++
++
++def _copy_skill(src: str, dest_dir: str) -> None:
++    os.makedirs(os.path.dirname(dest_dir), exist_ok=True)
++    if os.path.exists(dest_dir):
++        raise InstallError(f"Destination already exists: {dest_dir}")
++    shutil.copytree(src, dest_dir)
++
++
++def _build_repo_url(owner: str, repo: str) -> str:
++    return f"https://github.com/{owner}/{repo}.git"
++
++
++def _build_repo_ssh(owner: str, repo: str) -> str:
++    return f"git@github.com:{owner}/{repo}.git"
++
++
++def _prepare_repo(source: Source, method: str, tmp_dir: str) -> str:
++    if method in ("download", "auto"):
++        try:
++            return _download_repo_zip(source.owner, source.repo, source.ref, tmp_dir)
++        except InstallError as exc:
++            if method == "download":
++                raise
++            err_msg = str(exc)
++            if "HTTP 401" in err_msg or "HTTP 403" in err_msg or "HTTP 404" in err_msg:
++                pass
++            else:
++                raise
++    if method in ("git", "auto"):
++        repo_url = source.repo_url or _build_repo_url(source.owner, source.repo)
++        try:
++            return _git_sparse_checkout(repo_url, source.ref, source.paths, tmp_dir)
++        except InstallError:
++            repo_url = _build_repo_ssh(source.owner, source.repo)
++            return _git_sparse_checkout(repo_url, source.ref, source.paths, tmp_dir)
++    raise InstallError("Unsupported method.")
++
++
++def _resolve_source(args: Args) -> Source:
++    if args.url:
++        owner, repo, ref, url_path = _parse_github_url(args.url, args.ref)
++        if args.path is not None:
++            paths = list(args.path)
++        elif url_path:
++            paths = [url_path]
++        else:
++            paths = []
++        if not paths:
++            raise InstallError("Missing --path for GitHub URL.")
++        return Source(owner=owner, repo=repo, ref=ref, paths=paths)
++
++    if not args.repo:
++        raise InstallError("Provide --repo or --url.")
++    if "://" in args.repo:
++        return _resolve_source(
++            Args(url=args.repo, repo=None, path=args.path, ref=args.ref)
++        )
++
++    repo_parts = [p for p in args.repo.split("/") if p]
++    if len(repo_parts) != 2:
++        raise InstallError("--repo must be in owner/repo format.")
++    if not args.path:
++        raise InstallError("Missing --path for --repo.")
++    paths = list(args.path)
++    return Source(
++        owner=repo_parts[0],
++        repo=repo_parts[1],
++        ref=args.ref,
++        paths=paths,
++    )
++
++
++def _default_dest() -> str:
++    return os.path.join(_codex_home(), "skills")
++
++
++def _parse_args(argv: list[str]) -> Args:
++    parser = argparse.ArgumentParser(description="Install a skill from GitHub.")
++    parser.add_argument("--repo", help="owner/repo")
++    parser.add_argument("--url", help="https://github.com/owner/repo[/tree/ref/path]")
++    parser.add_argument(
++        "--path",
++        nargs="+",
++        help="Path(s) to skill(s) inside repo",
++    )
++    parser.add_argument("--ref", default=DEFAULT_REF)
++    parser.add_argument("--dest", help="Destination skills directory")
++    parser.add_argument(
++        "--name", help="Destination skill name (defaults to basename of path)"
++    )
++    parser.add_argument(
++        "--method",
++        choices=["auto", "download", "git"],
++        default="auto",
++    )
++    return parser.parse_args(argv, namespace=Args())
++
++
++def main(argv: list[str]) -> int:
++    args = _parse_args(argv)
++    try:
++        source = _resolve_source(args)
++        source.ref = source.ref or args.ref
++        if not source.paths:
++            raise InstallError("No skill paths provided.")
++        for path in source.paths:
++            _validate_relative_path(path)
++        dest_root = args.dest or _default_dest()
++        tmp_dir = tempfile.mkdtemp(prefix="skill-install-", dir=_tmp_root())
++        try:
++            repo_root = _prepare_repo(source, args.method, tmp_dir)
++            installed = []
++            for path in source.paths:
++                skill_name = args.name if len(source.paths) == 1 else None
++                skill_name = skill_name or os.path.basename(path.rstrip("/"))
++                _validate_skill_name(skill_name)
++                if not skill_name:
++                    raise InstallError("Unable to derive skill name.")
++                dest_dir = os.path.join(dest_root, skill_name)
++                if os.path.exists(dest_dir):
++                    raise InstallError(f"Destination already exists: {dest_dir}")
++                skill_src = os.path.join(repo_root, path)
++                _validate_skill(skill_src)
++                _copy_skill(skill_src, dest_dir)
++                installed.append((skill_name, dest_dir))
++        finally:
++            if os.path.isdir(tmp_dir):
++                shutil.rmtree(tmp_dir, ignore_errors=True)
++        for skill_name, dest_dir in installed:
++            print(f"Installed {skill_name} to {dest_dir}")
++        return 0
++    except InstallError as exc:
++        print(f"Error: {exc}", file=sys.stderr)
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main(sys.argv[1:]))
+diff --git a/.codex/skills/.system/skill-installer/scripts/list-curated-skills.py b/.codex/skills/.system/skill-installer/scripts/list-curated-skills.py
+new file mode 100644
+index 0000000..08d475c
+--- /dev/null
++++ b/.codex/skills/.system/skill-installer/scripts/list-curated-skills.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python3
++"""List curated skills from a GitHub repo path."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import sys
++import urllib.error
++
++from github_utils import github_api_contents_url, github_request
++
++DEFAULT_REPO = "openai/skills"
++DEFAULT_PATH = "skills/.curated"
++DEFAULT_REF = "main"
++
++
++class ListError(Exception):
++    pass
++
++
++class Args(argparse.Namespace):
++    repo: str
++    path: str
++    ref: str
++    format: str
++
++
++def _request(url: str) -> bytes:
++    return github_request(url, "codex-skill-list")
++
++
++def _codex_home() -> str:
++    return os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
++
++
++def _installed_skills() -> set[str]:
++    root = os.path.join(_codex_home(), "skills")
++    if not os.path.isdir(root):
++        return set()
++    entries = set()
++    for name in os.listdir(root):
++        path = os.path.join(root, name)
++        if os.path.isdir(path):
++            entries.add(name)
++    return entries
++
++
++def _list_curated(repo: str, path: str, ref: str) -> list[str]:
++    api_url = github_api_contents_url(repo, path, ref)
++    try:
++        payload = _request(api_url)
++    except urllib.error.HTTPError as exc:
++        if exc.code == 404:
++            raise ListError(
++                "Curated skills path not found: "
++                f"https://github.com/{repo}/tree/{ref}/{path}"
++            ) from exc
++        raise ListError(f"Failed to fetch curated skills: HTTP {exc.code}") from exc
++    data = json.loads(payload.decode("utf-8"))
++    if not isinstance(data, list):
++        raise ListError("Unexpected curated listing response.")
++    skills = [item["name"] for item in data if item.get("type") == "dir"]
++    return sorted(skills)
++
++
++def _parse_args(argv: list[str]) -> Args:
++    parser = argparse.ArgumentParser(description="List curated skills.")
++    parser.add_argument("--repo", default=DEFAULT_REPO)
++    parser.add_argument("--path", default=DEFAULT_PATH)
++    parser.add_argument("--ref", default=DEFAULT_REF)
++    parser.add_argument(
++        "--format",
++        choices=["text", "json"],
++        default="text",
++        help="Output format",
++    )
++    return parser.parse_args(argv, namespace=Args())
++
++
++def main(argv: list[str]) -> int:
++    args = _parse_args(argv)
++    try:
++        skills = _list_curated(args.repo, args.path, args.ref)
++        installed = _installed_skills()
++        if args.format == "json":
++            payload = [
++                {"name": name, "installed": name in installed} for name in skills
++            ]
++            print(json.dumps(payload))
++        else:
++            for idx, name in enumerate(skills, start=1):
++                suffix = " (already installed)" if name in installed else ""
++                print(f"{idx}. {name}{suffix}")
++        return 0
++    except ListError as exc:
++        print(f"Error: {exc}", file=sys.stderr)
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main(sys.argv[1:]))
+diff --git a/app.py b/app.py
+index a198d5d..06f5f53 100644
+--- a/app.py
++++ b/app.py
+@@ -112,7 +112,7 @@ LAST_ACTIVE_PREFIX = "last_active:"
+ CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
+ 
+ # Constants for file upload
+-STATIC_DIR = Path("static")
++STATIC_DIR = Path("/app/static")
+ UPLOAD_DIR = Path("uploads")
+ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+ ALLOWED_EXTENSIONS = {
+diff --git a/utils/custom_instructions.py b/utils/custom_instructions.py
+index 3848159..180a705 100644
+--- a/utils/custom_instructions.py
++++ b/utils/custom_instructions.py
+@@ -2,6 +2,8 @@
+ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, pqa_settings_name):
+     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
+     ##  Removed station_id parameter
++    CODEX_HOME="/app/.codex"
++    CODEX_SANDBOX=f"/app/static/{user_id}/{session_id}/Codex_Sandbox"
+     return f"""
+             The host is {host}.
+             The user_id is {user_id}.
+@@ -13,12 +15,12 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
+             -- If the user submits a filepath, you will also see the image. The filepath and user image will both be in the user's message.
+             -- If you use `plt.show()`, the resulting image will be sent to you. However, if you use `PIL.Image.show()`, the resulting image will NOT be sent to you.
+             -- For all plots that you create, open and show the specified image, then describe the image using your vision capability.
+-            image_path = './static/{user_id}/{session_id}/FILENAME' OR image_path = './static/{user_id}/{session_id}/{upload_dir}/FILENAME'
++            image_path = '/app/static/{user_id}/{session_id}/FILENAME' OR image_path = '/app/static/{user_id}/{session_id}/{upload_dir}/FILENAME'
+             image = Image.open(image_path)
+             image.show()
+ 
+-            COMMAND LINE TOOL:
+-            You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
++            COMMAND LINE TOOLS:
++            1. You have access to a command line tool that can fetch facts from scientific papers. You can use it by calling
+             pqa -s {pqa_settings_name} ask "<query>"
+             Use it when:
+                 1. Asked to perform literature review or "Knowledge Base" review.
+@@ -27,6 +29,31 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
+                 4. General knowledge may not provide a complete or accurate response.
+             If unsure, call the function to retrieve papers and then summarize the results for the user.
+ 
++            2. You have access to a command line coding agent called Codex.
++            Codex can explore, summarize, edit, and run code in the local workspace.
++                - Make sure that `${CODEX_SANDBOX}` exists before running Codex.
++                - cd to the Codex_Sandbox: cd ${CODEX_SANDBOX}
++                - Then call: codex exec "<instruction>"
++                - Login should happen automatically using an authentication file (usually no need to manually login).
++                - If login fails, then you may authenticate it by logging in with the environment variable:
++                    printenv OPENAI_API_KEY | codex login --with-api-key
++                - IMPORTANT: Do not expose the OPENAI_API_KEY or any authentication tokens in your responses to the user.
++            Use Codex when:
++                - The user requests a code explanation, refactor, or improvement.
++                - You need to summarize, analyze, or document a repository.
++                - You want to generate or modify source code in an existing project.
++                - You need to identify where specific functionality is implemented.
++            Rules:
++                - Always run Codex in exec mode (e.g., codex exec "Summarize this repository").
++                - Work only within ${CODEX_SANDBOX}:
++                    * Repositories: ${CODEX_SANDBOX}/repos
++                    * Temporary files: ${CODEX_SANDBOX}/tmp
++                - Configuration, Agent working agreements, Skills, and Authentication files are in ${CODEX_HOME}.
++                - Do not modify files outside these paths.
++                - Keep commands clear and descriptive to guide Codex effectively.
++                - Remind the user that Codex operations may take time.
++                - IMPORTANT: Confirm that `${CODEX_SANDBOX}` exists prior to running Codex.
++
+             CUSTOM FUNCTIONS:
+             You have access to the following functions in the host python environment.
+ 
+diff --git a/utils/prompt_manager.py b/utils/prompt_manager.py
+index 5076ea4..83453b4 100644
+--- a/utils/prompt_manager.py
++++ b/utils/prompt_manager.py
+@@ -69,7 +69,7 @@ class PromptManager:
+                     "## SEA Station Identification & Metadata\n"
+                     "- Station IDs must be 3-digit zero-padded strings (e.g., \"007\", \"057\", \"261\"); preserve leading zeros.\n"
+                     "- Use `https://uhslc.soest.hawaii.edu/metaapi/select2` to validate station names and IDs; never invent station names.\n"
+-                    "- Use `./data/metadata/fd_metadata.geojson` to access `name`, `country`, `geometry` (0–360° longitudes), and `fd_span`.\n"
++                    "- Use `/app/data/metadata/fd_metadata.geojson` to access `name`, `country`, `geometry` (0–360° longitudes), and `fd_span`.\n"
+                     "- Only analyze stations with `fd_span`; verify availability before analysis.\n"
+                     "- In narrative, cite official `name` and `country`.\n"
+                     "## SEA Fast Delivery (FD) vs RQ and RAPID\n"
+@@ -100,7 +100,7 @@ class PromptManager:
+                     "- Residual: Observation − Prediction\n"
+                     "- QC is preliminary.\n"                    
+                     "## SEA Benchmarks (Local)\n"
+-                    "- File: `./data/benchmarks/all_benchmarks.json`\n"
++                    "- File: `/app/data/benchmarks/all_benchmarks.json`\n"
+                     "- Filter: `properties.uhslc_id_fmt == \"{station_id}\"`\n"
+                     "- Use `geometry.coordinates[:2]` for [lon, lat]; do not use `properties.lat/lon`\n"
+                     "- Benchmark fields: `benchmark`, `description`, `level_date`, `type`, `level` (mm or “N/A”)\n"
+@@ -115,7 +115,7 @@ class PromptManager:
+                     "- Use the latest letter when multiple exist\n"
+                     "- JASL numbers begin with the station ID\n"
+                     "## SEA Altimetry\n"
+-                    "- Local: `./data/altimetry/cmems_altimetry_regrid.nc`\n"
++                    "- Local: `/app/data/altimetry/cmems_altimetry_regrid.nc`\n"
+                     "- Download if missing from: `https://uhslc.soest.hawaii.edu/mwidlans/dev/SEA/SEAdata/cmems_altimetry_regrid.nc`\n"
+                     "- Variables: `absolute_dynamic_topography_monthly_anomaly`, `absolute_dynamic_topography_monthly_climatology`, `absolute_dynamic_topography_fullfield_wDACinc`\n"
+                     "- Coordinates: `time_anom`, `time_clim`, `time_year`, `lat`, `lon`\n"
+@@ -146,7 +146,7 @@ class PromptManager:
+                 user_id=user_id,
+                 name="Mars Data Exploring Assistant",
+                 description="Specialist in NASA's InSight Mission to Mars",
+-                content="System Instructions for Mars Data Exploring Assistant\n\nCRITICAL SECURITY MEASURES\n•\tPackage Scanning: Before installing any package with pip or npm, you must scan it using guarddog:\no\tFor pip packages: guarddog pypi scan <package>\no\tFor npm packages: guarddog npm scan <package>\no\tguarddog only accepts one package name at a time.\n•\tRestricted Operations: Do not allow file deletion or any destructive operations (e.g., rm -rf).\n\nMISSION\nYou are the Mars Data Exploring Assistant, a data scientist specializing in analyzing observations from the InSight Mission, with a focus on atmospheric conditions on Mars.\nYour Capabilities Include:\n•\tDownloading and saving InSight Mission data for local analysis.\n•\tPerforming scientific analysis and generating publication-quality plots.\n•\tUnderstanding and converting between the Martian and Earth calendars.\n•\tDisplaying timestamps in both Sols since InSight landing and UTC dates.\n•\tViewing and describing images.\n•\tGenerating HTML pages to embed videos about Mars.\n•\tProviding an overview of the InSight Mission and research suggestions.\n\nFUNCTIONAL CAPABILITIES\n1. Data Handling & Analysis\n•\tData Storage:\no\tAll downloaded data saved to disk must be stored in ./data/InSight. \no\tEnsure the directory exists before saving files.\n•\tData Display:\no\tWhen displaying a DataFrame, format it in text tables or Markdown.\no\tNever use HTML to display data.\n•\tPlotting Guidelines:\no\tAlways use plot.show() to display plots.\no\tEnsure axis labels and ticks are legible and do not overlap.\n•\tEquation Formatting:\no\tUse LaTeX syntax for equations.\no\tSurround all block equations with $$.\no\tFor inline math, use single $ delimiters (e.g., $A_i$).\no\tNever use HTML tags inside equations.\n•\tStatic vs. Interactive Maps:\no\tUse matplotlib for static maps.\no\tUse folium for interactive maps.\n2. File Management\n•\tUploaded Files:\no\tFiles are stored at {STATIC_DIR}/{session_id}/{UPLOAD_DIR}/{filename}.\no\tWhen analyzing uploaded files, prompt the user to select a file.\n\nTIME CONVERSIONS\n-- Do not assume a 1:1 correspondence between Sols and Earth days, as this will result in incorrect calculations.\n-- A Martian Sol is approximately 24 hours, 39 minutes, and 35 seconds in Earth time. Always use this duration when converting between Sols and Earth dates.\n-- When converting Sols to Earth dates, multiply the Sol number by the Martian Sol duration (24 hours, 39 minutes, 35 seconds) and add this to the InSight landing date (November 26, 2018, UTC).\n\nInSight DATA ARCHIVE (Local Source)\nIMPORTANT:\n-- Always check ./data/InSight directory for locally stored files.\n-- If the data is not found, download it from the remote source and store it locally using the same file name at ./data/InSight.\n\nInSight DATA ARCHIVE (Remote Source)\n***This data and information is provided by the NASA Planetary Data System (PDS), The Planetary Atmospheres Node.***\nhttps://atmos.nmsu.edu/data_and_services/atmospheres_data/INSIGHT/insight.html\nThe Temperature and Wind for InSight (TWINS) instrument and Pressure Sensor (PS) are part of the Auxiliary Payload Sensor Subsystem (APSS). \n\nDirectory of Derived Data:\n-- Review the following directory structures to determine the sol ranges \"sol_####_####'\n-- TWINS\ncurl -s https://atmos.nmsu.edu/PDS/data/PDS4/InSight/twins_bundle/data_derived/\n-- PS\ncurl -s https://atmos.nmsu.edu/PDS/data/PDS4/InSight/ps_bundle/data_calibrated/\n-- Proceed to the respective directory to access the data files.\n-- Each directory contains a variety of data file names (e.g., twins_model_0004_02.csv or ps_calib_0123_01.csv, where 0004 corresponds to sol 4 and 0123 corresponds to sol 123).\nIMPORTANT: \n-- For a particular sol, search for \"_01\" files first. If not found, then search for \"_02\", and finally \"_03\".\n\nData Loading:\n-- Always verify the structure and content of the dataset after loading.\n-- Ensure that the UTC column is properly converted to a datetime format using the correct format string (%Y-%jT%H:%M:%S.%fZ) and handle errors with errors='coerce'.\n-- If the UTC column contains invalid or missing values, raise a warning and reprocess the column with appropriate error handling.\n\nData Verification:\n-- After loading the data, display the first few rows to confirm the structure and content.\n-- Check for missing or invalid values in critical columns (e.g., UTC, temperature columns) before proceeding with analysis.\n-- If anomalies are detected, reprocess the affected columns and verify again.\n\nData Analysis:\n-- TWINS has a sampling rate of 1Hz, however the data retrieval is variable (different files will have different time intervals).\n-- PS also has variable sampling rates.\n-- Determine the time interval from the data, then ask whether to convert it to 1-minute or 1-hour intervals for analysis.\n\nPlotting Guidelines:\n-- Before plotting, ensure that the data being visualized is valid and contains no anomalies (e.g., flat lines due to missing or zeroed-out data).\n-- If the data appears invalid, investigate and correct the issue before proceeding with visualization.\n\nCitations for InSigt Data:\n-- J.A. Rodriguez-Manfredi, et al. (2019), InSight APSS TWINS Data Product Bundle, NASA Planetary Data System, https://doi.org/10.17189/1518950\n-- D. Banfield, et al. (2019), InSight APSS PS Data Product Bundle, NASA Planetary Data System, https://doi.org/10.17189/1518939.\n-- J.A. Rodriguez-Manfredi et al., 2024, InSight APSS TWINS and PS ERP and NEMO Data, NASA Planetary Data System, https://doi.org/10.17189/jb1w-7965\n\nIMAGE DISPLAY & DESCRIPTION\nSample images:\nhttps://mars.nasa.gov/insight-raw-images/surface/sol/0675/icc/C000M0675_656452188EDR_F0000_0461M_.JPG\n-- Full caption: https://mars.nasa.gov/raw_images/851686/?site=insight\nhttps://mars.nasa.gov/insight-raw-images/surface/sol/0675/idc/D000M0675_656452163EDR_F0000_0817M_.JPG\n-- Full caption: https://mars.nasa.gov/raw_images/851687/?site=insight\n\nVIDEO EMBEDDING & DISPLAY\nAvailable Video Library\nThe Martian Movie CLIP - Storm Report (2015)\nhttps://youtu.be/Nz1swYRjEus?si=TPQd8NuDW9hJEw92\nTHE MARTIAN Science: DUST STORMS on Mars\nhttps://youtu.be/9sysS0s2sUM?si=3eXQ1wDI6dFK49RA\nNASA Mars InSight Overview\nhttps://youtu.be/LKLITDmm4NA?si=07JvtgwDvRRvIrg_\nEmbedding YouTube Videos in HTML\nTo embed a YouTube video for a specific session, follow these steps:\nIdentify the Session ID\nExample: session-abc123xyz\nGenerate an HTML File\nCreate an video.html file with the following content:\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Embedded Video</title>\n</head>\n<body>\n    <h1>Embedded Video</h1>\n    <iframe width=\"560\" height=\"315\" src=\"https://www.youtube.com/embed/<VIDEO_ID>\"\n            title=\"YouTube video player\" frameborder=\"0\"\n            allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\"\n            allowfullscreen>\n    </iframe>\n</body>\n</html>\no\tReplace <VIDEO_ID> with the actual YouTube video ID (e.g., Nz1swYRjEus).\n2.\tSave the File in the Correct Directory\no\tThe file should be stored at ./static/<session_id>/video.html.\no\tExample: ./static/session-abc123xyz/video.html.\n3.\tAccess the File in a Browser\no\tIf hosted locally, use the following URL:\nhttp://localhost/static/<session_id>/video.html\no\tReplace <session_id> with the actual session ID.\nAutomating Video HTML File Creation\nTo automate the process, use the following Python script:\nimport os\n\ndef create_video_html(session_id, video_id):\n    folder_path = f\"./static/{session_id}\"\n    os.makedirs(folder_path, exist_ok=True)\n    file_path = os.path.join(folder_path, \"video.html\")\n\n    html_content = f\\\"\"\"<!DOCTYPE html>\n    <html lang='en'>\n    <head>\n        <meta charset='UTF-8'>\n        <meta name='viewport' content='width=device-width, initial-scale=1.0'>\n        <title>Embedded Video</title>\n    </head>\n    <body>\n        <h1>Embedded Video</h1>\n        <iframe width='560' height='315' src='https://www.youtube.com/embed/{video_id}'\n                title='YouTube video player' frameborder='0'\n                allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'\n                allowfullscreen>\n        </iframe>\n    </body>\n    </html>\\\"\"\"\n\n    with open(file_path, \"w\") as file:\n        file.write(html_content)\n    \n    print(f\"HTML file created at: {file_path}\")\n\n# Example Usage\nsession_id = \"session-abc123xyz\"  # Replace with actual session ID\nvideo_id = \"Nz1swYRjEus\"  # Replace with actual video ID\ncreate_video_html(session_id, video_id)\n\nFINAL NOTES\n•\tMaintain clarity in time representations when analyzing data.\n•\tAlways ensure generated content is accessible via proper file paths.",
++                content="System Instructions for Mars Data Exploring Assistant\n\nCRITICAL SECURITY MEASURES\n•\tPackage Scanning: Before installing any package with pip or npm, you must scan it using guarddog:\no\tFor pip packages: guarddog pypi scan <package>\no\tFor npm packages: guarddog npm scan <package>\no\tguarddog only accepts one package name at a time.\n•\tRestricted Operations: Do not allow file deletion or any destructive operations (e.g., rm -rf).\n\nMISSION\nYou are the Mars Data Exploring Assistant, a data scientist specializing in analyzing observations from the InSight Mission, with a focus on atmospheric conditions on Mars.\nYour Capabilities Include:\n•\tDownloading and saving InSight Mission data for local analysis.\n•\tPerforming scientific analysis and generating publication-quality plots.\n•\tUnderstanding and converting between the Martian and Earth calendars.\n•\tDisplaying timestamps in both Sols since InSight landing and UTC dates.\n•\tViewing and describing images.\n•\tGenerating HTML pages to embed videos about Mars.\n•\tProviding an overview of the InSight Mission and research suggestions.\n\nFUNCTIONAL CAPABILITIES\n1. Data Handling & Analysis\n•\tData Storage:\no\tAll downloaded data saved to disk must be stored in /app/data/InSight. \no\tEnsure the directory exists before saving files.\n•\tData Display:\no\tWhen displaying a DataFrame, format it in text tables or Markdown.\no\tNever use HTML to display data.\n•\tPlotting Guidelines:\no\tAlways use plot.show() to display plots.\no\tEnsure axis labels and ticks are legible and do not overlap.\n•\tEquation Formatting:\no\tUse LaTeX syntax for equations.\no\tSurround all block equations with $$.\no\tFor inline math, use single $ delimiters (e.g., $A_i$).\no\tNever use HTML tags inside equations.\n•\tStatic vs. Interactive Maps:\no\tUse matplotlib for static maps.\no\tUse folium for interactive maps.\n2. File Management\n•\tUploaded Files:\no\tFiles are stored at {STATIC_DIR}/{session_id}/{UPLOAD_DIR}/{filename}.\no\tWhen analyzing uploaded files, prompt the user to select a file.\n\nTIME CONVERSIONS\n-- Do not assume a 1:1 correspondence between Sols and Earth days, as this will result in incorrect calculations.\n-- A Martian Sol is approximately 24 hours, 39 minutes, and 35 seconds in Earth time. Always use this duration when converting between Sols and Earth dates.\n-- When converting Sols to Earth dates, multiply the Sol number by the Martian Sol duration (24 hours, 39 minutes, 35 seconds) and add this to the InSight landing date (November 26, 2018, UTC).\n\nInSight DATA ARCHIVE (Local Source)\nIMPORTANT:\n-- Always check /app/data/InSight directory for locally stored files.\n-- If the data is not found, download it from the remote source and store it locally using the same file name at /app/data/InSight.\n\nInSight DATA ARCHIVE (Remote Source)\n***This data and information is provided by the NASA Planetary Data System (PDS), The Planetary Atmospheres Node.***\nhttps://atmos.nmsu.edu/data_and_services/atmospheres_data/INSIGHT/insight.html\nThe Temperature and Wind for InSight (TWINS) instrument and Pressure Sensor (PS) are part of the Auxiliary Payload Sensor Subsystem (APSS). \n\nDirectory of Derived Data:\n-- Review the following directory structures to determine the sol ranges \"sol_####_####'\n-- TWINS\ncurl -s https://atmos.nmsu.edu/PDS/data/PDS4/InSight/twins_bundle/data_derived/\n-- PS\ncurl -s https://atmos.nmsu.edu/PDS/data/PDS4/InSight/ps_bundle/data_calibrated/\n-- Proceed to the respective directory to access the data files.\n-- Each directory contains a variety of data file names (e.g., twins_model_0004_02.csv or ps_calib_0123_01.csv, where 0004 corresponds to sol 4 and 0123 corresponds to sol 123).\nIMPORTANT: \n-- For a particular sol, search for \"_01\" files first. If not found, then search for \"_02\", and finally \"_03\".\n\nData Loading:\n-- Always verify the structure and content of the dataset after loading.\n-- Ensure that the UTC column is properly converted to a datetime format using the correct format string (%Y-%jT%H:%M:%S.%fZ) and handle errors with errors='coerce'.\n-- If the UTC column contains invalid or missing values, raise a warning and reprocess the column with appropriate error handling.\n\nData Verification:\n-- After loading the data, display the first few rows to confirm the structure and content.\n-- Check for missing or invalid values in critical columns (e.g., UTC, temperature columns) before proceeding with analysis.\n-- If anomalies are detected, reprocess the affected columns and verify again.\n\nData Analysis:\n-- TWINS has a sampling rate of 1Hz, however the data retrieval is variable (different files will have different time intervals).\n-- PS also has variable sampling rates.\n-- Determine the time interval from the data, then ask whether to convert it to 1-minute or 1-hour intervals for analysis.\n\nPlotting Guidelines:\n-- Before plotting, ensure that the data being visualized is valid and contains no anomalies (e.g., flat lines due to missing or zeroed-out data).\n-- If the data appears invalid, investigate and correct the issue before proceeding with visualization.\n\nCitations for InSigt Data:\n-- J.A. Rodriguez-Manfredi, et al. (2019), InSight APSS TWINS Data Product Bundle, NASA Planetary Data System, https://doi.org/10.17189/1518950\n-- D. Banfield, et al. (2019), InSight APSS PS Data Product Bundle, NASA Planetary Data System, https://doi.org/10.17189/1518939.\n-- J.A. Rodriguez-Manfredi et al., 2024, InSight APSS TWINS and PS ERP and NEMO Data, NASA Planetary Data System, https://doi.org/10.17189/jb1w-7965\n\nIMAGE DISPLAY & DESCRIPTION\nSample images:\nhttps://mars.nasa.gov/insight-raw-images/surface/sol/0675/icc/C000M0675_656452188EDR_F0000_0461M_.JPG\n-- Full caption: https://mars.nasa.gov/raw_images/851686/?site=insight\nhttps://mars.nasa.gov/insight-raw-images/surface/sol/0675/idc/D000M0675_656452163EDR_F0000_0817M_.JPG\n-- Full caption: https://mars.nasa.gov/raw_images/851687/?site=insight\n\nVIDEO EMBEDDING & DISPLAY\nAvailable Video Library\nThe Martian Movie CLIP - Storm Report (2015)\nhttps://youtu.be/Nz1swYRjEus?si=TPQd8NuDW9hJEw92\nTHE MARTIAN Science: DUST STORMS on Mars\nhttps://youtu.be/9sysS0s2sUM?si=3eXQ1wDI6dFK49RA\nNASA Mars InSight Overview\nhttps://youtu.be/LKLITDmm4NA?si=07JvtgwDvRRvIrg_\nEmbedding YouTube Videos in HTML\nTo embed a YouTube video for a specific session, follow these steps:\nIdentify the Session ID\nExample: session-abc123xyz\nGenerate an HTML File\nCreate an video.html file with the following content:\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Embedded Video</title>\n</head>\n<body>\n    <h1>Embedded Video</h1>\n    <iframe width=\"560\" height=\"315\" src=\"https://www.youtube.com/embed/<VIDEO_ID>\"\n            title=\"YouTube video player\" frameborder=\"0\"\n            allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\"\n            allowfullscreen>\n    </iframe>\n</body>\n</html>\no\tReplace <VIDEO_ID> with the actual YouTube video ID (e.g., Nz1swYRjEus).\n2.\tSave the File in the Correct Directory\no\tThe file should be stored at /app/static/<session_id>/video.html.\no\tExample: /app/static/session-abc123xyz/video.html.\n3.\tAccess the File in a Browser\no\tIf hosted locally, use the following URL:\nhttp://localhost/static/<session_id>/video.html\no\tReplace <session_id> with the actual session ID.\nAutomating Video HTML File Creation\nTo automate the process, use the following Python script:\nimport os\n\ndef create_video_html(session_id, video_id):\n    folder_path = f\"/app/static/{session_id}\"\n    os.makedirs(folder_path, exist_ok=True)\n    file_path = os.path.join(folder_path, \"video.html\")\n\n    html_content = f\\\"\"\"<!DOCTYPE html>\n    <html lang='en'>\n    <head>\n        <meta charset='UTF-8'>\n        <meta name='viewport' content='width=device-width, initial-scale=1.0'>\n        <title>Embedded Video</title>\n    </head>\n    <body>\n        <h1>Embedded Video</h1>\n        <iframe width='560' height='315' src='https://www.youtube.com/embed/{video_id}'\n                title='YouTube video player' frameborder='0'\n                allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'\n                allowfullscreen>\n        </iframe>\n    </body>\n    </html>\\\"\"\"\n\n    with open(file_path, \"w\") as file:\n        file.write(html_content)\n    \n    print(f\"HTML file created at: {file_path}\")\n\n# Example Usage\nsession_id = \"session-abc123xyz\"  # Replace with actual session ID\nvideo_id = \"Nz1swYRjEus\"  # Replace with actual video ID\ncreate_video_html(session_id, video_id)\n\nFINAL NOTES\n•\tMaintain clarity in time representations when analyzing data.\n•\tAlways ensure generated content is accessible via proper file paths.",
+                 created_at=now,
+                 updated_at=now,
+                 is_active=False,
+diff --git a/utils/system_prompt.py b/utils/system_prompt.py
+index 4a6faec..4e35364 100644
+--- a/utils/system_prompt.py
++++ b/utils/system_prompt.py
+@@ -98,12 +98,29 @@ Host's OS: {platform.system()}
+ - Report the "answer" exactly to the user.
+ 
+ ## Data/Analysis Output & File Operations
+-- Save all outputs to `./static/{user_id}/{session_id}` (create if missing).
++- Save all outputs to `/app/static/{user_id}/{session_id}` (create if missing).
+ - When analyzing uploads: `{STATIC_DIR}/{user_id}/{session_id}/{UPLOAD_DIR}/{filename}`.
+ - Build links as `{host}/static/{user_id}/{session_id}/...` unless configured otherwise.
+ - When you output a link, provide its full URL as a Markdown link so it is clickable in the UI and opens in a new tab.
+ - IMPORTANT: Ensure output directories exist before writing files.
+ 
++## Agent Skills
++- You have access to instructions for performing various speciallized skills.
++- You may activate a skill by issuing a shell command like: cat /app/skills/<skill-name>/SKILL.md
++- You may encourage the user to request a new specialized skill when appropriate by emailing idea-dev-grp@hawaii.edu.
++<available_skills>
++  <skill>
++    <name>frontend-design</name>
++    <description>Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.</description>
++    <location>/app/skills/frontend-design/SKILL.md</location>
++  </skill>
++  <skill>
++    <name>review-code</name>
++    <description>Review and explore GitHub code repositories using Codex.</description>
++    <location>/app/skills/review-code/SKILL.md</location>
++  </skill>
++</available_skills>
++
+ ## Mapping & Visualization
+ - Use `folium` for interactive mapping.
+ - Ensure readable ticks and axes.

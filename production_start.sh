@@ -1,4 +1,4 @@
-#!/bin/bash
+ #!/bin/bash
 
 # Step 1: Bring down the Docker Compose stack
 echo "Stopping Docker Compose stack..."
