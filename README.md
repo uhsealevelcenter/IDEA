@@ -1,251 +1,172 @@
 # Intelligent Data Exploring Assistant (IDEA)
 
-## Disclaimer
+IDEA is a tool-using AI assistant for scientific data exploration. It is designed to help researchers go from question to analysis and figures quickly while keeping results transparent and reproducible. IDEA is a framework for building domain-focused assistants that can run code, generate plots, save outputs, and work directly with uploaded datasets.
 
-**Warning:** This project allows a Large Language Model (LLM) to execute code and perform actions on the host machine, which can be potentially destructive and dangerous. Use this software at your own risk. The authors and contributors of this project are not responsible for any damage or data loss that may occur from using this software. It is strongly recommended to run this software in a controlled environment, such as a virtual machine or a container, to mitigate potential risks.
+## IDEA vs. SEA
 
-## Overview
+- **IDEA** is the general-purpose framework for creating and working with custom data analysis assistants.
+- **SEA (Station Explorer Assistant)** is a special-purpose IDEA configured for sea level data analysis.
 
-This is a generic version of the [Station Explorer Assistant (SEA) project](https://github.com/uhsealevelcenter/slassi).
-The core of it is OpenAI's GPT-4.1 model that runs a local code interpreter using [OpenInterpreter](https://github.com/OpenInterpreter/open-interpreter). It is essentially a web interface to the OpenInterpreter code interpreter. 
-Comments about options for using alternative LLM inference endpoints are provided in the app.py script. 
+![IDEA](https://github.com/uhsealevelcenter/IDEA/blob/main/Example_IDEA_forGitHub_3Feb2026.mp4)
 
-![IDEA](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExdDlpeXUzcTNuZjN0eTZjaGd2YmFwYXVhejBiZGhjZ25sbnJsbGk5NSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/ZqE51jnzWAFBCZBRUM/giphy.gif)
-![IDEA2](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHhscGFraWFpbzExcnN1NG01bG0zNGMxendnMjFrbWU4YWM1MWx4OCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/tuv0NGNP9mhsmhsTad/giphy.gif)
+**Web access:**
+- **SEA (no login required):** https://uhslc.soest.hawaii.edu/research/SEA
+- **IDEA (login required):** https://uhslc.soest.hawaii.edu/research/IDEA
+- **Account requests:** idea-dev-grp@hawaii.edu
 
-## Important Note About Usage
+## Why IDEA (vs. a chat-only assistant)
 
-This is a **single-user development tool**, not a production-ready multi-user application. It includes basic authentication but is designed for **one user at a time**. Even with authentication, multiple simultaneous users will interfere with each other's sessions and data. It lacks many features typically found in enterprise production systems such as:
+IDEA is action-oriented. It can execute code, inspect data, and produce artifacts you can download. Results are backed by runnable code and intermediate outputs, which supports scientific transparency and reproducibility.
 
-- Multi-user support with role-based access
-- Database-backed user management
-- Advanced security features (2FA, audit logs, etc.)
-- Conversation history persistence across server restarts
-- Enterprise-grade security guardrails
-- Production-level error handling and monitoring
-- Enterprise support
+## Core Capabilities
 
-**Security Warning:** While this tool includes basic authentication, it is intended primarily for controlled environments. If deploying on a public server:
-- Use strong, unique passwords
-- Implement HTTPS
-- Consider additional network security (VPN, IP whitelisting)
-- Monitor access logs
-- Keep the system updated
+- **Data ingestion:** Load CSV, NetCDF, text, and other common formats; summarize variables, dimensions, ranges, and missingness.
+- **Exploratory analysis:** Time series resampling, anomalies, seasonal cycles, trend estimates, and comparisons across stations or regions.
+- **Visualization:** Publication-ready plots, quick-look figures, and exportable figure packs.
+- **Mapping:** Interactive maps (folium) and static maps (matplotlib/cartopy).
+- **Domain workflows:** Sea level and tide-gauge analysis, station lookup, extremes, trends, and climate index context (e.g., El Niño-Southern Oscillation).
+- **Reproducible outputs:** Saved plots, tables, and derived datasets with traceable steps.
+- **Literature RAG:** Optional literature review using [PaperQA2](https://github.com/Future-House/paper-qa), with locally indexed PDFs for retrieval-augmented answers (via user uploads to their Knowledge base in IDEA or a limited archive of journal articles in SEA).
 
-The Docker container provides some isolation, but should not be considered a complete security solution for highly sensitive environments.
-
-This project serves as a starting point for developers looking to build their own AI-powered tools, but requires additional security hardening for sensitive production environments.
-
-## Features
-
-- **Data Exploration:** Easily search and filter any data
-- **Data Visualization:** Generate plots and tables to visualize results.
-- **Data Download:** Export data in any format for further study.
-- **Data Analysis:** Automatically run analysis routines to generate and validate results.
-- **Data Upload:** Upload data files for analysis.
-
-## More information 
-
-- **Live example:** [Station Explorer Assistant (SEA) project](https://uhslc.soest.hawaii.edu/research/SEAinfo/)
-- **Publication preprint:** [Building an Intelligent Data Exploring Assistant (IDEA) for Geoscientists](https://essopenarchive.org/users/889694/articles/1271066-building-an-intelligent-data-exploring-assistant-for-geoscientists)
 <p align="center">
   <img src="https://uhslc.soest.hawaii.edu/research/SEAinfo/EngineeringSchematic_details.png" alt="IDEAschematic_details" width="600" />
 </p>
+Engineering plan of IDEA. Figure 1 from: Widlansky, M. J., & Komar, N. (2025). Building an intelligent data exploring assistant for geoscientists. *JGR: Machine Learning and Computation*, 2, e2025JH000649. https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2025JH000649
 
-## Prerequisites
+## Example Workflow
+1) Suggest a topic and ask IDEA to show you how it can help.
+2) Propose a research direction, or let IDEA guide you.
+3) Check methods and results carefully, and ask for clarification or revision when necessary.
+[Sample conversation with IDEA correcting its mistake](https://uhslc.soest.hawaii.edu/idea-api/share/fAIaXflp1JrC_7lttLhdactuoxvxEUBWQHZYlCmAowY)
 
-- **Docker & Docker Compose:** Ensure Docker is installed on your system.
-- **API Key for LLM Inference:** You need an API key from OpenAI or another LLM service provider.
+### Prompting ideas
+- “I uploaded a NetCDF—what’s inside?”
+- “Plot monthly mean sea level for Honolulu and compare to an El Niño index.”
+- “Analyze trends and extremes in the time series.”
+- “Generate a self-contained web page showing the methods and results of this analysis.”
 
-## Getting Started Locally
+## Build Your Own IDEA
+
+IDEA is built to be customized. You can tailor behavior by adding domain instructions, preferred methods, and datasets. The **Instructions** panel enables:
+
+- Custom roles (e.g., “Station Explorer Assistant (SEA)” for analyzing tide gauge data)
+- Standardized lab workflows and QA/QC rules
+- Consistent output styles across a team
+- Reuse of local knowledge and reference datasets via online sources or upload
+
+## How It Works (Conceptual)
+
+IDEA combines:
+
+- A conversational interface with a multimodal large language model (e.g., gpt-5.2 from OpenAI; AI model updates to the latest state-of-the-art)
+- Information and data context (provide custom "Instruction" manuals, "Knowledge" documents, and Data files)
+- Tool use for real actions (file I/O, code execution, plotting, and reporting)
+- Human-driven and reproducible science workflows (code reviews and "Conversation" sharing)
+
+Internally, IDEA uses Open Interpreter to execute Python and system commands in a controlled environment (https://github.com/openinterpreter/open-interpreter). This means results are inspectable and reproducible rather than “black box” outputs.
+
+## Limitations and Scientific Caution
+
+IDEA is powerful but not infallible. It can:
+
+- Misinterpret ambiguous requests
+- Choose suboptimal methods if assumptions are unclear [Example](https://uhslc.soest.hawaii.edu/idea-api/share/fAIaXflp1JrC_7lttLhdactuoxvxEUBWQHZYlCmAowY)
+- Produce results that require domain judgment to validate
+
+Always verify critical results, especially for publication or operational decisions. For example, when conducting a sea level analysis, be mindful of datum shifts, QC flags, record length, and local effects (subsidence/uplift). When necessary, prompt IDEA to check its work.
+
+## Getting Started Locally (requires Docker)
 
 ### 1. Clone the Repository
 
-To clone the `IDEA-toZ` branch (recommended for the Lost City of Z project):
 ```bash
-git clone --branch IDEA-toZ https://github.com/uhsealevelcenter/IDEA.git
+git clone https://github.com/uhsealevelcenter/IDEA.git
 cd IDEA
 ```
 
-### 2. Set Up Environment Variables
+### 2. Configure Environment Variables
 
-Create a `.env` file in the project root. You have two options:
+Create a `.env` file in the project root (copy `example.env` and edit values). At minimum you should set:
 
-- **Option A:** Rename the provided `example.env` to `.env` and configure the required variables:
-  ```ini
-  OPENAI_API_KEY=YOUR_API_KEY_HERE
-  # Authentication Configuration
-  FIRST_SUPERUSER=admin
-  FIRST_SUPERUSER_PASSWORD=your_secure_password_here
-  ```
-- **Option B:** Manually create a `.env` file with the necessary variables.
+```ini
+OPENAI_API_KEY=YOUR_API_KEY_HERE
+POSTGRES_DB=idea_db
+POSTGRES_USER=idea_user
+POSTGRES_PASSWORD=change_this
+SECRET_KEY=change_this
+FIRST_SUPERUSER=admin@idea.com
+FIRST_SUPERUSER_PASSWORD=change_this
+```
 
-**Important Security Notes:**
-- **Change the default password** before deploying to any environment
-- Use a strong, unique password for the `AUTH_PASSWORD`
-- Keep your `.env` file secure and never commit it to version control
+IDEA has been tested with several LLM inference providers, including OpenAI (https://platform.openai.com/), Anthropic (https://claude.com/platform/api), and Jetstream2 (https://docs.jetstream-cloud.org/inference-service/overview/).
 
-### 3. Prepare the Frontend Configuration
+### 3. Configure the Frontend
 
-Inside the `frontend` directory, create a `config.js` file. You can either copy from `config.example.js` or create one manually. (This file does not contain any secrets; it simply sets environment parameters.) This file is not checked in to the repo to avoid confusion with the production environment. It is a hacky solution but it works for now. The most important thing is that on the actual production server, the environment field in the config.js file is set to "production" and local is set to "local".
+If `frontend/config.js` does not exist, copy `frontend/config.example.js` to `frontend/config.js` and edit as needed. This file contains environment parameters and no secrets.
 
-### 4. Start the Local Environment
+### 4. Start Local Services
 
-For local development, the repository includes a Docker Compose file (`docker-compose-local.yml`) and a helper script (`local_start.sh`). This setup supports live code reloading on the backend and mounts the source for immediate feedback (any code changes on the backend will be reflected immediately).
+Run:
 
-Run the helper script:
 ```bash
 ./local_start.sh
 ```
 
+This uses `docker compose` with `docker-compose.yml` plus `docker-compose.override.yml` to enable live reload and local mounts.
 
-This script will:
-1. Stop any running Docker containers defined in `docker-compose-local.yml`.
-2. Build and start the containers (including backend, frontend, nginx, and redis).
-3. Tail the logs of the backend container for quick debugging.
+### 5. Access the App
 
-Note: The first time you run this, it will take a while because it has to download the docker image and install the dependencies.
+- Main app: http://localhost
+- Login: http://localhost/login.html
 
-#### **Local Services Breakdown:**
+Login with the credentials from your `.env` file.
 
-- **Backend (web):** Runs the API with hot-reload enabled (`uvicorn app:app --reload`).
-- **Frontend:** A static server (using Python's `http.server`) running on port **8000**. Useful for direct access and testing. http://localhost
-- **NGINX:** Reverse-proxy and static file server available on port **80**.
-- **Redis:** In-memory store for caching, running on port **6379**.
+## Deploying to Production (requires Docker)
 
-### 5. Access the Application
-
-You should now be able to run IDEA locally and make changes to the code. Visit [http://localhost](http://localhost) to access the application.
-
-**First Time Login:**
-1. You'll be redirected to a login page at `http://localhost/login.html`
-2. Use the credentials you set in your `.env` file:
-   - **Username:** `admin` (or your custom username)
-   - **Password:** The password you set in `AUTH_PASSWORD`
-3. After successful login, you'll be redirected to the main application
-
-**Authentication Features:**
-- **Session Management:** Login tokens are valid for 24 hours
-- **Logout:** Use the logout button in the navigation bar
-- **Auto-redirect:** If your session expires, you'll be automatically redirected to login
-- **Mobile Support:** Logout option available in the mobile hamburger menu
-
-## Deploying to Production
-
-The production setup uses a separate Docker Compose configuration (`docker-compose.yml`) along with the `production_start.sh` script.
-
-### Production Environment Variables
-
-Ensure your production `.env` file includes secure authentication credentials:
-
-```ini
-OPENAI_API_KEY=your_production_api_key
-# Authentication Configuration - USE STRONG PASSWORDS!
-FIRST_SUPERUSER=your_admin_username
-FIRST_SUPERUSER_PASSWORD=your_very_secure_production_password
-# Other production variables
-LOCAL_DEV=0
-PQA_HOME=/app/data
-PAPER_DIRECTORY=/app/data/papers
-```
-
-### Production Security Recommendations
-
-**Critical Security Steps:**
-1. **Use strong, unique passwords** - Never use default passwords in production
-2. **Secure your `.env` file** - Ensure proper file permissions (600) and restrict access
-3. **HTTPS Only** - Always use HTTPS in production (configure your reverse proxy/load balancer)
-4. **Network Security** - Ensure the application is only accessible through your intended network configuration
-5. **Regular Updates** - Keep dependencies and base images updated
-
-### Deployment Process
-
-The `production_start.sh` script will:
-- Stop any running services defined in `docker-compose.yml`
-- Build and run the new containers in detached mode
-- Apply your production environment variables
+Use:
 
 ```bash
 ./production_start.sh
 ```
 
-**Production Access:**
-- Users will need to login with the credentials specified in your production `.env` file
-- Consider implementing additional security measures like IP whitelisting or VPN access
-- Monitor login attempts and session activity for security purposes
+This runs `docker compose -f docker-compose.yml` to build and start the production services.
 
-**⚠️ Critical Multi-User Limitation:**
-- **Single-User Design**: IDEA is designed for **ONE USER AT A TIME**
-- **Simultaneous Usage Warning**: If multiple users access the application simultaneously using the same login credentials, they will share:
-  - The same conversation history
-  - The same file uploads and session data
-  - The same interpreter instance and code execution context
-- **Unpredictable Behavior**: Multiple simultaneous users can cause data corruption, unexpected responses, and interfering code executions
-- **Recommendation**: Ensure only one person uses the application at a time, or deploy separate instances for different users
+### Security and Deployment Notes
 
+- **Code execution:** IDEA allows an AI model to generate computer code that executes in the environment where IDEA is installed.
+- **Local development (`./local_start.sh`):** Intended for **single-user development**. The local Docker configuration bind-mounts the project directory for live reload, which means the model can read/write parts of the host filesystem.
+- **Production (`./production_start.sh`):** Intended for **multi-user deployment** using the production Docker stack.
+- **Isolation tip (production):** Keep the IDEA compute container isolated from the front-end web interface. A common pattern is to run the web UI on a separate host or network segment and only expose the backend API through a controlled reverse proxy.
+
+Docker provides isolation, but it is not a complete security solution for sensitive environments. Treat the IDEA compute container as an execution environment and design your deployment accordingly.
 
 ## Project Structure
+
 ```
 .
-├── app.py # Main application entry point (backend)
-├── Dockerfile # Docker container build configuration
-├── docker-compose.yml # Production Docker Compose configuration
-├── docker-compose-local.yml # Local Docker Compose configuration
-├── local_start.sh # Local development startup script
-├── production_start.sh # Production deployment script for the backend
-├── requirements.txt # Python dependencies
-├── data/ # Directory storing datasets, benchmarks, and additional data
-├── frontend/ # Frontend static assets (HTML, CSS, JS)
-├── nginx.conf # NGINX configuration for reverse proxy and static files, used only for local development and set to mimic production
-└── utils/
-    └── system_prompt.py # Configuration file for the system prompt (LLM)
+├── app.py                         # FastAPI backend and Open Interpreter integration
+├── auth.py                        # Authentication utilities
+├── Dockerfile                     # Container build configuration
+├── docker-compose.yml             # Production Docker Compose configuration
+├── docker-compose.override.yml    # Local development overrides
+├── local_start.sh                 # Local development startup
+├── production_start.sh            # Production startup
+├── requirements.txt               # Python dependencies
+├── data/                          # Datasets, benchmarks, metadata, papers
+├── frontend/                      # Static frontend assets (HTML/CSS/JS)
+├── nginx.conf                     # Local dev reverse-proxy/static server config
+├── static/                        # User artifacts and generated outputs
+└── utils/                          
+    └── system_prompt.py           # System prompt for the assistant
 ```
 
-system_prompt.py is the system prompt for the LLM. It is used to set the behavior of the LLM. It is probably the most important file in the project. You can alter the behavior of the LLM by editing this file and adjust it to your own needs.
+## Citation
 
-
-## PaperQA2
-
-- **Data Directory:** Contains subdirectories for benchmarks, metadata, altimetry, and papers. papers is the directory containing the peer reviewed papers that are indexed by PaperQA2. 
-When develping locally, you can simply add new publications to the `data/papers` directory and newly added PDFs will be automatically indexed upon first relevant question that invokes the use of the `pqa` command (e.g. asking the AI to perform literature review).
-- **Note**: In production, you cannot simply copy the data to `data/papers` on your local machine because that directory is not mounted in the container in production. You would have to copy the data to the production server and then copy the data directly to the container at the same location (e.g. `/app/data/papers`).
-
-The settings for PaperQA2 indexing are in `data/.pqa/settings/my_fast.json` and `data/.pqa/settings/pqa_settings.py`. These files define the model and parameters used to index the papers. You can change the settings to use a different model or different parameters. And then in `custom_instructions.py`, you can change the system prompt to use the new settings (e.g. `my_fast` or `pqa_settings`).
-
-## Note about the System Prompt
-
-To replicate our results for the Mars InSight mission from our paper named Building an intelligent data exploring assistant for geoscientists, you must use the `system_prompt_InSight.py` file as your system prompt. To do that, you need to change the import in `app.py` from `from utils.system_prompt import sys_prompt` to `from utils.system_prompt_InSight import sys_prompt`.
-
-## Environment Variables
-
-The project behavior is controlled by several environment variables in the `.env` file:
-
-**Secrets (must be in .env file, never commit to repo):**
-- `OPENAI_API_KEY`: Your API key provided by OpenAI
-- `FIRST_SUPERUSER`: Username for application login
-- `FIRST_SUPERUSER_PASSWORD`: Password for application login
-
-**Configuration settings:**
-- `LOCAL_DEV`: Set to `1` for local development mode; set to `0` for production
-- `PQA_HOME`: Path to store Paper-QA settings, typically `/app/data`
-- `PAPER_DIRECTORY`: Path to the papers directory, typically `/app/data/papers`
-
-**Authentication System Details:**
-- The application uses a simple username/password authentication system
-- Login sessions are valid for 24 hours
-- All API endpoints are protected and require authentication
-- Sessions are stored in memory (will be lost on server restart)
-- **Important**: Authentication provides access control but **NOT user isolation** - all authenticated users share the same data and sessions
-
-## Docker & Container Details
-
-- **Dockerfile:** Uses multi-stage builds to install dependencies in a virtual environment and then copies only the necessary runtime files.
-- **Volumes:** Ensure persistence—`persistent_data` for production and local bind-mounts (such as `./frontend` to `/app/frontend`) for rapid development.
-- **NGINX Container:** Serves static files and acts as a reverse proxy on port 80. Its configuration is contained in `nginx.conf`. This is only used for local development and is set to mimic production.
+Widlansky, M. J., & Komar, N. (2025). Building an intelligent data exploring assistant for geoscientists. *JGR: Machine Learning and Computation*, 2, e2025JH000649. https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2025JH000649
 
 ## Contributing
 
-Contributions, issue reports, and feature requests are welcome! Please open an issue or a pull request with your changes.
+Contributions, issue reports, and feature requests are welcome! Please open an issue or a pull request with your changes. General feedback or questions can be emailed to idea-dev-grp@hawaii.edu
 
 ## Release
 
@@ -255,4 +176,4 @@ Prototype (v0.1.0) https://doi.org/10.5281/zenodo.15605301
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the MIT License. See `LICENSE`.
