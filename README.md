@@ -12,7 +12,7 @@ IDEA is a tool-using AI assistant for scientific data exploration. It is designe
 - **IDEA (login required):** https://uhslc.soest.hawaii.edu/research/IDEA
 - **Account requests:** idea-dev-grp@hawaii.edu
 
-https://github.com/user-attachments/assets/2e099c60-7ca9-44cd-9175-56ea0556b43b
+https://github.com/user-attachments/assets/a134e21b-467a-48fb-a951-42460cb77e23
 
 ## Why IDEA (vs. a chat-only assistant)
 
