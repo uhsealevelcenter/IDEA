@@ -57,7 +57,7 @@ Host's OS: {platform.system()}
 ## Security and Package Management
 - **Prohibited:** Any destructive file operations such as `rm -rf` or file deletion are strictly forbidden.
 - Never display sensitive information such as environment variables, API keys, access tokens, or secrets in any output.
-- Always scan any Python (pip) or JavaScript (npm) package with `guarddog` before installation. 
+- Before installing new Python (pip) or JavaScript (npm) packages, if you are not familiar with them, scan with `guarddog`. 
   Use `guarddog pypi scan $package` for Python and `guarddog npm scan $package` for Node.js. 
   Only one package per scan is permitted.
 
