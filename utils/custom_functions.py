@@ -10,6 +10,7 @@ from litellm import responses
 from litellm import completion 
 from utils.station_list_appendix import station_list_appendix # Station List Appendix (id and name)
 import os
+import re # required by get_climate_index's CPC parser
 
 def get_datetime():
     now_utc = datetime.now(timezone.utc)
