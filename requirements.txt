@@ -526,6 +526,8 @@ litellm==1.75.8
     #   fhlmi
     #   idea
     #   open-interpreter
+llvmlite==0.46.0
+    # via numba
 locket==1.0.0
     # via partd
 lxml==5.3.0
@@ -597,6 +599,8 @@ networkx==3.5
     #   scikit-image
 nltk==3.9.1
     # via idea
+numba==0.63.1
+    # via idea
 numcodecs==0.14.1
     # via
     #   idea
@@ -615,6 +619,7 @@ numpy==1.26.4
     #   imageio
     #   matplotlib
     #   netcdf4
+    #   numba
     #   numcodecs
     #   pandas
     #   paper-qa
@@ -817,6 +822,8 @@ pygments==2.18.0
     #   rich
 pympler==1.1
     # via coredis
+pymupdf==1.26.7
+    # via idea
 pyogrio==0.11.1
     # via geopandas
 pyparsing==3.1.4

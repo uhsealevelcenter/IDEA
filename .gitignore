@@ -213,3 +213,5 @@ local_scripts/
 .codex/sessions/
 .codex/tmp/path/
 Codex_Sandbox/
+.codex/
+Codex_Sandbox/
