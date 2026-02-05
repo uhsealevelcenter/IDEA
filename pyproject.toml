@@ -226,7 +226,9 @@ dependencies = [
   "statsmodels",
   "pdfminer.six",
   "python-docx",
-  "tadc @ git+https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator"
+  "tadc @ git+https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator",
+  "pymupdf",
+  "numba",
 ]
 
 [tool.uv]

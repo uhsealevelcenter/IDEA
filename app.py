@@ -578,8 +578,8 @@ ALLOWED_EXTENSIONS = {
 }  # Office docs + data/image formats
 
 # Rate limiting
-UPLOAD_RATE_LIMIT = "5/minute"
-MAX_UPLOADS_PER_SESSION = 10  # Maximum files per session
+UPLOAD_RATE_LIMIT = "25/minute"
+MAX_UPLOADS_PER_SESSION = 100  # Maximum files per session
 CLAMD_HOST = "localhost"  # Docker service name
 CLAMD_PORT = 3310
 CHAT_RATE_LIMIT = "10/minute"
