@@ -50,12 +50,14 @@ def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, p
             -- DO NOT attempt to reimplement, replace, or fetch climate indices through alternative methods such as web scraping or external libraries.
             -- DO NOT ask whether get_climate_index is available—it is always present in your environment.
             Example usage: 
-                oni_data = get_climate_index("ONI")
-            
+                oni_data = get_climate_index("RONI")
+            Note:   
+                NOAA/NCEP CPC transitioned to the Relative Oceanic Niño Index (RONI) as the official ENSO monitoring/prediction index effective February 1, 2026; RONI is a 3-month running mean of Niño 3.4 SST anomalies made relative to the global tropics (20°N-20°S), rescaled to match traditional ONI amplitude, and uses the same ±0.5 °C for ENSO classification while legacy ONI files remain available.
             Parameters:
-                climate_index_name (str): Abbreviation of the climate index (e.g., 'ONI', 'PDO').
+                climate_index_name (str): Abbreviation of the climate index (e.g., 'RONI', 'ONI', 'PDO').
             List of available climate indices that will work for your function and their sources:
-            "ONI": Oceanic Niño Index, https://psl.noaa.gov/data/correlation/oni.data
+            "RONI": Relative Oceanic Niño Index, https://www.cpc.ncep.noaa.gov/data/indices/RONI.ascii.txt
+            "ONI": Oceanic Niño Index, https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt
             "PDO": Pacific Decadal Oscillation, https://www.ncei.noaa.gov/pub/data/cmb/ersst/v5/index/ersst.v5.pdo.dat
             "PNA": Pacific/North American pattern, https://psl.noaa.gov/data/correlation/pna.data
             "PMM-SST": Pacific Meridional Mode (SST), https://www.aos.wisc.edu/dvimont/MModes/RealTime/PMM.txt
