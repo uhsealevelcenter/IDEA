@@ -18,7 +18,7 @@ Rules:
 {"id":"003","name":"Baltra"}
 {"id":"004","name":"Nauru"}
 {"id":"005","name":"Majuro"}
-{"id":"007","name":"Malakal"}
+{"id":"007","name":"Malakal, Palau"}
 {"id":"008","name":"Yap"}
 {"id":"009","name":"Honiara"}
 {"id":"011","name":"Christmas"}
@@ -52,10 +52,10 @@ Rules:
 {"id":"050","name":"Midway"}
 {"id":"051","name":"Wake"}
 {"id":"052","name":"Johnston"}
-{"id":"053","name":"Guam"}
+{"id":"053","name":"Guam, GU"}
 {"id":"054","name":"Chuuk"}
 {"id":"055","name":"Kwajalein"}
-{"id":"056","name":"Pago Pago"}
+{"id":"056","name":"Pago Pago, AS"}
 {"id":"057","name":"Honolulu, HI"}
 {"id":"058","name":"Nawiliwili, HI"}
 {"id":"059","name":"Kahului, HI"}
@@ -221,12 +221,12 @@ Rules:
 {"id":"401","name":"Apia"}
 {"id":"402","name":"Lautoka"}
 {"id":"403","name":"Jackson"}
-{"id":"404","name":"Auasi"}
+{"id":"404","name":"Auasi, AS"}
 {"id":"405","name":"Jeremie"}
 {"id":"406","name":"St. Louis du Sud"}
-{"id":"407","name":"Aunuu"}
-{"id":"408","name":"Tau"}
-{"id":"409","name":"Ofu"}
+{"id":"407","name":"Aunuu, AS"}
+{"id":"408","name":"Tau, AS"}
+{"id":"409","name":"Ofu, AS"}
 {"id":"416","name":"Tanjung Lesung"}
 {"id":"417","name":"Sadeng"}
 {"id":"418","name":"Waikelo"}
@@ -237,13 +237,16 @@ Rules:
 {"id":"423","name":"Heeia, HI"}
 {"id":"424","name":"Keehi, HI"}
 {"id":"425","name":"Waianae, HI"}
+{"id":"426","name":"Lahaina, HI"}
 {"id":"428","name":"Kaunakakai, HI"}
 {"id":"429","name":"Manele Bay, HI"}
 {"id":"430","name":"Honokohau, HI"}
 {"id":"431","name":"Milolii, HI"}
 {"id":"432","name":"Hanalei, HI"}
-{"id":"433","name":"Port Allen, HI"}
 {"id":"434","name":"Pearl Harbor, HI"}
+{"id":"436","name":"Kamesang, Palau"}
+{"id":"437","name":"Peleliu, Palau"}
+{"id":"438","name":"Imekang, Palau"}
 {"id":"453","name":"Leava, Futuna Island"}
 {"id":"454","name":"Makemo"}
 {"id":"455","name":"Rangiroa Atoll"}
@@ -256,6 +259,7 @@ Rules:
 {"id":"548","name":"Kaumalapau, HI"}
 {"id":"551","name":"San Francisco, CA"}
 {"id":"552","name":"Kawaihae, HI"}
+{"id":"553","name":"Port Allen, HI"}
 {"id":"554","name":"La Jolla, CA"}
 {"id":"556","name":"Crescent City, CA"}
 {"id":"558","name":"Neah Bay, WA"}
