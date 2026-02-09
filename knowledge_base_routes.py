@@ -14,6 +14,7 @@ from utils.pqa_multi_tenant import (
     build_user_index_sync,
     read_index_status,
     write_index_status,
+    clear_docs_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,15 +43,16 @@ def _has_papers(user_id) -> bool:
 
 
 def _clean_user_index(user_id) -> None:
-    """Remove all pqa_index_* subdirs when the user has no papers left."""
+    """Remove all pqa_index_* subdirs and docs cache when the user has no papers left."""
     index_dir = get_user_index_dir(user_id)
     if not index_dir.exists():
         return
     for child in index_dir.iterdir():
         if child.is_dir() and child.name.startswith("pqa_index"):
             shutil.rmtree(child, ignore_errors=True)
+    clear_docs_cache(user_id)
     write_index_status(user_id, status="ready")
-    logger.info(f"[PQA] No papers left for user {user_id}, cleaned index directory")
+    logger.info(f"[PQA] No papers left for user {user_id}, cleaned index and docs cache")
 
 
 def _background_index_build(user_id) -> None:
