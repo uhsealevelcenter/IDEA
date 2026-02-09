@@ -14,6 +14,12 @@ import re # required by get_climate_index's CPC parser
 
 # MCP Tools Support
 from mcp_tools import call_mcp_tool, list_available_tools as list_mcp_tools
+import time as _time
+
+# In-memory Docs cache keyed by user_id -> {"docs": Docs, "revision": str}
+# Revision is derived from the set of indexed file names so it auto-invalidates
+# when papers are uploaded or deleted.
+_docs_cache = {}
 
 def get_datetime():
     now_utc = datetime.now(timezone.utc)
@@ -480,6 +486,9 @@ def query_knowledge_base(query, user_id, session_id=None):
             return None
     
     async def _query_async():
+        global _docs_cache
+        t_start = _time.perf_counter()
+        
         print("[PQA] Step 1: Loading user settings...")
         # Step 1: Get user-specific settings
         settings = get_user_settings(user_id)
@@ -487,8 +496,9 @@ def query_knowledge_base(query, user_id, session_id=None):
         
         print("[PQA] Step 2: Building/loading index...")
         # Step 2: Build/reuse the persistent index
+        t_idx = _time.perf_counter()
         index = await get_directory_index(settings=settings)
-        print("[PQA] Index loaded.")
+        print(f"[PQA] Index loaded in {_time.perf_counter() - t_idx:.2f}s.")
         
         # Check if there are any indexed files
         index_files = await index.index_files
@@ -496,22 +506,36 @@ def query_knowledge_base(query, user_id, session_id=None):
             return {"answer": "No papers found in your Knowledge base. Please upload papers first.", "images": []}
         print(f"[PQA] Found {len(index_files)} indexed files.")
         
-        # Step 3: Create a Docs object and add documents from the index
-        print("[PQA] Step 3: Adding documents to Docs object...")
-        docs = Docs()
-        paper_directory = settings.agent.index.paper_directory
+        # Compute a revision fingerprint from the set of indexed file names
+        revision = hashlib.md5(str(sorted(index_files.keys())).encode()).hexdigest()
+        cache_key = str(user_id)
+        cached = _docs_cache.get(cache_key)
         
-        for file_path in index_files.keys():
-            full_path = paper_directory / file_path
-            if full_path.exists():
-                print(f"[PQA]   Adding: {file_path}")
-                await docs.aadd(full_path, settings=settings)
-        print("[PQA] All documents added.")
+        if cached and cached["revision"] == revision:
+            docs = cached["docs"]
+            print("[PQA] Step 3: Reusing cached Docs object (cache hit).")
+        else:
+            # Step 3: Create a Docs object and add documents from the index
+            print("[PQA] Step 3: Building Docs object (cache miss)...")
+            t_docs = _time.perf_counter()
+            docs = Docs()
+            paper_directory = settings.agent.index.paper_directory
+            
+            for file_path in index_files.keys():
+                full_path = paper_directory / file_path
+                if full_path.exists():
+                    print(f"[PQA]   Adding: {file_path}")
+                    await docs.aadd(full_path, settings=settings)
+            
+            # Cache the built Docs object for future queries
+            _docs_cache[cache_key] = {"docs": docs, "revision": revision}
+            print(f"[PQA] Docs built and cached in {_time.perf_counter() - t_docs:.2f}s.")
         
         # Step 4: Query with docs.aquery() - preserves media content
         print(f"[PQA] Step 4: Querying with: '{query}'...")
+        t_query = _time.perf_counter()
         session = await docs.aquery(query=query, settings=settings)
-        print("[PQA] Query complete.")
+        print(f"[PQA] Query complete in {_time.perf_counter() - t_query:.2f}s.")
         
         # Step 5: Extract and save images from contexts
         print("[PQA] Step 5: Extracting images from contexts...")
@@ -578,6 +602,7 @@ def query_knowledge_base(query, user_id, session_id=None):
                     continue
         
         print(f"[PQA] Extracted {len(saved_images)} unique images.")
+        print(f"[PQA] Total query_knowledge_base time: {_time.perf_counter() - t_start:.2f}s")
         
         # Return structured result
         return {
