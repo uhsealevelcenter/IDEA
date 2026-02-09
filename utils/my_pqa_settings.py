@@ -72,6 +72,7 @@ def create_pqa_settings(
     summary_llm: Optional[str] = None,
     embedding: str = "text-embedding-3-small",
     verbosity: int = 1,
+    manifest_file: Optional[Union[str, Path]] = None,
 ) -> Settings:
     """
     Create a comprehensive PaperQA Settings object.
@@ -87,6 +88,9 @@ def create_pqa_settings(
         summary_llm: The LLM for summaries (default: same as llm)
         embedding: The embedding model to use (default: text-embedding-3-small)
         verbosity: Logging verbosity level (default: 1)
+        manifest_file: Optional path to a manifest CSV for Docs reuse.
+            When set, PaperQA can skip re-parsing/re-embedding documents
+            that are already tracked in the manifest.
     
     Returns:
         Settings: A fully configured PaperQA Settings object
@@ -94,6 +98,8 @@ def create_pqa_settings(
     # Convert to Path objects
     paper_directory = Path(paper_directory)
     index_directory = Path(index_directory)
+    if manifest_file is not None:
+        manifest_file = Path(manifest_file)
     
     # Use same LLM for summary if not specified
     if summary_llm is None:
@@ -155,7 +161,7 @@ def create_pqa_settings(
         temperature=1,  # Required for gpt-5+ models
         batch_size=1,
         verbosity=verbosity,
-        manifest_file=None,
+        manifest_file=manifest_file,
         
         # Directory Configuration
         paper_directory=paper_directory,

@@ -1,4 +1,5 @@
 {
+  "_comment": "LEGACY: This file is only used as a base template for per-user debugging JSON files. The actual runtime Settings are built by utils/my_pqa_settings.py via create_pqa_settings().",
   "llm": "gpt-5.2-2025-12-11",
   "llm_config": {
     "model_list": [
