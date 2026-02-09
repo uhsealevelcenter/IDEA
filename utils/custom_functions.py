@@ -512,24 +512,34 @@ def query_knowledge_base(query, user_id, session_id=None):
         cached = _docs_cache.get(cache_key)
         
         if cached and cached["revision"] == revision:
+            # Fast path: in-memory cache from a previous query in this session
             docs = cached["docs"]
-            print("[PQA] Step 3: Reusing cached Docs object (cache hit).")
+            print("[PQA] Step 3: Reusing cached Docs object (in-memory cache hit).")
         else:
-            # Step 3: Create a Docs object and add documents from the index
-            print("[PQA] Step 3: Building Docs object (cache miss)...")
-            t_docs = _time.perf_counter()
-            docs = Docs()
-            paper_directory = settings.agent.index.paper_directory
+            # Try disk-based cache (pre-built during background index build)
+            from utils.pqa_multi_tenant import load_docs_from_disk
+            disk_docs = load_docs_from_disk(user_id, revision)
             
-            for file_path in index_files.keys():
-                full_path = paper_directory / file_path
-                if full_path.exists():
-                    print(f"[PQA]   Adding: {file_path}")
-                    await docs.aadd(full_path, settings=settings)
-            
-            # Cache the built Docs object for future queries
-            _docs_cache[cache_key] = {"docs": docs, "revision": revision}
-            print(f"[PQA] Docs built and cached in {_time.perf_counter() - t_docs:.2f}s.")
+            if disk_docs is not None:
+                docs = disk_docs
+                _docs_cache[cache_key] = {"docs": docs, "revision": revision}
+                print("[PQA] Step 3: Loaded Docs from disk cache (pre-built during upload).")
+            else:
+                # Full rebuild: parse + embed all papers
+                print("[PQA] Step 3: Building Docs object (no cache available)...")
+                t_docs = _time.perf_counter()
+                docs = Docs()
+                paper_directory = settings.agent.index.paper_directory
+                
+                for file_path in index_files.keys():
+                    full_path = paper_directory / file_path
+                    if full_path.exists():
+                        print(f"[PQA]   Adding: {file_path}")
+                        await docs.aadd(full_path, settings=settings)
+                
+                # Cache the built Docs object for future queries
+                _docs_cache[cache_key] = {"docs": docs, "revision": revision}
+                print(f"[PQA] Docs built and cached in {_time.perf_counter() - t_docs:.2f}s.")
         
         # Step 4: Query with docs.aquery() - preserves media content
         print(f"[PQA] Step 4: Querying with: '{query}'...")

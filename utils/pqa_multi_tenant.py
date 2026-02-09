@@ -1,7 +1,9 @@
 import asyncio
+import hashlib
 import os
 import json
 import logging
+import pickle
 import shutil
 import threading
 from datetime import datetime, timezone
@@ -97,6 +99,76 @@ def read_index_status(user_id: Any) -> dict:
     return {}
 
 
+# ---------------------------------------------------------------------------
+# Docs disk-cache helpers (pickle-based, shared between FastAPI and OI)
+# ---------------------------------------------------------------------------
+
+def _docs_cache_dir(user_id: Any) -> Path:
+    return get_user_index_dir(user_id) / "docs_cache"
+
+
+def _docs_pkl_path(user_id: Any) -> Path:
+    return _docs_cache_dir(user_id) / "docs.pkl"
+
+
+def _docs_revision_path(user_id: Any) -> Path:
+    return _docs_cache_dir(user_id) / "revision.txt"
+
+
+def _compute_revision(index_files: dict) -> str:
+    """Compute a stable revision fingerprint from the set of indexed file names."""
+    return hashlib.md5(str(sorted(index_files.keys())).encode()).hexdigest()
+
+
+def save_docs_to_disk(user_id: Any, docs: Any, revision: str) -> None:
+    """Pickle a Docs object + revision to disk for cross-process reuse.
+
+    If pickling fails (complex objects, etc.) the partial files are cleaned up
+    and a warning is logged — the system falls back to building Docs on query.
+    """
+    cache_dir = _docs_cache_dir(user_id)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    pkl_path = _docs_pkl_path(user_id)
+    rev_path = _docs_revision_path(user_id)
+    try:
+        with open(pkl_path, "wb") as f:
+            pickle.dump(docs, f, protocol=pickle.HIGHEST_PROTOCOL)
+        rev_path.write_text(revision)
+        logger.info(f"[PQA] Docs cache saved to disk for user {user_id}.")
+    except Exception as exc:
+        logger.warning(f"[PQA] Failed to pickle Docs for user {user_id}: {exc}")
+        pkl_path.unlink(missing_ok=True)
+        rev_path.unlink(missing_ok=True)
+
+
+def load_docs_from_disk(user_id: Any, expected_revision: str) -> Any:
+    """Load a pickled Docs object from disk if the revision matches.
+
+    Returns the Docs object on success, or None on miss / error.
+    """
+    pkl_path = _docs_pkl_path(user_id)
+    rev_path = _docs_revision_path(user_id)
+    if not pkl_path.exists() or not rev_path.exists():
+        return None
+    if rev_path.read_text().strip() != expected_revision:
+        return None
+    try:
+        with open(pkl_path, "rb") as f:
+            return pickle.load(f)  # noqa: S301 — trusted internal cache
+    except Exception as exc:
+        logger.warning(f"[PQA] Failed to load Docs from disk for user {user_id}: {exc}")
+        pkl_path.unlink(missing_ok=True)
+        rev_path.unlink(missing_ok=True)
+        return None
+
+
+def clear_docs_cache(user_id: Any) -> None:
+    """Remove the on-disk Docs cache for a user."""
+    cache_dir = _docs_cache_dir(user_id)
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+
 def ensure_user_dirs(user_id: Any) -> None:
     get_user_papers_dir(user_id).mkdir(parents=True, exist_ok=True)
     get_user_index_dir(user_id).mkdir(parents=True, exist_ok=True)
@@ -182,6 +254,10 @@ async def build_user_index(user_id: Any) -> SearchIndex:
     The index is persisted to disk and reused on subsequent calls.
     Writes index_status.json so callers can observe progress.
     
+    After building the search index, it also pre-builds a Docs object
+    (with all papers added) and pickles it to disk so the first query
+    can load it instantly instead of re-parsing/re-embedding every paper.
+    
     If the on-disk index is corrupted (e.g. truncated files.zip from a
     previous race condition) the index directory is wiped and rebuilt fresh.
     """
@@ -199,14 +275,16 @@ async def build_user_index(user_id: Any) -> SearchIndex:
                     f"[PQA] Corrupt index detected for user {user_id}, "
                     f"cleaning {index_dir} and rebuilding..."
                 )
-                # Remove all pqa_index_* subdirs (preserve index_status.json, manifest, etc.)
                 for child in index_dir.iterdir():
                     if child.is_dir() and child.name.startswith("pqa_index"):
                         shutil.rmtree(child, ignore_errors=True)
-                # Retry with a clean slate
                 index = await get_directory_index(settings=settings)
             else:
                 raise
+
+        # Pre-build and cache the Docs object so the first query is fast
+        await _build_and_cache_docs(user_id, settings, index)
+
         write_index_status(user_id, status="ready")
         return index
     except Exception as exc:
@@ -214,20 +292,59 @@ async def build_user_index(user_id: Any) -> SearchIndex:
         raise
 
 
+async def _build_and_cache_docs(
+    user_id: Any, settings: Settings, index: SearchIndex
+) -> None:
+    """Build a Docs object from the index and pickle it to disk.
+
+    Skips the build if the on-disk cache is already up-to-date.
+    """
+    from paperqa import Docs
+
+    index_files = await index.index_files
+    if not index_files:
+        clear_docs_cache(user_id)
+        return
+
+    revision = _compute_revision(index_files)
+
+    # Check if already up-to-date on disk
+    existing = load_docs_from_disk(user_id, revision)
+    if existing is not None:
+        logger.info(f"[PQA] Docs disk-cache already up-to-date for user {user_id}.")
+        return
+
+    logger.info(
+        f"[PQA] Pre-building Docs object for user {user_id} "
+        f"({len(index_files)} files)..."
+    )
+    docs = Docs()
+    paper_directory = settings.agent.index.paper_directory
+    for file_path in index_files.keys():
+        full_path = paper_directory / file_path
+        if full_path.exists():
+            await docs.aadd(full_path, settings=settings)
+
+    save_docs_to_disk(user_id, docs, revision)
+    logger.info(f"[PQA] Docs pre-build complete for user {user_id}.")
+
+
 def build_user_index_sync(user_id: Any) -> SearchIndex:
     """Synchronous wrapper for build_user_index.
     
     Use this from synchronous code (e.g., OpenInterpreter, FastAPI BackgroundTasks).
-    A per-user lock ensures only one index build runs at a time, preventing
-    concurrent writes that can corrupt the on-disk index (files.zip).
+    A per-user lock serialises index builds so only one runs at a time,
+    preventing concurrent writes that can corrupt the on-disk index.
+    
+    If a build is already running, this call **waits** for it to finish and
+    then runs another build to pick up any papers that arrived in the meantime.
+    This avoids the problem where a second upload's build is skipped and
+    the disk Docs cache ends up stale.  Redundant builds are cheap because
+    get_directory_index and _build_and_cache_docs both short-circuit when
+    nothing has changed.
     """
     lock = _get_user_lock(user_id)
-    if not lock.acquire(blocking=False):
-        logger.info(
-            f"[PQA] Index build already in progress for user {user_id}, skipping."
-        )
-        return None  # type: ignore[return-value]
-
+    lock.acquire()  # blocking — waits for any in-progress build to finish
     try:
         try:
             loop = asyncio.get_running_loop()
