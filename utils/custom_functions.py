@@ -517,16 +517,16 @@ def query_knowledge_base(query, user_id, session_id=None):
             print("[PQA] Step 3: Reusing cached Docs object (in-memory cache hit).")
         else:
             # Try disk-based cache (pre-built during background index build)
-            from utils.pqa_multi_tenant import load_docs_from_disk
+            from utils.pqa_multi_tenant import load_docs_from_disk, save_docs_to_disk
             disk_docs = load_docs_from_disk(user_id, revision)
             
             if disk_docs is not None:
                 docs = disk_docs
                 _docs_cache[cache_key] = {"docs": docs, "revision": revision}
-                print("[PQA] Step 3: Loaded Docs from disk cache (pre-built during upload).")
+                print("[PQA] Step 3: Loaded Docs from disk cache (pre-built during upload/delete or prior lazy backfill).")
             else:
-                # Full rebuild: parse + embed all papers
-                print("[PQA] Step 3: Building Docs object (no cache available)...")
+                # Full rebuild: parse + embed all papers and lazily backfill disk cache
+                print("[PQA] Step 3: Building Docs object (no cache available; query-time lazy backfill)...")
                 t_docs = _time.perf_counter()
                 docs = Docs()
                 paper_directory = settings.agent.index.paper_directory
@@ -539,6 +539,7 @@ def query_knowledge_base(query, user_id, session_id=None):
                 
                 # Cache the built Docs object for future queries
                 _docs_cache[cache_key] = {"docs": docs, "revision": revision}
+                save_docs_to_disk(user_id, docs, revision)
                 print(f"[PQA] Docs built and cached in {_time.perf_counter() - t_docs:.2f}s.")
         
         # Step 4: Query with docs.aquery() - preserves media content
