@@ -208,7 +208,7 @@ utils/untracked_system_prompts/
 # Ignore local_scripts
 local_scripts/
 
-# Codex (allow config.toml but ignore everything else; manually manage auth.json)
+# Codex (allow config.toml & AGENTS.md but ignore everything else; MUST manually manage auth.json)
 .codex/
 !.codex/config.toml
-
+!.codex/AGENTS.md
