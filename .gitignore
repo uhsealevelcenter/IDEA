@@ -208,9 +208,7 @@ utils/untracked_system_prompts/
 # Ignore local_scripts
 local_scripts/
 
-# Codex
-.codex/auth.json
-.codex/sessions/
-.codex/tmp/path/
-Codex_Sandbox/
+# Codex (allow config.toml but ignore everything else; manually manage auth.json)
 .codex/
+!.codex/config.toml
+
