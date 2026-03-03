@@ -884,6 +884,10 @@ function saveCompletedAssistantMessage(message) {
         }
         message.format = message.format || 'output';
     }
+    // Do not persist transient tool-status lines
+    if (message.format === 'tool_status') {
+        return;
+    }
     const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
     const messageType = validTypes.includes(message.type) ? message.type : 'message';
 
@@ -1064,6 +1068,12 @@ function appendMessage(message, options = {}) {
         contentElement.innerHTML = message.content; 
     }
 
+    // Tool-status messages: add compact UI classes
+    if (message.format === 'tool_status') {
+        messageElement.classList.add('tool-status-message');
+        contentElement.classList.add('tool-status-content');
+    }
+
     messageElement.appendChild(contentElement);
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
@@ -1087,6 +1097,39 @@ function appendMessage(message, options = {}) {
         });
     }
 }
+
+function appendExternalMessage({ role = 'assistant', content = '', type = 'message', format = null, recipient = null }) {
+    if (!content || !chatDisplay) return;
+    const id = generateId('msg');
+    const message = {
+        id,
+        role,
+        content,
+        type,
+        format,
+        recipient,
+        isComplete: true,
+    };
+    messages.push(message);
+    appendMessage(message);
+    try {
+        updateMessageContent(id, content);
+    } catch (err) {
+        console.warn('Unable to render external message:', err);
+    }
+
+    if (conversationManager) {
+        const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+        const messageType = validTypes.includes(type) ? type : 'message';
+        conversationManager
+            .addMessage(role, content, messageType, format, recipient)
+            .catch((error) => {
+                console.error('Failed to persist external message:', error);
+            });
+    }
+}
+
+window.appendExternalMessage = appendExternalMessage;
 
 // Modify updateMessageContent with better error handling
 function handleActiveLineChunk(content) {
@@ -1145,7 +1188,21 @@ function updateMessageContent(id, content) {
         }
         
         // Handle different message types (more robust Math rendering)
-        if (message.type === 'message') {
+        if (message.format === 'tool_status') {
+            messageElement.classList.add('tool-status-message');
+            contentDiv.classList.add('tool-status-content');
+            // Render a compact tool-status line with spinner/check
+            const isDone = !!message.isComplete;
+            const text = (content && content.trim()) ? content : message.content || '';
+            const statusHtml = `
+                <div class="tool-status">
+                    <span class="${isDone ? 'tool-check' : 'thinking-spinner'}" aria-hidden="true"></span>
+                    <span class="tool-status-text">${escapeHtml(text)}</span>
+                </div>
+            `;
+            contentDiv.innerHTML = statusHtml;
+            return;
+        } else if (message.type === 'message') {
             // 1) Start from the raw content
             let raw = content;
 

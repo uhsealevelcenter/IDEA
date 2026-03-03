@@ -6,6 +6,8 @@ aiobotocore==2.19.0
     # via
     #   idea
     #   s3fs
+aiofiles==25.1.0
+    # via unstructured-client
 aiohappyeyeballs==2.6.1
     # via
     #   aiohttp
@@ -13,9 +15,9 @@ aiohappyeyeballs==2.6.1
 aiohttp==3.10.8
     # via
     #   aiobotocore
+    #   httpx-aiohttp
     #   idea
     #   litellm
-    #   paper-qa
     #   s3fs
 aioitertools==0.7.1
     # via
@@ -39,13 +41,15 @@ ansicon==1.89.0 ; sys_platform == 'win32'
     # via jinxed
 anthropic==0.37.1
     # via open-interpreter
-anyio==4.4.0
+anyio==4.11.0
     # via
     #   anthropic
     #   httpx
     #   idea
+    #   mcp
     #   openai
     #   paper-qa
+    #   sse-starlette
     #   starlette
 appnope==0.1.4
     # via
@@ -79,11 +83,14 @@ attrs==24.2.0
     #   referencing
     #   semgrep
     #   trio
+backoff==2.2.1
+    # via unstructured
 bcrypt==4.3.0
     # via passlib
 beautifulsoup4==4.12.3
     # via
     #   idea
+    #   unstructured
     #   yfinance
 blessed==1.20.0
     # via
@@ -144,6 +151,7 @@ charset-normalizer==3.3.2
     #   idea
     #   pdfminer-six
     #   requests
+    #   unstructured
 clamd==1.0.2
     # via idea
 click==8.1.7
@@ -158,6 +166,7 @@ click==8.1.7
     #   litellm
     #   mercantile
     #   nltk
+    #   python-oxmsg
     #   rasterio
     #   semgrep
     #   streamlit
@@ -199,9 +208,17 @@ copernicusmarine==2.2.2
 coredis==4.24.0
     # via fhlmi
 cryptography==45.0.7 ; python_full_version >= '3.14' and platform_python_implementation != 'PyPy'
-    # via pdfminer-six
+    # via
+    #   idea
+    #   msoffcrypto-tool
+    #   pdfminer-six
+    #   unstructured-client
 cryptography==46.0.0 ; python_full_version < '3.14' or platform_python_implementation == 'PyPy'
-    # via pdfminer-six
+    # via
+    #   idea
+    #   msoffcrypto-tool
+    #   pdfminer-six
+    #   unstructured-client
 cycler==0.12.1
     # via
     #   idea
@@ -210,6 +227,8 @@ dask==2025.7.0
     # via
     #   copernicusmarine
     #   intake-xarray
+dataclasses-json==0.6.7
+    # via unstructured
 debugpy==1.8.6
     # via
     #   idea
@@ -243,6 +262,8 @@ editor==1.6.6
     #   inquirer
 email-validator==2.1.2
     # via idea
+emoji==2.15.0
+    # via unstructured
 erddapy==2.2.4
     # via idea
 et-xmlfile==2.0.0
@@ -263,12 +284,12 @@ fasteners==0.20 ; sys_platform != 'emscripten'
     # via zarr
 fastjsonschema==2.21.2
     # via nbformat
-fhaviary==0.23.0
+fhaviary==0.28.0
     # via
     #   fhlmi
     #   idea
     #   paper-qa
-fhlmi==0.30.0
+fhlmi==0.42.0
     # via
     #   fhaviary
     #   paper-qa
@@ -276,6 +297,8 @@ filelock==3.16.1
     # via
     #   huggingface-hub
     #   idea
+filetype==1.2.0
+    # via unstructured
 folium==0.17.0
     # via idea
 fonttools==4.53.1
@@ -393,6 +416,7 @@ html2text==2024.2.26
 html5lib==1.1
     # via
     #   idea
+    #   unstructured
     #   yfinance
 httpcore==1.0.5
     # via
@@ -408,10 +432,19 @@ httpx==0.27.2
     #   anthropic
     #   erddapy
     #   fhaviary
+    #   httpx-aiohttp
     #   idea
     #   litellm
+    #   mcp
     #   openai
     #   paper-qa
+    #   unstructured-client
+httpx-aiohttp==0.1.10
+    # via
+    #   fhaviary
+    #   paper-qa
+httpx-sse==0.4.3
+    # via mcp
 huggingface-hub==0.25.1
     # via
     #   idea
@@ -491,6 +524,7 @@ jsonschema==4.23.0
     #   altair
     #   idea
     #   litellm
+    #   mcp
     #   nbformat
     #   semgrep
 jsonschema-specifications==2023.12.1
@@ -512,6 +546,8 @@ kiwisolver==1.4.7
     # via
     #   idea
     #   matplotlib
+langdetect==1.0.9
+    # via unstructured
 latexcodec==3.0.1
     # via pybtex
 lazy-loader==0.4
@@ -534,6 +570,8 @@ lxml==5.3.0
     # via
     #   idea
     #   python-docx
+    #   python-pptx
+    #   unstructured
     #   yfinance
 mako==1.3.10
     # via alembic
@@ -546,6 +584,8 @@ markupsafe==2.1.5
     #   idea
     #   jinja2
     #   mako
+marshmallow==3.26.2
+    # via dataclasses-json
 matplotlib==3.9.2
     # via
     #   cartopy
@@ -559,6 +599,8 @@ matplotlib-inline==0.1.7
     #   idea
     #   ipykernel
     #   ipython
+mcp==1.12.4
+    # via idea
 mdurl==0.1.2
     # via
     #   idea
@@ -567,6 +609,8 @@ mercantile==1.2.1
     # via contextily
 msgpack==1.1.1
     # via intake-xarray
+msoffcrypto-tool==6.0.0
+    # via unstructured
 multidict==6.1.0
     # via
     #   aiobotocore
@@ -579,6 +623,8 @@ multitasking==0.0.11
     # via
     #   idea
     #   yfinance
+mypy-extensions==1.1.0
+    # via typing-inspect
 narwhals==1.9.0
     # via
     #   altair
@@ -589,6 +635,7 @@ nest-asyncio==1.6.0
     # via
     #   idea
     #   ipykernel
+    #   unstructured-client
 netcdf4==1.7.2
     # via
     #   idea
@@ -597,6 +644,7 @@ networkx==3.5
     # via
     #   intake
     #   scikit-image
+    #   unstructured
 nltk==3.9.1
     # via idea
 numba==0.63.1
@@ -637,10 +685,15 @@ numpy==1.26.4
     #   streamlit
     #   tifffile
     #   timezonefinder
+    #   unstructured
     #   utide
     #   xarray
     #   yfinance
     #   zarr
+olefile==0.47
+    # via
+    #   msoffcrypto-tool
+    #   python-oxmsg
 open-interpreter @ git+https://github.com/M-J-W1/open-interpreter@26dceb13e28a19ab97543034d58c4d5b4cb835bf
     # via idea
 openai==1.102.0
@@ -648,7 +701,9 @@ openai==1.102.0
     #   idea
     #   litellm
 openpyxl==3.1.5
-    # via idea
+    # via
+    #   idea
+    #   unstructured
 outcome==1.3.0.post0
     # via
     #   idea
@@ -668,6 +723,7 @@ packaging==24.1
     #   ipykernel
     #   lazy-loader
     #   limits
+    #   marshmallow
     #   matplotlib
     #   plotly
     #   pyogrio
@@ -686,13 +742,17 @@ pandas==2.2.3
     #   seaborn
     #   statsmodels
     #   streamlit
+    #   unstructured
     #   xarray
     #   yfinance
-paper-qa==5.29.1
+paper-qa==2026.1.5
     # via
     #   idea
+    #   paper-qa-pymupdf
     #   paper-qa-pypdf
-paper-qa-pypdf==5.29.1
+paper-qa-pymupdf==2026.1.5
+    # via paper-qa
+paper-qa-pypdf==2026.1.5
     # via paper-qa
 parso==0.8.4
     # via
@@ -721,6 +781,9 @@ pillow==10.4.0
     #   idea
     #   imageio
     #   matplotlib
+    #   paper-qa-pypdf
+    #   pypdf
+    #   python-pptx
     #   scikit-image
     #   streamlit
 platformdirs==4.3.6
@@ -760,6 +823,7 @@ psutil==5.9.8
     #   idea
     #   ipykernel
     #   open-interpreter
+    #   unstructured
 psycopg2-binary==2.9.10
     # via idea
 ptyprocess==0.7.0
@@ -798,17 +862,21 @@ pydantic==2.11.7
     #   google-generativeai
     #   idea
     #   litellm
+    #   mcp
     #   open-interpreter
     #   openai
     #   paper-qa
     #   pydantic-settings
     #   sqlmodel
+    #   unstructured-client
 pydantic-core==2.33.2
     # via
     #   idea
     #   pydantic
 pydantic-settings==2.10.1
-    # via paper-qa
+    # via
+    #   mcp
+    #   paper-qa
 pydeck==0.9.1
     # via
     #   idea
@@ -833,6 +901,10 @@ pyparsing==3.1.4
     #   matplotlib
     #   rasterio
 pypdf==6.0.0
+    # via
+    #   paper-qa-pypdf
+    #   unstructured-client
+pypdfium2==5.3.0
     # via paper-qa-pypdf
 pyperclip==1.9.0
     # via
@@ -869,17 +941,29 @@ python-dateutil==2.9.0.post0
     #   python-cmr
     #   python-whois
 python-docx==1.2.0
-    # via idea
+    # via
+    #   idea
+    #   unstructured
 python-dotenv==1.0.1
     # via
     #   idea
     #   litellm
     #   pydantic-settings
     #   webdriver-manager
+python-iso639==2025.11.16
+    # via unstructured
 python-magic==0.4.27
-    # via idea
+    # via
+    #   idea
+    #   unstructured
 python-multipart==0.0.12
-    # via idea
+    # via
+    #   idea
+    #   mcp
+python-oxmsg==0.0.2
+    # via unstructured
+python-pptx==1.0.2
+    # via unstructured
 python-whois==0.9.5
     # via guarddog
 pytz==2024.2
@@ -891,6 +975,7 @@ pytz==2024.2
 pywin32==311 ; sys_platform == 'win32'
     # via
     #   jupyter-core
+    #   mcp
     #   pympler
 pyyaml==6.0.2
     # via
@@ -906,6 +991,8 @@ pyzmq==26.2.0
     #   idea
     #   ipykernel
     #   jupyter-client
+rapidfuzz==3.14.3
+    # via unstructured
 rasterio==1.4.3
     # via
     #   contextily
@@ -940,11 +1027,15 @@ requests==2.32.3
     #   idea
     #   intake-xarray
     #   python-cmr
+    #   requests-toolbelt
     #   semgrep
     #   streamlit
     #   tiktoken
+    #   unstructured
     #   webdriver-manager
     #   yfinance
+requests-toolbelt==1.0.0
+    # via unstructured-client
 rich==13.8.1
     # via
     #   idea
@@ -1027,6 +1118,7 @@ six==1.16.0
     #   blessed
     #   html5lib
     #   idea
+    #   langdetect
     #   open-interpreter
     #   python-dateutil
 slowapi==0.1.9
@@ -1057,6 +1149,8 @@ sqlalchemy==2.0.43
     #   sqlmodel
 sqlmodel==0.0.24
     # via idea
+sse-starlette==3.0.2
+    # via mcp
 stack-data==0.6.3
     # via
     #   idea
@@ -1065,6 +1159,7 @@ starlette==0.37.2
     # via
     #   fastapi
     #   idea
+    #   mcp
     #   open-interpreter
 statsmodels==0.14.5
     # via idea
@@ -1141,6 +1236,7 @@ tqdm==4.66.5
     #   nltk
     #   openai
     #   pqdm
+    #   unstructured
 traitlets==5.14.3
     # via
     #   comm
@@ -1170,6 +1266,7 @@ typing-extensions==4.12.2
     #   alembic
     #   altair
     #   anthropic
+    #   anyio
     #   coredis
     #   earthaccess
     #   fastapi
@@ -1185,12 +1282,18 @@ typing-extensions==4.12.2
     #   pydantic-core
     #   python-cmr
     #   python-docx
+    #   python-oxmsg
+    #   python-pptx
     #   selenium
     #   semgrep
     #   sqlalchemy
     #   streamlit
     #   typer
+    #   typing-inspect
     #   typing-inspection
+    #   unstructured
+typing-inspect==0.9.0
+    # via dataclasses-json
 typing-inspection==0.4.1
     # via
     #   pydantic
@@ -1199,6 +1302,10 @@ tzdata==2024.1
     # via
     #   idea
     #   pandas
+unstructured==0.18.27
+    # via paper-qa
+unstructured-client==0.39.1
+    # via unstructured
 uritemplate==4.1.1
     # via
     #   google-api-python-client
@@ -1215,7 +1322,9 @@ urllib3==2.2.3
 utide==0.3.0
     # via idea
 uvicorn==0.30.6
-    # via idea
+    # via
+    #   idea
+    #   mcp
 watchdog==5.0.3 ; sys_platform != 'darwin'
     # via streamlit
 wcmatch==8.5.2
@@ -1248,6 +1357,7 @@ wrapt==1.17.3
     #   aiobotocore
     #   coredis
     #   deprecated
+    #   unstructured
 wsproto==1.2.0
     # via
     #   idea
@@ -1257,6 +1367,10 @@ xarray==2024.11.0
     #   copernicusmarine
     #   idea
     #   intake-xarray
+xlrd==2.0.2
+    # via unstructured
+xlsxwriter==3.2.9
+    # via python-pptx
 xmod==1.8.1
     # via
     #   editor

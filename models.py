@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic import BaseModel, EmailStr
 from sqlmodel import Field, Relationship, SQLModel
@@ -112,6 +112,94 @@ class Token(SQLModel):
 # Contents of JWT token
 class TokenPayload(SQLModel):
     sub: str | None = None
+
+
+class MCPTransportType(str, Enum):
+    STREAMABLE_HTTP = "streamable_http"
+    SSE = "sse"
+    STDIO = "stdio"
+
+
+class MCPConnectionBase(SQLModel):
+    name: str = Field(max_length=120, index=True, unique=True)
+    description: str | None = Field(default=None, sa_column=sa.Column(sa.Text, nullable=True))
+    transport: MCPTransportType = Field(
+        sa_column=sa.Column(sa.Enum(MCPTransportType, name="mcptransporttype", values_callable=lambda x: [e.value for e in x]), nullable=False)
+    )
+    endpoint: str | None = Field(default=None, sa_column=sa.Column(sa.String(512), nullable=True))
+    command: str | None = Field(default=None, sa_column=sa.Column(sa.String(512), nullable=True))
+    command_args: list[str] = Field(
+        default_factory=list,
+        sa_column=sa.Column(sa.JSON, nullable=True),
+    )
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        sa_column=sa.Column(sa.JSON, nullable=True),
+    )
+    config: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=sa.Column(sa.JSON, nullable=True),
+    )
+    is_active: bool = Field(default=True)
+
+
+class MCPConnectionCreate(MCPConnectionBase):
+    auth_token: str | None = None
+
+
+class MCPConnectionUpdate(SQLModel):
+    name: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None)
+    transport: MCPTransportType | None = None
+    endpoint: str | None = None
+    command: str | None = None
+    command_args: list[str] | None = None
+    headers: dict[str, str] | None = None
+    config: dict[str, Any] | None = None
+    auth_token: str | None = None
+    is_active: bool | None = None
+
+
+class MCPConnection(MCPConnectionBase, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    auth_token: str | None = Field(default=None, sa_column=sa.Column(sa.Text, nullable=True))
+    created_by: uuid.UUID | None = Field(default=None, foreign_key="user.id", nullable=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_connected_at: datetime | None = Field(default=None)
+
+    created_by_user: Optional["User"] = Relationship()
+
+
+class MCPConnectionPublic(MCPConnectionBase):
+    id: uuid.UUID
+    created_by: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+    last_connected_at: datetime | None
+    has_auth_token: bool = False
+
+
+class MCPConnectionsPublic(SQLModel):
+    data: list[MCPConnectionPublic]
+    count: int
+
+
+class MCPConnectionSummary(SQLModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    transport: MCPTransportType
+    is_active: bool
+    last_connected_at: datetime | None
+
+
+class MCPToolCallRequest(SQLModel):
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class MCPPromptRequest(SQLModel):
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class SystemPrompt(SQLModel, table=True):
