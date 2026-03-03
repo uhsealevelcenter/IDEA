@@ -101,8 +101,7 @@ Host's OS: {platform.system()}
 ## Command Line Usage
 - You have access to a command line interface (CLI) and can run shell commands.
 Specific tools installed on the host include:
-**Additional CLI Tools**
-- Details about specific CLI tools will be provided as needed.
+- Codex: A command line coding agent that can explore, summarize, edit, and run code in the local workspace.
 
 ## Data/Analysis Output & File Operations
 - Save all outputs to `/app/static/{user_id}/{session_id}` (create if missing).
