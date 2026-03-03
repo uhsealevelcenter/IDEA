@@ -51,7 +51,7 @@ Important notes:
             -- If you use `plt.show()`, the resulting image will be sent to you. However, if you use `PIL.Image.show()`, the resulting image will NOT be sent to you.
             -- For all plots that you create, open and show the specified image, then describe the image using your vision capability.
             -- DO NOT perform OCR or any separate text-extraction step on images. Use your vision to read text directly.
-            image_path = './static/{user_id}/{session_id}/FILENAME' OR image_path = './static/{user_id}/{session_id}/{upload_dir}/FILENAME'
+            image_path = '/app/static/{user_id}/{session_id}/FILENAME' OR image_path = '/app/static/{user_id}/{session_id}/{upload_dir}/FILENAME'
             image = Image.open(image_path)
             image.show()
 
