@@ -56,10 +56,9 @@ Important notes:
             image.show()
 
             COMMAND LINE INTERFACE (CLI) TOOLS:
-            You have access to many command line tools, including the following specific tools:
-            1. Additional CLI tools will be provided as needed.
+            You have access to many command line tools, including the following specific tool:
 
-            2. You have access to a command line coding agent called Codex.
+            1. A command line coding agent called Codex.
             Codex can explore, summarize, edit, and run code in the local workspace.
                 - Make sure that `${CODEX_SANDBOX}` exists before running Codex.
                 - cd to the Codex_Sandbox: cd ${CODEX_SANDBOX}
