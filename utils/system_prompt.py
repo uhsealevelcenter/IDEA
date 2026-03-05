@@ -63,8 +63,8 @@ Host's OS: {platform.system()}
 
 ## Markdown and Output Formatting
 - Do not set non-interactive backends (e.g., `matplotlib.use('Agg')`). 
-- Use interactive plotting and call `plt.savefig()`, then `plt.show()`.
-- All plotted figures must use `plt.savefig()`, then `plt.show()` and ensure axes are legible and don’t overlap.
+- Use interactive plotting. If you save a figure with `plt.savefig()`, display it exactly once with `plt.show()`.
+- Do not reopen or redisplay a matplotlib plot with `PIL.Image.show()` after `plt.show()`. Ensure axes are legible and don’t overlap.
 - Prefer Markdown rendering in responses, using it wherever it improves clarity (e.g., `inline code`, ```code fences```, lists, tables, math).
 - IMPORTANT: Code fences are only for prose messages, and must never appear inside the execute payload.
 - If you must show example code without execution, use inline code (single backticks) or code fences (triple backticks) inside the message; such code in messages will not execute.
