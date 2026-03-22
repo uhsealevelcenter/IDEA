@@ -16,6 +16,10 @@ class LoginResponse(BaseModel):
     success: bool
     token: Optional[str] = None
     message: Optional[str] = None
+    is_guest: bool = False
+    guest_expires_in_minutes: Optional[int] = None
+    guest_expires_at: Optional[str] = None
+    show_guest_notice: bool = False
 
 # Pydantic models for prompt management
 class PromptCreateRequest(BaseModel):

@@ -2,6 +2,7 @@ import asyncio
 import json
 from math import ceil
 import os
+import shutil
 from datetime import date, datetime, timedelta
 from time import time
 import logging
@@ -56,8 +57,11 @@ from mcp_routes import router as mcp_router
 from sqlmodel import Session
 from auth import (
     generate_auth_token, verify_password, is_authenticated, get_auth_token,
-    add_auth_session, remove_auth_session, SESSION_TIMEOUT, get_db, get_current_user
+    add_auth_session, remove_auth_session, remove_auth_sessions_for_user,
+    SESSION_TIMEOUT, GUEST_SESSION_TIMEOUT_MINUTES, GUEST_SESSION_TIMEOUT,
+    get_db, get_current_user
 )
+from core.db import engine
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
 from utils.pqa_multi_tenant import ensure_user_pqa_settings
@@ -553,6 +557,10 @@ IDLE_TIMEOUT = 3600  # 1 hour in seconds
 INTERPRETER_PREFIX = "interpreter:"
 LAST_ACTIVE_PREFIX = "last_active:"
 CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
+GUEST_EXPIRY_CHECK_INTERVAL_SECONDS = int(os.getenv("GUEST_EXPIRY_CHECK_INTERVAL_SECONDS", "60"))
+GUEST_USER_EXPIRY_ZSET = "guest_user_expirations"
+GUEST_EMAIL_DOMAIN = "temporary.com"
+GUEST_NAME = "Guest User"
 
 # Constants for file upload
 STATIC_DIR = Path("static")
@@ -750,6 +758,75 @@ redis_client = redis.Redis(host="redis", port=6379, db=0)
 interpreter_instances: Dict[str, OpenInterpreter] = {}
 
 
+def generate_guest_email(session: Session) -> str:
+    """Create a unique temporary guest email address."""
+    for _ in range(20):
+        email = f"guest-{secrets.token_hex(3)}@{GUEST_EMAIL_DOMAIN}"
+        if crud.get_user_by_email(session=session, email=email) is None:
+            return email
+    raise HTTPException(status_code=500, detail="Failed to generate a guest account")
+
+
+def revoke_user_runtime_state(user_id: UUID) -> None:
+    """Remove auth sessions and in-memory runtime state for a user."""
+    user_prefix = f"{user_id}:"
+    matching_session_keys = [
+        session_key for session_key in list(interpreter_instances.keys())
+        if session_key.startswith(user_prefix)
+    ]
+    for session_key in matching_session_keys:
+        try:
+            clear_session(session_key)
+        except Exception as error:
+            logger.error(f"Failed to clear expired guest session {session_key}: {error}")
+
+    for redis_pattern in (f"{LAST_ACTIVE_PREFIX}{user_id}:*", f"messages:{user_id}:*"):
+        for redis_key in redis_client.scan_iter(match=redis_pattern):
+            redis_client.delete(redis_key)
+
+    user_static_dir = STATIC_DIR / str(user_id)
+    if user_static_dir.exists():
+        shutil.rmtree(user_static_dir, ignore_errors=True)
+
+    remove_auth_sessions_for_user(user_id)
+
+
+def expire_guest_user(user_id_value: str) -> None:
+    """Deactivate a guest user and revoke any live sessions."""
+    try:
+        user_id = UUID(user_id_value)
+    except ValueError:
+        logger.warning(f"Skipping invalid guest user id in expiry queue: {user_id_value}")
+        redis_client.zrem(GUEST_USER_EXPIRY_ZSET, user_id_value)
+        return
+
+    with Session(engine) as db_session:
+        db_user = crud.get_user_by_id(session=db_session, user_id=user_id)
+        if db_user and db_user.is_active:
+            db_user.is_active = False
+            db_session.add(db_user)
+            db_session.commit()
+
+    revoke_user_runtime_state(user_id)
+    redis_client.zrem(GUEST_USER_EXPIRY_ZSET, user_id_value)
+    logger.info(f"Expired guest user {user_id_value}")
+
+
+async def cleanup_expired_guest_users() -> None:
+    """Deactivate guest users whose temporary access window has ended."""
+    expired_user_ids = redis_client.zrangebyscore(
+        GUEST_USER_EXPIRY_ZSET,
+        0,
+        time(),
+    )
+    for raw_user_id in expired_user_ids:
+        user_id_value = raw_user_id.decode("utf-8") if isinstance(raw_user_id, bytes) else str(raw_user_id)
+        try:
+            expire_guest_user(user_id_value)
+        except Exception as error:
+            logger.error(f"Failed to expire guest user {user_id_value}: {error}")
+
+
 
 # Authentication endpoints
 @app.post("/login", response_model=LoginResponse)
@@ -771,6 +848,37 @@ async def login(login_request: LoginRequest, session: Session = Depends(get_db))
             status_code=401,
             detail="Invalid email or password"
         )
+
+
+@app.post("/guest-login", response_model=LoginResponse)
+async def guest_login(session: Session = Depends(get_db)):
+    """Create a temporary guest account and return an authenticated session."""
+    guest_email = generate_guest_email(session)
+    guest_user = crud.create_user(
+        session=session,
+        user_create=UserCreate(
+            email=guest_email,
+            password=secrets.token_urlsafe(24),
+            full_name=GUEST_NAME,
+            is_superuser=False,
+            is_active=True,
+        ),
+    )
+
+    token = generate_auth_token()
+    expiry_time = datetime.now() + timedelta(seconds=GUEST_SESSION_TIMEOUT)
+    add_auth_session(token, guest_user.id, expiry_time)
+    redis_client.zadd(GUEST_USER_EXPIRY_ZSET, {str(guest_user.id): expiry_time.timestamp()})
+
+    return LoginResponse(
+        success=True,
+        token=token,
+        message="Guest login successful",
+        is_guest=True,
+        guest_expires_in_minutes=GUEST_SESSION_TIMEOUT_MINUTES,
+        guest_expires_at=expiry_time.isoformat(),
+        show_guest_notice=True,
+    )
 
 
 @app.post("/logout")
@@ -798,13 +906,23 @@ async def get_current_user_profile(token: str = Depends(get_auth_token), db: Ses
         db_user = crud.get_user_by_id(session=db, user_id=user.id)
         if db_user is None:
             raise HTTPException(status_code=404, detail="User not found")
-            
+
+        guest_expiry_score = redis_client.zscore(GUEST_USER_EXPIRY_ZSET, str(db_user.id))
+        guest_expires_at = (
+            datetime.fromtimestamp(float(guest_expiry_score)).isoformat()
+            if guest_expiry_score is not None
+            else None
+        )
+
         return {
             "id": str(db_user.id),
             "email": db_user.email,
             "full_name": db_user.full_name,
             "is_active": db_user.is_active,
             "is_superuser": db_user.is_superuser,
+            "is_guest": guest_expiry_score is not None,
+            "guest_expires_at": guest_expires_at,
+            "guest_expires_in_minutes": GUEST_SESSION_TIMEOUT_MINUTES if guest_expiry_score is not None else None,
         }
     except HTTPException:
         raise
@@ -1135,10 +1253,22 @@ async def periodic_cleanup():
             await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
 
 
+async def periodic_guest_cleanup():
+    """Background task for expiring temporary guest users."""
+    while True:
+        try:
+            await cleanup_expired_guest_users()
+            await asyncio.sleep(GUEST_EXPIRY_CHECK_INTERVAL_SECONDS)
+        except Exception as e:
+            logger.error(f"Error in guest cleanup: {str(e)}")
+            await asyncio.sleep(60)
+
+
 @app.on_event("startup")
 async def start_periodic_cleanup():
     """Start the periodic cleanup task when the app starts"""
     asyncio.create_task(periodic_cleanup())
+    asyncio.create_task(periodic_guest_cleanup())
 
 
 @app.on_event("shutdown")
