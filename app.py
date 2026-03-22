@@ -143,6 +143,7 @@ async def gather_available_mcp_tools(db: Session):
             tools_payload = await mcp_manager.list_tools(connection)
         except Exception as exc:  # pragma: no cover - dependent service
             logger.warning("Failed to list tools for connection %s: %s", connection.id, exc)
+            await mcp_manager.reset_connection(connection.id)
             continue
 
         tools = (
