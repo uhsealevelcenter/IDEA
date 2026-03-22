@@ -3,9 +3,9 @@ import json
 import logging
 from contextlib import AsyncExitStack
 from datetime import datetime
-from typing import Any, Dict, Optional
-from uuid import UUID
 from enum import Enum
+from typing import Any, Awaitable, Callable, Dict, Optional
+from uuid import UUID
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -64,6 +64,12 @@ class ManagedMCPClient:
         }
         return json.dumps(payload, sort_keys=True)
 
+    @staticmethod
+    def _uses_persistent_session(connection: MCPConnection) -> bool:
+        # Streamable HTTP/SSE clients manage background tasks internally and are
+        # safer when opened and closed within the same request task.
+        return connection.transport == MCPTransportType.STDIO
+
     async def _ensure_session(self, connection: MCPConnection) -> ClientSession:
         fingerprint = self._fingerprint(connection)
         if self._session and fingerprint == self._cached_fingerprint:
@@ -80,20 +86,24 @@ class ManagedMCPClient:
             await self._open_session(connection, fingerprint)
             return self._session  # type: ignore[return-value]
 
+    async def _initialise_session(self, exit_stack: AsyncExitStack, connection: MCPConnection) -> ClientSession:
+        session = await self._create_session(exit_stack, connection)
+        init_result = await session.initialize()
+        self.server_info = _serialise(init_result.serverInfo)
+        logger.info(
+            "MCP connection %s initialised with server %s",
+            connection.id,
+            self.server_info,
+        )
+        return session
+
     async def _open_session(self, connection: MCPConnection, fingerprint: str) -> None:
         exit_stack = AsyncExitStack()
         try:
-            session = await self._create_session(exit_stack, connection)
-            init_result = await session.initialize()
-            self.server_info = _serialise(init_result.serverInfo)
+            session = await self._initialise_session(exit_stack, connection)
             self._exit_stack = exit_stack
             self._session = session
             self._cached_fingerprint = fingerprint
-            logger.info(
-                "MCP connection %s initialised with server %s",
-                connection.id,
-                self.server_info,
-            )
         except Exception:
             await exit_stack.aclose()
             raise
@@ -169,6 +179,36 @@ class ManagedMCPClient:
     async def get_session(self, connection: MCPConnection) -> ClientSession:
         return await self._ensure_session(connection)
 
+    async def run(
+        self,
+        connection: MCPConnection,
+        operation: Callable[[ClientSession], Awaitable[Any]],
+    ) -> Any:
+        if not self._uses_persistent_session(connection):
+            exit_stack = AsyncExitStack()
+            try:
+                session = await self._initialise_session(exit_stack, connection)
+                return await operation(session)
+            finally:
+                await exit_stack.aclose()
+
+        session = await self._ensure_session(connection)
+        try:
+            return await operation(session)
+        except Exception as exc:
+            logger.warning(
+                "MCP connection %s request failed, resetting cached session: %s",
+                connection.id,
+                exc,
+            )
+            await self.close()
+            session = await self._ensure_session(connection)
+            try:
+                return await operation(session)
+            except Exception:
+                await self.close()
+                raise
+
 
 class MCPConnectionManager:
     def __init__(self):
@@ -187,6 +227,14 @@ class MCPConnectionManager:
         client = await self._get_client(connection.id)
         return await client.get_session(connection)
 
+    async def _run(
+        self,
+        connection: MCPConnection,
+        operation: Callable[[ClientSession], Awaitable[Any]],
+    ) -> Any:
+        client = await self._get_client(connection.id)
+        return await client.run(connection, operation)
+
     async def reset_connection(self, connection_id: UUID) -> None:
         async with self._lock:
             client = self._clients.pop(connection_id, None)
@@ -200,45 +248,42 @@ class MCPConnectionManager:
         await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
 
     async def list_tools(self, connection: MCPConnection) -> Dict[str, Any]:
-        session = await self.get_session(connection)
-        logger.info("Calling list_tools on session: %s", session)
-        result = await session.list_tools()
+        async def _list_tools(session: ClientSession) -> Any:
+            logger.info("Calling list_tools on session: %s", session)
+            return await session.list_tools()
+
+        result = await self._run(connection, _list_tools)
         logger.info("list_tools result: %s (type: %s)", result, type(result))
         serialised = _serialise(result)
         logger.info("Serialised result: %s", serialised)
         return serialised
 
     async def list_resources(self, connection: MCPConnection) -> Dict[str, Any]:
-        session = await self.get_session(connection)
         try:
-            result = await session.list_resources()
+            result = await self._run(connection, lambda session: session.list_resources())
         except Exception as exc:
             logger.info("MCP connection %s does not support list_resources: %s", connection.id, exc)
             raise
         return _serialise(result)
 
     async def list_prompts(self, connection: MCPConnection) -> Dict[str, Any]:
-        session = await self.get_session(connection)
         try:
-            result = await session.list_prompts()
+            result = await self._run(connection, lambda session: session.list_prompts())
         except Exception as exc:
             logger.info("MCP connection %s does not support list_prompts: %s", connection.id, exc)
             raise
         return _serialise(result)
 
     async def call_tool(self, connection: MCPConnection, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        session = await self.get_session(connection)
-        result = await session.call_tool(tool_name, arguments)
+        result = await self._run(connection, lambda session: session.call_tool(tool_name, arguments))
         return _serialise(result)
 
     async def read_resource(self, connection: MCPConnection, uri: str) -> Dict[str, Any]:
-        session = await self.get_session(connection)
-        result = await session.read_resource(uri)
+        result = await self._run(connection, lambda session: session.read_resource(uri))
         return _serialise(result)
 
     async def get_prompt(self, connection: MCPConnection, prompt_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        session = await self.get_session(connection)
-        result = await session.get_prompt(prompt_name, arguments)
+        result = await self._run(connection, lambda session: session.get_prompt(prompt_name, arguments))
         return _serialise(result)
 
 
