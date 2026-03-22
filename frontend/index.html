@@ -605,6 +605,19 @@
         </div>
     </div>
 
+    <div id="guestNoticeModal" class="modal guest-notice-modal" aria-hidden="true">
+        <div class="modal-content guest-notice-content">
+            <div class="modal-header">
+                <h2>Guest Access</h2>
+                <button type="button" class="close guest-notice-close" id="dismissGuestNotice" aria-label="Close guest notice">&times;</button>
+            </div>
+            <div class="modal-body guest-notice-body">
+                <p id="guestNoticeMessage"></p>
+                <button type="button" class="login-button guest-notice-dismiss" id="guestNoticeConfirmButton">Start testing IDEA</button>
+            </div>
+        </div>
+    </div>
+
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <!-- DOMPurify for sanitizing HTML -->

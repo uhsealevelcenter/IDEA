@@ -46,6 +46,48 @@ let conversationManager;
 // Authentication state
 let authToken = localStorage.getItem('authToken');
 let currentUserFirstName = null;
+let currentUserProfile = null;
+let guestExpiryTimerId = null;
+let authPollingTimerId = null;
+const GUEST_NOTICE_STORAGE_KEY = 'idea-guest-notice';
+const LOGIN_MESSAGE_STORAGE_KEY = 'idea-login-message';
+const AUTH_POLL_INTERVAL_MS = 60 * 1000;
+
+function setLoginRedirectMessage(message, type = 'error') {
+    localStorage.setItem(LOGIN_MESSAGE_STORAGE_KEY, JSON.stringify({ message, type }));
+}
+
+function getSavedGuestNotice() {
+    const rawValue = localStorage.getItem(GUEST_NOTICE_STORAGE_KEY);
+    if (!rawValue) return null;
+    try {
+        return JSON.parse(rawValue);
+    } catch (error) {
+        console.warn('Unable to parse saved guest notice:', error);
+        localStorage.removeItem(GUEST_NOTICE_STORAGE_KEY);
+        return null;
+    }
+}
+
+function saveGuestNotice(data) {
+    const existingNotice = getSavedGuestNotice();
+    const isSameGuestSession = existingNotice?.expiresAt && existingNotice.expiresAt === data.expiresAt;
+    localStorage.setItem(GUEST_NOTICE_STORAGE_KEY, JSON.stringify({
+        ...data,
+        dismissed: isSameGuestSession ? Boolean(existingNotice.dismissed) : Boolean(data.dismissed)
+    }));
+}
+
+function clearGuestNotice() {
+    localStorage.removeItem(GUEST_NOTICE_STORAGE_KEY);
+}
+
+function getExpiredSessionMessage() {
+    if (currentUserProfile?.is_guest || getSavedGuestNotice()) {
+        return 'Your guest session has expired. Start a new guest session or sign in with a regular account.';
+    }
+    return 'Your session has expired. Please sign in again.';
+}
 
 // Authentication functions
 async function checkAuthentication() {
@@ -62,8 +104,11 @@ async function checkAuthentication() {
         });
 
         if (!response.ok) {
-            localStorage.removeItem('authToken');
-            redirectToLogin();
+            logout({
+                message: getExpiredSessionMessage(),
+                messageType: 'error',
+                preserveGuestNotice: false
+            });
             return false;
         }
 
@@ -84,9 +129,30 @@ function getAuthHeaders() {
     return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
 }
 
-function logout() {
+function logout(options = {}) {
+    const {
+        message = null,
+        messageType = 'error',
+        preserveGuestNotice = false
+    } = options;
+
+    if (authPollingTimerId) {
+        clearInterval(authPollingTimerId);
+        authPollingTimerId = null;
+    }
+    if (guestExpiryTimerId) {
+        clearTimeout(guestExpiryTimerId);
+        guestExpiryTimerId = null;
+    }
+    if (message) {
+        setLoginRedirectMessage(message, messageType);
+    }
     localStorage.removeItem('authToken');
+    if (!preserveGuestNotice) {
+        clearGuestNotice();
+    }
     authToken = null;
+    currentUserProfile = null;
     redirectToLogin();
 }
 
@@ -119,13 +185,110 @@ async function loadCurrentUserProfile() {
                 throw new Error('Failed to load user profile');
             }
             const profile = await response.json();
+            currentUserProfile = profile;
             currentUserFirstName = deriveFirstName(profile.full_name);
+            if (profile.is_guest && profile.guest_expires_at) {
+                saveGuestNotice({
+                    expiresAt: profile.guest_expires_at,
+                    expiresInMinutes: profile.guest_expires_in_minutes || null
+                });
+                scheduleGuestSessionExpiry(profile.guest_expires_at);
+                startAuthenticationPolling();
+            } else {
+                clearGuestNotice();
+            }
+            return profile;
         } catch (error) {
             console.warn('Unable to load user profile for greeting:', error);
+            currentUserProfile = null;
             currentUserFirstName = null;
+            return null;
         }
     })();
     return userProfilePromise;
+}
+
+function startAuthenticationPolling() {
+    if (authPollingTimerId) return;
+    authPollingTimerId = setInterval(async () => {
+        if (!authToken) return;
+        await checkAuthentication();
+    }, AUTH_POLL_INTERVAL_MS);
+}
+
+function scheduleGuestSessionExpiry(expiresAt) {
+    if (guestExpiryTimerId) {
+        clearTimeout(guestExpiryTimerId);
+        guestExpiryTimerId = null;
+    }
+    if (!expiresAt) return;
+
+    const expiryTimeMs = new Date(expiresAt).getTime();
+    if (Number.isNaN(expiryTimeMs)) return;
+
+    const delayMs = expiryTimeMs - Date.now();
+    if (delayMs <= 0) {
+        logout({
+            message: getExpiredSessionMessage(),
+            messageType: 'error',
+            preserveGuestNotice: false
+        });
+        return;
+    }
+
+    guestExpiryTimerId = setTimeout(() => {
+        logout({
+            message: getExpiredSessionMessage(),
+            messageType: 'error',
+            preserveGuestNotice: false
+        });
+    }, delayMs);
+}
+
+function formatGuestWindow(minutes) {
+    const safeMinutes = Number(minutes) || 60;
+    return `${safeMinutes} minute${safeMinutes === 1 ? '' : 's'}`;
+}
+
+function showGuestNoticeModal() {
+    const notice = getSavedGuestNotice();
+    if (!notice || notice.dismissed) return;
+
+    const modal = document.getElementById('guestNoticeModal');
+    const message = document.getElementById('guestNoticeMessage');
+    if (!modal || !message) return;
+
+    message.textContent = `You are using a temporary guest account for evaluation. This session will expire automatically after ${formatGuestWindow(notice.expiresInMinutes)}. Any conversations, uploaded files, and data created during this session will no longer be available after the guest account expires.`;
+    modal.style.display = 'block';
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+}
+
+function dismissGuestNoticeModal() {
+    const modal = document.getElementById('guestNoticeModal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    const notice = getSavedGuestNotice();
+    if (notice) {
+        saveGuestNotice({ ...notice, dismissed: true });
+    }
+}
+
+function initializeGuestNoticeModal() {
+    const modal = document.getElementById('guestNoticeModal');
+    const dismissButton = document.getElementById('dismissGuestNotice');
+    const confirmButton = document.getElementById('guestNoticeConfirmButton');
+    if (!modal || !dismissButton || !confirmButton) return;
+
+    dismissButton.addEventListener('click', dismissGuestNoticeModal);
+    confirmButton.addEventListener('click', dismissGuestNoticeModal);
+    window.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            dismissGuestNoticeModal();
+        }
+    });
 }
 
 async function waitForNameOrTimeout(timeoutMs = 1000) {
@@ -1942,6 +2105,8 @@ window.hydrateChatWithMessages = hydrateChatWithMessages;
 
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
+    initializeGuestNoticeModal();
+
     // Check authentication before doing anything else
     const isAuthenticated = await checkAuthentication();
     if (!isAuthenticated) {
@@ -1954,7 +2119,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     resetStdoutState();
     conversationManager = new ConversationManager();
 
-    loadCurrentUserProfile();
+    await loadCurrentUserProfile();
+    if (currentUserProfile?.is_guest) {
+        showGuestNoticeModal();
+    }
 
     try {
         const response = await fetch(config.getEndpoints().history, {

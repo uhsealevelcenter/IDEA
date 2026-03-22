@@ -55,6 +55,9 @@
             <button type="submit" class="login-button" id="loginButton">
                 Sign In
             </button>
+            <button type="button" class="login-button guest-login-button" id="guestLoginButton">
+                Continue as Guest
+            </button>
         </form>
 
         <div class="footer-text">
@@ -67,8 +70,11 @@
     <script>
         const loginForm = document.getElementById('loginForm');
         const loginButton = document.getElementById('loginButton');
+        const guestLoginButton = document.getElementById('guestLoginButton');
         const errorMessage = document.getElementById('errorMessage');
         const successMessage = document.getElementById('successMessage');
+        const GUEST_NOTICE_STORAGE_KEY = 'idea-guest-notice';
+        const LOGIN_MESSAGE_STORAGE_KEY = 'idea-login-message';
 
         function showError(message) {
             errorMessage.textContent = message;
@@ -87,6 +93,57 @@
             successMessage.style.display = 'none';
         }
 
+        function consumeLoginMessage() {
+            const rawValue = localStorage.getItem(LOGIN_MESSAGE_STORAGE_KEY);
+            if (!rawValue) return null;
+            localStorage.removeItem(LOGIN_MESSAGE_STORAGE_KEY);
+            try {
+                return JSON.parse(rawValue);
+            } catch (error) {
+                console.warn('Unable to parse saved login message:', error);
+                return null;
+            }
+        }
+
+        function persistGuestNotice(data) {
+            if (!data?.is_guest) {
+                localStorage.removeItem(GUEST_NOTICE_STORAGE_KEY);
+                return;
+            }
+
+            localStorage.setItem(GUEST_NOTICE_STORAGE_KEY, JSON.stringify({
+                expiresAt: data.guest_expires_at || null,
+                expiresInMinutes: data.guest_expires_in_minutes || null,
+                dismissed: false
+            }));
+        }
+
+        function setButtonsDisabled(disabled, activeLabel = null) {
+            loginButton.disabled = disabled;
+            guestLoginButton.disabled = disabled;
+            loginButton.textContent = activeLabel === 'login' ? 'Signing in...' : 'Sign In';
+            guestLoginButton.textContent = activeLabel === 'guest' ? 'Creating guest session...' : 'Continue as Guest';
+        }
+
+        function getGuestLoginEndpoint() {
+            const endpoints = config.getEndpoints();
+            if (endpoints.guestLogin) {
+                return endpoints.guestLogin;
+            }
+            return endpoints.login.replace(/\/login\/?$/, '/guest-login');
+        }
+
+        function completeLogin(data) {
+            localStorage.setItem('authToken', data.token);
+            persistGuestNotice(data);
+
+            showSuccess(data.message || 'Login successful! Redirecting...');
+
+            setTimeout(() => {
+                window.location.href = 'index.html';
+            }, 1000);
+        }
+
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             hideMessages();
@@ -99,8 +156,7 @@
                 return;
             }
 
-            loginButton.disabled = true;
-            loginButton.textContent = 'Signing in...';
+            setButtonsDisabled(true, 'login');
 
             try {
                 const response = await fetch(config.getEndpoints().login, {
@@ -117,15 +173,7 @@
                 const data = await response.json();
 
                 if (response.ok && data.success) {
-                    // Store the authentication token
-                    localStorage.setItem('authToken', data.token);
-                    
-                    showSuccess('Login successful! Redirecting...');
-                    
-                    // Redirect to main application after a short delay
-                    setTimeout(() => {
-                        window.location.href = 'index.html';
-                    }, 1000);
+                    completeLogin(data);
                 } else {
                     showError(data.detail || 'Invalid username or password');
                 }
@@ -133,13 +181,48 @@
                 console.error('Login error:', error);
                 showError('Login failed. Please check your connection and try again.');
             } finally {
-                loginButton.disabled = false;
-                loginButton.textContent = 'Sign In';
+                setButtonsDisabled(false);
+            }
+        });
+
+        guestLoginButton.addEventListener('click', async () => {
+            hideMessages();
+            setButtonsDisabled(true, 'guest');
+
+            try {
+                const response = await fetch(getGuestLoginEndpoint(), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    completeLogin(data);
+                } else {
+                    showError(data.detail || 'Unable to create a guest session right now.');
+                }
+            } catch (error) {
+                console.error('Guest login error:', error);
+                showError('Guest login failed. Please check your connection and try again.');
+            } finally {
+                setButtonsDisabled(false);
             }
         });
 
         // Check if user is already logged in
         window.addEventListener('DOMContentLoaded', async () => {
+            const savedMessage = consumeLoginMessage();
+            if (savedMessage?.message) {
+                if (savedMessage.type === 'error') {
+                    showError(savedMessage.message);
+                } else {
+                    showSuccess(savedMessage.message);
+                }
+            }
+
             const token = localStorage.getItem('authToken');
             if (token) {
                 try {
