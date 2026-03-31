@@ -564,7 +564,7 @@ GUEST_EMAIL_DOMAIN = "temporary.com"
 GUEST_NAME = "Guest User"
 
 # Constants for file upload
-STATIC_DIR = Path("static")
+STATIC_DIR = Path("./static") # Use relative path instead of absolute "/app/static"
 UPLOAD_DIR = Path("uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTENSIONS = {
@@ -1195,7 +1195,8 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         interpreter.llm.supports_vision = True
 
         ## OpenAI Models
-        interpreter.llm.model = "gpt-5.2-2025-12-11" # "Reasoning" model
+        interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
+        #interpreter.llm.model = "gpt-5.2-2025-12-11" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.1-2025-11-13" # "Reasoning" model
         #interpreter.llm.model = "gpt-5-2025-08-07" # "Reasoning" model
         #interpreter.llm.model = "gpt-4.1-2025-04-14" # "Intelligence" model

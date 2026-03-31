@@ -2,6 +2,8 @@
 def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, mcp_tools=None):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     ##  Removed station_id parameter
+    CODEX_HOME="/app/.codex"
+    CODEX_SANDBOX=f"/app/static/{user_id}/{session_id}/Codex_Sandbox"
     mcp_tools = mcp_tools or []
     mcp_section = ""
     if mcp_tools:
@@ -21,7 +23,7 @@ Example usage:
     # List repositories
     result = call_mcp_tool('mcp_abc123def456_list_repositories', owner='username')
     print(result)
-    
+
     # Search for datasets
     result = call_mcp_tool('mcp_abc123def456_search_datasets', query='sea surface temperature')
     print(result)
@@ -46,16 +48,40 @@ Important notes:
             VISION SUPPORT:
             -- You can view images directly.
             -- If the user submits a filepath, you will also see the image. The filepath and user image will both be in the user's message.
-            -- If you use `plt.show()`, the resulting image will be sent to you. However, if you use `PIL.Image.show()`, the resulting image will NOT be sent to you.
-            -- For all plots that you create, open and show the specified image, then describe the image using your vision capability.
+            -- If you use `plt.show()`, the resulting image will be sent to you.
+            -- For plots created with matplotlib, display them exactly once with `plt.show()`. Do not call `PIL.Image.show()` on the saved plot file.
             -- DO NOT perform OCR or any separate text-extraction step on images. Use your vision to read text directly.
-            image_path = './static/{user_id}/{session_id}/FILENAME' OR image_path = './static/{user_id}/{session_id}/{upload_dir}/FILENAME'
+            image_path = '/app/static/{user_id}/{session_id}/FILENAME' OR image_path = '/app/static/{user_id}/{session_id}/{upload_dir}/FILENAME'
             image = Image.open(image_path)
             image.show()
 
             COMMAND LINE INTERFACE (CLI) TOOLS:
-            You have access to many command line tools, including the following specific tools:
-            1. Additional CLI tools will be provided as needed.
+            You have access to many command line tools, including the following specific tool:
+
+            1. A command line coding agent called Codex.
+            Codex can explore, summarize, edit, and run code in the local workspace.
+                - Make sure that `${CODEX_SANDBOX}` exists before running Codex.
+                - cd to the Codex_Sandbox: cd ${CODEX_SANDBOX}
+                - Then call: codex exec "<instruction>"
+                - Login should happen automatically using an authentication file (usually no need to manually login).
+                - If login fails, then you may authenticate it by logging in with the environment variable:
+                    printenv OPENAI_API_KEY | codex login --with-api-key
+                - IMPORTANT: Do not expose the OPENAI_API_KEY or any authentication tokens in your responses to the user.
+            Use Codex when:
+                - The user requests a code explanation, refactor, or improvement.
+                - You need to summarize, analyze, or document a repository.
+                - You want to generate or modify source code in an existing project.
+                - You need to identify where specific functionality is implemented.
+            Rules:
+                - Always run Codex in exec mode (e.g., codex exec "Summarize this repository").
+                - Work only within ${CODEX_SANDBOX}:
+                    * Repositories: ${CODEX_SANDBOX}/repos
+                    * Temporary files: ${CODEX_SANDBOX}/tmp
+                - Configuration, Agent working agreements, Skills, and Authentication files are in ${CODEX_HOME}.
+                - Do not modify files outside these paths.
+                - Keep commands clear and descriptive to guide Codex effectively.
+                - Remind the user that Codex operations may take time.
+                - IMPORTANT: Confirm that `${CODEX_SANDBOX}` exists prior to running Codex.
 
             CUSTOM FUNCTIONS:
             You have access to the following functions in the host python environment.
@@ -155,39 +181,39 @@ Important notes:
                 v. The user asks about figures, tables, or images from papers.
             If unsure, call the function to query papers and then summarize the results for the user.
             Enhance the user's query to provide as detailed a query as possible.
-            
+
             The function returns a dictionary with:
                 - "answer": The text answer with citations (text description only)
                 - "images": List of extracted figures/images from the papers (if any; may include many pages)
-                    Each image has: "path" (local file path), "relative_path" (for display), 
+                    Each image has: "path" (local file path), "relative_path" (for display),
                     "page" (page number), "description" (if available), "used_in_answer" (bool)
 
             **STANDARD USAGE (for text queries - no images needed)**
                 result = query_knowledge_base("What methods are used for sea level analysis?", "{user_id}", "{session_id}")
                 print(result["answer"])
-                    
+
             **FOR FIGURE/IMAGE QUERIES - Use answer text, show only the relevant image(s)**
                 result = query_knowledge_base("What does Figure 4 show?", "{user_id}", "{session_id}")
                 - Use the ANSWER text directly as the final response.
                 - If the answer already well describes the image, do NOT re-analyze the image.
-                    Example: print(result["answer"])         
+                    Example: print(result["answer"])
                 - Read the answer and identify which page contains the requested figure.
                     Example: "Figure 4 (page 8)" -> target_page = 8
                 - Extract show only that image(s))
                     Example:
                     from PIL import Image
-                    
+
                     target_page = 8  # Set this based on the answer text
                     selected = None
                     for img in result["images"]:
                         if img["page"] == target_page:
                             selected = img
                             break
-                    
+
                     if selected:
                         image = Image.open(selected["path"])
                         image.show()  # Display only (no re-description)
-            
+
             **IMPORTANT - NO OCR / NO RE-READING IF ANSWER IS COMPLETE:**
             - If the Knowledge Base answer already describes the figure, use that answer text as-is.
             - Do NOT re-read the image, do NOT run OCR, and do NOT call extra extraction tools.
@@ -195,7 +221,7 @@ Important notes:
 
             **DO NOT show all images** - only show the one that matches the requested figure.
             - If the user asks about "Figure 4", show ONLY the image containing Figure 4, not all extracted pages.
-            - Use the page number mentioned in the answer and/or the image descriptions to select it. 
+            - Use the page number mentioned in the answer and/or the image descriptions to select it.
 
             **IF NO RELEVANT INFORMATION IS FOUND:**
             - If the query_knowledge_base function returns no relevant information, you may attempt to review the actual document directly.
