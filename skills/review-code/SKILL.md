@@ -31,7 +31,8 @@ cd ${CODEX_SANDBOX}/repos/IDEA # Enter repository and analyze
 codex exec "Print to terminal a high-level overview of this repo"
 
 ## Usage Tips
-- Prefer invoking Codex directly from the shell using `codex exec ...`
+- Invoke Codex directly from the shell using codex exec ... by default. 
+- Do not wrap Codex in Python subprocess unless requested or if direct shell execution is unavailable.
 - For repository tasks, prefer: codex exec -C /path/to/repo --full-auto "<instruction>"
 - For work outside of repositories, use: codex exec --full-auto --skip-git-repo-check "<instruction>"
 
