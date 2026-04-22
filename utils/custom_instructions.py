@@ -77,6 +77,7 @@ Important notes:
                 - Work only within ${CODEX_SANDBOX}:
                     * Repositories: ${CODEX_SANDBOX}/repos
                     * Temporary files: ${CODEX_SANDBOX}/tmp
+                - Prefer invoking Codex directly from the shell using `codex exec ...`
                 - For repository tasks, prefer: codex exec -C /path/to/repo --full-auto "<instruction>"
                 - Configuration, Agent working agreements, Skills, and Authentication files are in ${CODEX_HOME}.
                 - Do not modify files outside these paths.
