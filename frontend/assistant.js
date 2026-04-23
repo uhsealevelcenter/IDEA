@@ -38,7 +38,12 @@ let welcomeRenderPromise = null;
 let welcomeRendered = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
-const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
+const THEME_PREFERENCES = ['light', 'dark', 'system'];
+const MOBILE_COMPOSER_BREAKPOINT = 520;
+const MOBILE_COMPOSER_MIN_HEIGHT = 72;
+const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+let themeControlsInitialized = false;
+let systemThemeListenerBound = false;
 
 // Conversation manager instance
 let conversationManager;
@@ -330,18 +335,84 @@ async function renderWelcomeGreeting() {
     return welcomeRenderPromise;
 }
 
-function applyTheme() {
-    document.body.classList.remove('theme-light', 'theme-dark');
-    document.body.classList.add('theme-light');
+function getThemeControlButtons() {
+    return document.querySelectorAll('[data-theme-option]');
+}
 
-    themeToggleInputs.forEach((input) => {
-        input.checked = false;
+function getStoredThemePreference() {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return THEME_PREFERENCES.includes(stored) ? stored : 'system';
+}
+
+function resolveTheme(preference = getStoredThemePreference()) {
+    if (preference === 'system') {
+        return systemThemeQuery?.matches ? 'dark' : 'light';
+    }
+    return preference;
+}
+
+function syncThemeControls(preference) {
+    getThemeControlButtons().forEach((button) => {
+        const isActive = button.dataset.themeOption === preference;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', String(isActive));
     });
+}
+
+function applyTheme(preference = getStoredThemePreference()) {
+    const resolvedTheme = resolveTheme(preference);
+    document.body.classList.remove('theme-light', 'theme-dark');
+    document.body.classList.add(`theme-${resolvedTheme}`);
+    document.body.dataset.themePreference = preference;
+    document.documentElement.style.colorScheme = resolvedTheme;
+    syncThemeControls(preference);
+}
+
+function handleThemeSelection(preference) {
+    if (!THEME_PREFERENCES.includes(preference)) {
+        return;
+    }
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, preference);
+    } catch (error) {
+        console.warn('Failed to persist theme preference:', error);
+    }
+    applyTheme(preference);
+}
+
+function bindThemeControls() {
+    if (themeControlsInitialized) {
+        return;
+    }
+    getThemeControlButtons().forEach((button) => {
+        button.addEventListener('click', () => {
+            handleThemeSelection(button.dataset.themeOption);
+        });
+    });
+    themeControlsInitialized = true;
+}
+
+function bindSystemThemeListener() {
+    if (!systemThemeQuery || systemThemeListenerBound) {
+        return;
+    }
+    const listener = () => {
+        if (getStoredThemePreference() === 'system') {
+            applyTheme('system');
+        }
+    };
+    if (typeof systemThemeQuery.addEventListener === 'function') {
+        systemThemeQuery.addEventListener('change', listener);
+    } else if (typeof systemThemeQuery.addListener === 'function') {
+        systemThemeQuery.addListener(listener);
+    }
+    systemThemeListenerBound = true;
 }
 
 function initializeTheme() {
     try {
-        localStorage.setItem(THEME_STORAGE_KEY, 'light');
+        bindThemeControls();
+        bindSystemThemeListener();
         applyTheme();
     } catch (error) {
         console.error('Failed to initialize theme:', error);
@@ -709,7 +780,14 @@ showPromptIdeas();
 
 function resetTextareaHeight() {
     const messageInput = document.getElementById('messageInput');
-    messageInput.style.height = '38px'; // Reset to initial height
+    if (!messageInput) return;
+    messageInput.style.height = 'auto';
+    const measuredHeight = Math.min(messageInput.scrollHeight, 200);
+    if (window.innerWidth <= MOBILE_COMPOSER_BREAKPOINT) {
+        messageInput.style.height = `${Math.max(measuredHeight, MOBILE_COMPOSER_MIN_HEIGHT)}px`;
+        return;
+    }
+    messageInput.style.height = `${measuredHeight}px`;
 }
 
 // Event listeners
@@ -2323,6 +2401,15 @@ function initializeMobileNavigation() {
     });
 }
 
+function syncMessageInputLayout() {
+    const messageInputField = document.getElementById('messageInput');
+    if (!messageInputField) return;
+    const isMobileComposer = window.innerWidth <= MOBILE_COMPOSER_BREAKPOINT;
+    messageInputField.rows = isMobileComposer ? 3 : 1;
+    messageInputField.placeholder = 'Type your message, click mic to dictate, or attach/drop a file...';
+    requestAnimationFrame(() => resetTextareaHeight());
+}
+
 // File upload error handling improvements
 async function uploadFile(file, progressElement) {
     try {
@@ -2956,6 +3043,17 @@ function convertImageToDataURL(img) {
 document.addEventListener('DOMContentLoaded', () => {
     initializeFileUpload();
     initializeMobileNavigation();
+    syncMessageInputLayout();
+    resetTextareaHeight();
+    window.addEventListener('resize', syncMessageInputLayout);
+    window.addEventListener('load', syncMessageInputLayout);
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => {
+            syncMessageInputLayout();
+        }).catch(() => {
+            // Ignore font loading errors and keep the existing layout.
+        });
+    }
 
     // Microphone Dictation Button Logic
     const micButton = document.getElementById('micButton');
@@ -3084,8 +3182,5 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 messageInput.addEventListener('input', function() {
-    // Reset height to auto to get correct scrollHeight
-    this.style.height = 'auto';
-    // Set new height based on content
-    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+    resetTextareaHeight();
 });

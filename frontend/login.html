@@ -11,10 +11,15 @@
     <script>
         (function () {
             const THEME_STORAGE_KEY = 'idea-theme';
+            const stored = localStorage.getItem(THEME_STORAGE_KEY) || 'system';
+            const resolved = stored === 'system'
+                ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+                : stored;
             document.body.classList.remove('theme-light', 'theme-dark');
-            document.body.classList.add('theme-light');
+            document.body.classList.add(`theme-${resolved}`);
+            document.documentElement.style.colorScheme = resolved;
             try {
-                localStorage.setItem(THEME_STORAGE_KEY, 'light');
+                localStorage.setItem(THEME_STORAGE_KEY, stored);
             } catch (error) {
                 console.warn('Unable to persist theme preference:', error);
             }

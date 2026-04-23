@@ -5,11 +5,27 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IDEA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
     <link href="prism.css" rel="stylesheet" />  <!-- Prism for code syntax highlighting -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"> <!-- Mic icon -->
 </head>
-<body class="main-app theme-light">
+<body class="main-app live-app-shell theme-light">
+    <script>
+        (function () {
+            const THEME_STORAGE_KEY = 'idea-theme';
+            const stored = localStorage.getItem(THEME_STORAGE_KEY) || 'system';
+            const resolved = stored === 'system'
+                ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+                : stored;
+            document.body.classList.remove('theme-light', 'theme-dark');
+            document.body.classList.add(`theme-${resolved}`);
+            document.body.dataset.themePreference = stored;
+            document.documentElement.style.colorScheme = resolved;
+        })();
+    </script>
     <div class="app">
         <div class="chat-container">
             <header class="chat-header">
@@ -56,6 +72,14 @@
                                 <span class="material-icons">manage_accounts</span>
                                 Account
                             </button>
+                            <div class="theme-panel" aria-label="Appearance mode">
+                                <span class="theme-panel-label">Appearance</span>
+                                <div class="theme-selector" role="group" aria-label="Theme mode">
+                                    <button type="button" class="theme-option" data-theme-option="light" aria-pressed="false">Light</button>
+                                    <button type="button" class="theme-option" data-theme-option="dark" aria-pressed="false">Dark</button>
+                                    <button type="button" class="theme-option" data-theme-option="system" aria-pressed="false">System</button>
+                                </div>
+                            </div>
                             <button id="logoutButton" class="nav-btn logout-btn">
                                 <span class="material-icons">logout</span>
                                 Logout
@@ -107,6 +131,14 @@
                     <span class="material-icons">manage_accounts</span>
                     Account
                 </button>
+                <div class="theme-panel theme-panel-mobile" aria-label="Appearance mode">
+                    <span class="theme-panel-label">Appearance</span>
+                    <div class="theme-selector" role="group" aria-label="Theme mode">
+                        <button type="button" class="theme-option" data-theme-option="light" aria-pressed="false">Light</button>
+                        <button type="button" class="theme-option" data-theme-option="dark" aria-pressed="false">Dark</button>
+                        <button type="button" class="theme-option" data-theme-option="system" aria-pressed="false">System</button>
+                    </div>
+                </div>
                 <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
                     <span class="material-icons">logout</span>
                     Logout
@@ -125,7 +157,7 @@
                 <div id="promptIdeasContainer"></div>
             </div>
             <footer class="chat-footer">
-                <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.pdf,.md,.mat,.tif,.png,.jpg" style="display: none">
+                <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.pdf,.md,.mat,.tif,.png,.jpg,.svg,.py" style="display: none">
                 <div class="prompt-row">
                     <div class="input-container">
                         <div class="input-header">
@@ -135,7 +167,7 @@
                             </div>
                         </div>
                         <div class="input-main">
-                            <button id="uploadButton">
+                            <button id="uploadButton" data-upload-hint="Allowed: csv, txt, json, nc, xls, xlsx, doc, docx, ppt, pptx, pdf, md, mat, tif, png, jpg, svg, py. Max 10MB.">
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M21.44 11.05l-9.19 9.19a6.003 6.003 0 01-8.49-8.49l9.19-9.19a4.002 4.002 0 015.66 5.66l-9.2 9.19a2.001 2.001 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                 </svg>
@@ -154,8 +186,21 @@
                         </div>
                     </div>
                     <div class="prompt-actions">
-                        <button id="sendButton">Send</button>
-                        <button id="stopButton" disabled>Stop</button>
+                        <button id="sendButton" aria-label="Send">
+                            <span class="button-text">Send</span>
+                            <span class="button-icon send-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 17V7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                                    <path d="M7.5 11.5L12 7l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </span>
+                        </button>
+                        <button id="stopButton" disabled aria-label="Stop">
+                            <span class="button-text">Stop</span>
+                            <span class="button-icon stop-icon" aria-hidden="true">
+                                <span class="stop-shape"></span>
+                            </span>
+                        </button>
                     </div>
                 </div>
             </footer>

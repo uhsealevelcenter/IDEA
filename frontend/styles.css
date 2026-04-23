@@ -93,50 +93,50 @@ body.theme-light {
 
 body.theme-dark {
     color-scheme: dark;
-    --body-gradient: linear-gradient(135deg, #010304 0%, #02070a 45%, #0b2636 100%);
-    --surface: rgba(2, 7, 10, 0.94);
-    --surface-alt: rgba(2, 7, 10, 0.86);
-    --border: rgba(76, 96, 128, 0.24);
-    --shadow: 0 18px 30px -20px rgba(1, 4, 5, 0.6);
-    --primary: #4ca7ff;
-    --primary-hover: #2f8fe0;
-    --primary-text: #f8fafc;
-    --text-primary: #e0f2ff;
-    --text-muted: rgba(168, 189, 214, 0.78);
-    --assistant-bg: rgba(76, 167, 255, 0.12);
-    --assistant-border: rgba(76, 167, 255, 0.28);
-    --assistant-text: #d3e7ff;
-    --user-bg: #0d6ea7;
-    --user-border: rgba(59, 115, 157, 0.42);
-    --user-text: #ecf6ff;
+    --body-gradient: linear-gradient(180deg, #24272b 0%, #2b2f34 100%);
+    --surface: rgba(28, 31, 36, 0.98);
+    --surface-alt: rgba(53, 56, 60, 0.98);
+    --border: rgba(118, 128, 141, 0.22);
+    --shadow: 0 18px 30px -20px rgba(0, 0, 0, 0.58);
+    --primary: #4e97dd;
+    --primary-hover: #3c82c6;
+    --primary-text: #f4f7fb;
+    --text-primary: #d8dee7;
+    --text-muted: rgba(177, 186, 196, 0.78);
+    --assistant-bg: rgba(90, 103, 118, 0.18);
+    --assistant-border: rgba(97, 113, 129, 0.42);
+    --assistant-text: #d5dbe3;
+    --user-bg: #3f6f9f;
+    --user-border: rgba(109, 145, 183, 0.42);
+    --user-text: #edf3f8;
     --system-bg: rgba(245, 158, 11, 0.2);
     --system-border: rgba(245, 158, 11, 0.36);
     --system-text: #fcdca1;
-    --input-bg: rgba(2, 11, 19, 0.96);
-    --input-border: rgba(102, 141, 173, 0.34);
-    --input-focus: rgba(76, 167, 255, 0.32);
-    --input-text: #f8fafc;
-    --input-placeholder: rgba(148, 174, 206, 0.6);
-    --button-secondary-bg: rgba(8, 22, 32, 0.55);
-    --button-secondary-hover: rgba(12, 30, 44, 0.72);
-    --button-secondary-border: rgba(148, 174, 206, 0.36);
-    --header-button-text: #e0f2ff;
-    --link-color: #8ec5ff;
-    --progress-bg: rgba(76, 167, 255, 0.2);
-    --progress-fill: #4ca7ff;
-    --pill-bg: rgba(76, 167, 255, 0.14);
-    --pill-border: rgba(76, 167, 255, 0.32);
-    --disclaimer-bg: rgba(1, 4, 5, 0.92);
-    --disclaimer-text: rgba(210, 225, 237, 0.8);
-    --overlay-bg: rgba(1, 4, 5, 0.85);
-    --header-gradient: linear-gradient(135deg, #010405 0%, #0f3247 100%);
-    --header-shadow: 0 14px 32px -20px rgba(1, 4, 5, 0.65);
-    --select-bg: rgba(2, 11, 19, 0.9);
-    --select-border: rgba(102, 141, 173, 0.34);
-    --select-text: #ecf6ff;
-    --scroll-track: rgba(4, 12, 22, 0.92);
-    --scroll-thumb: rgba(122, 182, 255, 0.65);
-    --scroll-thumb-hover: rgba(158, 204, 255, 0.85);
+    --input-bg: rgba(20, 23, 27, 0.98);
+    --input-border: rgba(110, 121, 134, 0.28);
+    --input-focus: rgba(78, 151, 221, 0.28);
+    --input-text: #eef2f6;
+    --input-placeholder: rgba(137, 148, 161, 0.78);
+    --button-secondary-bg: rgba(41, 49, 58, 0.86);
+    --button-secondary-hover: rgba(52, 61, 72, 0.96);
+    --button-secondary-border: rgba(108, 119, 131, 0.34);
+    --header-button-text: #e2e7ee;
+    --link-color: #8eb8e6;
+    --progress-bg: rgba(78, 151, 221, 0.16);
+    --progress-fill: #4e97dd;
+    --pill-bg: rgba(74, 87, 101, 0.32);
+    --pill-border: rgba(107, 120, 135, 0.34);
+    --disclaimer-bg: rgba(22, 25, 29, 0.96);
+    --disclaimer-text: rgba(193, 201, 210, 0.82);
+    --overlay-bg: rgba(18, 20, 24, 0.88);
+    --header-gradient: linear-gradient(180deg, #131a20 0%, #081018 100%);
+    --header-shadow: 0 14px 32px -20px rgba(0, 0, 0, 0.72);
+    --select-bg: rgba(26, 29, 34, 0.98);
+    --select-border: rgba(109, 120, 133, 0.34);
+    --select-text: #e7edf3;
+    --scroll-track: rgba(33, 37, 42, 0.98);
+    --scroll-thumb: rgba(97, 108, 120, 0.86);
+    --scroll-thumb-hover: rgba(122, 133, 146, 0.94);
     --layout-top-offset: 8px;
     --layout-bottom-offset: 8px;
     --footer-h: 48px;
@@ -1209,6 +1209,43 @@ pre {
     height: 40px;
     box-shadow: 0 10px 24px -18px rgba(15, 51, 72, 0.75);
     width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    white-space: nowrap;
+    transition: width 0.2s ease, min-width 0.2s ease, padding 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+}
+
+.prompt-actions .button-icon {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+}
+
+.prompt-actions .send-icon svg {
+    width: 22px;
+    height: 22px;
+}
+
+.prompt-actions .stop-icon .stop-shape {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    background: currentColor;
+}
+
+@media (max-width: 980px) {
+    .prompt-actions {
+        min-width: 96px;
+    }
+
+    .prompt-actions button {
+        padding: 0 12px;
+        font-size: 0.92rem;
+    }
 }
 
 @media (max-width: 1200px) {
@@ -1304,13 +1341,14 @@ pre {
     .prompt-actions {
         flex-direction: column;
         gap: 8px;
-        min-width: 88px;
+        min-width: 76px;
     }
 
     .prompt-actions button {
         min-width: 0;
         height: 38px;
-        padding: 0 12px;
+        padding: 0 10px;
+        font-size: 0.9rem;
     }
 
     #messageInput {
@@ -1357,11 +1395,57 @@ pre {
     }
 
     .prompt-actions {
-        min-width: 80px;
+        min-width: 52px;
     }
 
     .prompt-actions button {
-        height: 36px;
+        width: 42px;
+        height: 42px;
+        min-width: 42px;
+        padding: 0;
+        border-radius: 999px;
+        box-shadow: 0 10px 22px -18px rgba(15, 51, 72, 0.75);
+    }
+
+    .prompt-actions .button-text {
+        display: none;
+    }
+
+    .prompt-actions .button-icon {
+        display: inline-flex;
+    }
+
+    .input-main {
+        min-height: 72px;
+        align-items: stretch;
+    }
+
+    #messageInput {
+        min-height: 72px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        line-height: 1.45;
+        overflow-y: hidden;
+    }
+
+    #sendButton {
+        background: var(--primary);
+        color: var(--primary-text);
+    }
+
+    #stopButton {
+        background: color-mix(in srgb, #ef7f88 82%, white 18%);
+        color: #ffffff;
+    }
+
+    #stopButton:disabled {
+        background: color-mix(in srgb, var(--text-muted) 28%, transparent 72%);
+        color: color-mix(in srgb, var(--text-muted) 72%, transparent 28%);
+        box-shadow: none;
+    }
+
+    #stopButton:disabled .stop-shape {
+        opacity: 0.72;
     }
 }
 
@@ -3329,5 +3413,863 @@ pre {
 
     .conversation-count {
         text-align: center;
+    }
+}
+
+/* Main app modernization is scoped to the live app shell so shared/exported views keep their existing look. */
+body.main-app.live-app-shell {
+    --app-display-font: "Fraunces", Georgia, serif;
+    --app-body-font: "Public Sans", "Segoe UI", sans-serif;
+    --rail-width: clamp(260px, 20vw, 320px);
+    --content-max: 940px;
+    --shell-bg:
+        radial-gradient(circle at top left, rgba(144, 198, 255, 0.16), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(61, 121, 173, 0.14), transparent 24%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 30%),
+        var(--body-gradient);
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+    background: var(--shell-bg);
+    font-family: var(--app-body-font);
+}
+
+body.main-app.live-app-shell.theme-dark {
+    --shell-bg: #26292d;
+    background: #26292d;
+}
+
+body.main-app.live-app-shell.theme-dark .chat-container {
+    background: #26292d;
+}
+
+body.main-app.live-app-shell.theme-dark .chat-header {
+    background: linear-gradient(180deg, #121a21 0%, #081018 100%);
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03);
+}
+
+body.main-app.live-app-shell::-webkit-scrollbar {
+    width: 16px;
+}
+
+body.main-app.live-app-shell::-webkit-scrollbar-track {
+    background: var(--scroll-track);
+}
+
+body.main-app.live-app-shell::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+}
+
+body.main-app.live-app-shell .app {
+    min-height: 100dvh;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
+    gap: 0;
+}
+
+body.main-app.live-app-shell .chat-container {
+    width: 100%;
+    min-height: 100dvh;
+    height: 100dvh;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 24%),
+        var(--surface);
+    display: grid;
+    grid-template-columns: var(--rail-width) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto auto;
+    overflow: hidden;
+    position: relative;
+}
+
+body.main-app.live-app-shell .chat-header {
+    grid-column: 1;
+    grid-row: 1 / 5;
+    border-radius: 0;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+    padding: 0;
+    overflow-y: auto;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 18%),
+        var(--header-gradient);
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+body.main-app.live-app-shell .header-content {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 32px 22px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 22px;
+}
+
+body.main-app.live-app-shell .header-brand {
+    gap: 8px;
+}
+
+body.main-app.live-app-shell .brand-abbrev {
+    font-family: var(--app-display-font);
+    font-size: clamp(2rem, 2.2vw, 2.7rem);
+    letter-spacing: 0.06em;
+    line-height: 0.95;
+}
+
+body.main-app.live-app-shell .brand-name {
+    font-size: 0.78rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+body.main-app.live-app-shell .header-actions {
+    align-items: stretch;
+    gap: 18px;
+}
+
+body.main-app.live-app-shell .header-actions .navbar-menu {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 10px;
+    width: 100%;
+    flex-wrap: nowrap;
+}
+
+body.main-app.live-app-shell .nav-btn {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0.85rem 1rem;
+    border-radius: 18px;
+    font-size: 0.95rem;
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+body.main-app.live-app-shell .nav-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+body.main-app.live-app-shell.theme-dark .nav-btn {
+    background: rgba(36, 47, 58, 0.9);
+    border-color: rgba(103, 114, 126, 0.36);
+    color: #dce3ea;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+body.main-app.live-app-shell.theme-dark .nav-btn:hover {
+    background: rgba(48, 60, 72, 0.96);
+    border-color: rgba(125, 137, 150, 0.4);
+}
+
+body.main-app.live-app-shell .theme-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    margin-bottom: 8px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(14px);
+}
+
+body.main-app.live-app-shell .theme-panel-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.66);
+}
+
+body.main-app.live-app-shell .theme-selector {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+body.main-app.live-app-shell .theme-option {
+    min-height: 38px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.82);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+
+body.main-app.live-app-shell .theme-option:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.14);
+}
+
+body.main-app.live-app-shell .theme-option.active {
+    background: rgba(255, 255, 255, 0.96);
+    color: #082032;
+    border-color: rgba(255, 255, 255, 0.96);
+}
+
+body.main-app.live-app-shell.theme-dark .theme-option.active {
+    background: #4e97dd;
+    color: #f4f7fb;
+    border-color: #4e97dd;
+}
+
+body.main-app.live-app-shell.theme-dark .theme-panel {
+    background: rgba(33, 42, 50, 0.94);
+    border-color: rgba(100, 111, 123, 0.36);
+}
+
+body.main-app.live-app-shell.theme-dark .theme-panel-label {
+    color: rgba(172, 181, 191, 0.72);
+}
+
+body.main-app.live-app-shell.theme-dark .theme-option {
+    background: rgba(43, 53, 63, 0.92);
+    border-color: rgba(100, 111, 123, 0.34);
+    color: #cfd6df;
+}
+
+body.main-app.live-app-shell.theme-dark .theme-option:hover {
+    background: rgba(54, 65, 77, 0.98);
+}
+
+body.main-app.live-app-shell #chatDisplay {
+    grid-column: 2;
+    grid-row: 1;
+    min-height: 0;
+    height: 100%;
+    padding: clamp(32px, 4vw, 52px) clamp(28px, 4vw, 52px) 22px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 12%),
+        var(--surface-alt);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+body.main-app.live-app-shell.theme-dark #chatDisplay {
+    background: #26292d;
+}
+
+body.main-app.live-app-shell.theme-dark .chat-welcome-title,
+body.main-app.live-app-shell.theme-dark .prompt-examples-title {
+    color: #cfd6df;
+}
+
+body.main-app.live-app-shell.theme-dark #chatWelcome {
+    color: #d7dde4;
+}
+
+body.main-app.live-app-shell.theme-dark .chat-welcome-bubble,
+body.main-app.live-app-shell.theme-dark .chat-welcome .message,
+body.main-app.live-app-shell.theme-dark .chat-welcome > div {
+    border-color: rgba(78, 151, 221, 0.42);
+}
+
+body.main-app.live-app-shell #chatDisplay::-webkit-scrollbar {
+    width: 16px;
+}
+
+body.main-app.live-app-shell #chatDisplay::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+body.main-app.live-app-shell #chatDisplay::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+}
+
+body.main-app.live-app-shell #chatDisplay > * {
+    width: min(var(--content-max), 100%);
+    margin-left: auto;
+    margin-right: auto;
+}
+
+body.main-app.live-app-shell .chat-welcome {
+    padding: 14px 0 4px;
+}
+
+body.main-app.live-app-shell .chat-welcome-title,
+body.main-app.live-app-shell .prompt-examples-title {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: clamp(1.15rem, 1.2vw, 1.4rem);
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0;
+}
+
+body.main-app.live-app-shell #promptExamplesSection {
+    grid-column: 2;
+    grid-row: 2;
+    width: min(var(--content-max), calc(100% - 56px));
+    margin: 0 auto;
+    padding: 0 0 18px;
+}
+
+body.main-app.live-app-shell .chat-footer {
+    grid-column: 2;
+    grid-row: 3;
+    padding: 0 28px 14px;
+    background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.22));
+    border-top: 1px solid var(--border);
+}
+
+body.main-app.live-app-shell.theme-dark .chat-footer {
+    background: transparent;
+    border-top-color: rgba(102, 112, 123, 0.34);
+}
+
+body.main-app.live-app-shell .prompt-row {
+    width: min(calc(var(--content-max) + 40px), 100%);
+    margin: 0 auto;
+    align-items: flex-end;
+}
+
+body.main-app.live-app-shell.theme-dark #promptExamplesSection {
+    background: transparent;
+}
+
+body.main-app.live-app-shell.theme-dark .prompt-button {
+    background: #2e8ed6;
+    border-color: #2e8ed6;
+    box-shadow: none;
+}
+
+body.main-app.live-app-shell.theme-dark .prompt-button:hover {
+    background: #277fc1;
+    border-color: #277fc1;
+}
+
+body.main-app.live-app-shell .input-container {
+    border-radius: 28px;
+    border: 1px solid rgba(15, 51, 72, 0.12);
+    background: rgba(255, 255, 255, 0.88);
+    box-shadow: 0 28px 40px -34px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(16px);
+}
+
+body.main-app.live-app-shell.theme-dark .input-container {
+    background: #3b4046;
+    border-color: rgba(122, 132, 144, 0.4);
+    box-shadow: 0 18px 36px -30px rgba(0, 0, 0, 0.58);
+}
+
+body.main-app.live-app-shell .prompt-actions button,
+body.main-app.live-app-shell #uploadButton,
+body.main-app.live-app-shell #micButton {
+    border-radius: 18px;
+}
+
+body.main-app.live-app-shell.theme-dark #uploadButton,
+body.main-app.live-app-shell.theme-dark #micButton {
+    color: #8f9dac;
+}
+
+body.main-app.live-app-shell.theme-dark #uploadButton:hover,
+body.main-app.live-app-shell.theme-dark #micButton:hover {
+    color: #c6d1dc;
+}
+
+body.main-app.live-app-shell.theme-dark #sendButton {
+    background: #4e97dd;
+    color: #f4f7fb;
+    box-shadow: none;
+}
+
+body.main-app.live-app-shell.theme-dark #sendButton:hover:not(:disabled) {
+    background: #4286c8;
+}
+
+body.main-app.live-app-shell.theme-dark #stopButton {
+    background: #a84d4a;
+    color: #f6eeee;
+    box-shadow: none;
+}
+
+body.main-app.live-app-shell.theme-dark #stopButton:hover:not(:disabled) {
+    background: #964240;
+}
+
+body.main-app.live-app-shell.theme-dark #stopButton:disabled {
+    background: rgba(95, 103, 111, 0.42);
+    color: rgba(198, 205, 212, 0.42);
+}
+
+@media (max-width: 920px) {
+    body.main-app.live-app-shell .prompt-actions {
+        min-width: 94px;
+    }
+
+    body.main-app.live-app-shell .prompt-actions button {
+        padding: 0 11px;
+        font-size: 0.92rem;
+    }
+}
+
+@media (max-width: 640px) {
+    body.main-app.live-app-shell .prompt-actions {
+        min-width: 76px;
+    }
+
+    body.main-app.live-app-shell .prompt-actions button {
+        padding: 0 9px;
+        font-size: 0.88rem;
+    }
+}
+
+body.main-app.live-app-shell .disclaimer-text {
+    grid-column: 2;
+    grid-row: 4;
+    width: min(var(--content-max), calc(100% - 56px));
+    margin: 0 auto;
+    padding: 0 0 18px;
+    background: transparent;
+}
+
+body.main-app.live-app-shell .disclaimer-text span,
+body.main-app.live-app-shell .disclaimer-text a {
+    font-size: 0.86rem;
+}
+
+body.main-app.live-app-shell.theme-dark .disclaimer-text {
+    background: transparent;
+}
+
+body.theme-dark .modal {
+    background: rgba(13, 16, 20, 0.82);
+}
+
+body.theme-dark .modal-content,
+body.theme-dark .wide-modal .modal-content,
+body.theme-dark .extra-wide-modal .modal-content,
+body.theme-dark .ultra-wide-modal .modal-content {
+    background: #2b2f34;
+    border: 1px solid rgba(92, 104, 117, 0.34);
+    box-shadow: 0 28px 56px -28px rgba(0, 0, 0, 0.72);
+}
+
+body.theme-dark .modal-header {
+    background: linear-gradient(180deg, #121a21 0%, #081018 100%);
+    border-bottom: 1px solid rgba(92, 104, 117, 0.28);
+}
+
+body.theme-dark .modal-header h2,
+body.theme-dark .close {
+    color: #eef2f6;
+}
+
+body.theme-dark .modal-body,
+body.theme-dark .prompt-editor-section,
+body.theme-dark .user-management-container,
+body.theme-dark .user-form,
+body.theme-dark .prompt-editor,
+body.theme-dark .prompt-preview,
+body.theme-dark .knowledge-base-container {
+    background: #2b2f34;
+    color: #d8dee7;
+}
+
+body.theme-dark .section-header {
+    background: #32373d;
+    border-bottom-color: rgba(92, 104, 117, 0.26);
+}
+
+body.theme-dark .section-header h3,
+body.theme-dark .prompt-editor h3,
+body.theme-dark .prompt-preview h3,
+body.theme-dark .form-group label,
+body.theme-dark .checkbox-group label {
+    color: #e2e7ee;
+}
+
+body.theme-dark .prompts-list,
+body.theme-dark .papers-list,
+body.theme-dark .user-list {
+    background: #262a2f;
+}
+
+body.theme-dark .prompt-item,
+body.theme-dark .paper-item,
+body.theme-dark .conversation-item {
+    background: #2f343a;
+    border-bottom-color: rgba(92, 104, 117, 0.22);
+}
+
+body.theme-dark .prompt-item:hover,
+body.theme-dark .paper-item:hover,
+body.theme-dark .conversation-item:hover {
+    background: #373d44;
+}
+
+body.theme-dark .prompt-item.active,
+body.theme-dark .prompt-item.selected,
+body.theme-dark .mcp-tools-sidebar .prompt-item.active,
+body.theme-dark .mcp-items-list .prompt-item.active {
+    background: rgba(206, 225, 244, 0.92) !important;
+    border-left-color: #4e97dd;
+}
+
+body.theme-dark .prompt-item.active .prompt-item-name,
+body.theme-dark .prompt-item.active .prompt-item-description,
+body.theme-dark .prompt-item.active .prompt-item-meta,
+body.theme-dark .prompt-item.active .prompt-item-actions .btn,
+body.theme-dark .prompt-item.active .prompt-item-content,
+body.theme-dark .prompt-item.active .prompt-item-content *,
+body.theme-dark .prompt-item.selected .prompt-item-name,
+body.theme-dark .prompt-item.selected .prompt-item-description,
+body.theme-dark .prompt-item.selected .prompt-item-meta,
+body.theme-dark .prompt-item.selected .prompt-item-actions .btn,
+body.theme-dark .prompt-item.selected .prompt-item-content,
+body.theme-dark .prompt-item.selected .prompt-item-content *,
+body.theme-dark .mcp-tools-sidebar .prompt-item.active .prompt-item-name,
+body.theme-dark .mcp-tools-sidebar .prompt-item.active .prompt-item-description,
+body.theme-dark .mcp-tools-sidebar .prompt-item.active .prompt-item-meta,
+body.theme-dark .mcp-tools-sidebar .prompt-item.active .prompt-item-content,
+body.theme-dark .mcp-tools-sidebar .prompt-item.active .prompt-item-content *,
+body.theme-dark .mcp-items-list .prompt-item.active .prompt-item-name,
+body.theme-dark .mcp-items-list .prompt-item.active .prompt-item-description,
+body.theme-dark .mcp-items-list .prompt-item.active .prompt-item-meta,
+body.theme-dark .mcp-items-list .prompt-item.active .prompt-item-content,
+body.theme-dark .mcp-items-list .prompt-item.active .prompt-item-content * {
+    color: #17324a;
+}
+
+body.theme-dark .prompt-item-name,
+body.theme-dark .paper-name,
+body.theme-dark .conversation-title {
+    color: #eef2f6;
+}
+
+body.theme-dark .prompt-item-description,
+body.theme-dark .prompt-item-meta,
+body.theme-dark .paper-meta,
+body.theme-dark .form-helper,
+body.theme-dark .mcp-selected-description,
+body.theme-dark .empty-state,
+body.theme-dark .loading,
+body.theme-dark .user-list .empty-state {
+    color: #aeb8c3;
+}
+
+body.theme-dark .prompt-preview,
+body.theme-dark .user-list .empty-state {
+    background: #2b2f34;
+}
+
+body.theme-dark .active-badge {
+    background: #4fba63;
+    color: #f4fbf6;
+}
+
+body.theme-dark .status-badge.badge-superuser {
+    background: #4a63c3;
+    color: #f3f6fb;
+}
+
+body.theme-dark .status-badge.badge-active {
+    background: #3e9254;
+    color: #f4fbf6;
+}
+
+body.theme-dark .status-badge.badge-inactive {
+    background: #4d555f;
+    color: #d8dee7;
+}
+
+body.theme-dark .account-info-section,
+body.theme-dark .account-info-section h3 {
+    color: #dfe5ec;
+}
+
+body.theme-dark .form-message.error {
+    color: #f08b8b;
+}
+
+body.theme-dark .form-message.success {
+    color: #75cf88;
+}
+
+body.theme-dark .form-message.info {
+    color: #8eb8e6;
+}
+
+body.theme-dark .form-group input,
+body.theme-dark .form-group textarea,
+body.theme-dark .form-group input[type="text"],
+body.theme-dark .form-group input[type="password"],
+body.theme-dark .form-group input[type="email"],
+body.theme-dark .mcp-form textarea,
+body.theme-dark #myselect2 {
+    background: #1c2025;
+    border-color: rgba(102, 114, 127, 0.4);
+    color: #edf2f7;
+}
+
+body.theme-dark .form-group input::placeholder,
+body.theme-dark .form-group textarea::placeholder,
+body.theme-dark .mcp-form textarea::placeholder {
+    color: #8994a0;
+}
+
+body.theme-dark .form-group input:focus,
+body.theme-dark .form-group textarea:focus,
+body.theme-dark .form-group input[type="text"]:focus,
+body.theme-dark .form-group input[type="password"]:focus,
+body.theme-dark #myselect2:focus {
+    border-color: #4e97dd;
+    box-shadow: 0 0 0 2px rgba(78, 151, 221, 0.22);
+}
+
+body.theme-dark .btn-primary {
+    background: #4e97dd;
+    color: #f4f7fb;
+}
+
+body.theme-dark .btn-primary:hover {
+    background: #4286c8;
+    box-shadow: 0 6px 14px rgba(78, 151, 221, 0.26);
+}
+
+body.theme-dark .btn-secondary {
+    background: #59636e;
+    color: #f3f6f9;
+}
+
+body.theme-dark .btn-secondary:hover {
+    background: #4e5862;
+}
+
+body.theme-dark .btn-success {
+    background: #3e9254;
+}
+
+body.theme-dark .btn-success:hover {
+    background: #357d48;
+}
+
+body.theme-dark .upload-section {
+    background: #2f343a;
+    border-color: rgba(102, 114, 127, 0.36);
+}
+
+body.theme-dark .upload-section:hover,
+body.theme-dark .upload-area.drag-over {
+    background: #373d44;
+    border-color: #4e97dd;
+}
+
+body.theme-dark .upload-info,
+body.theme-dark .knowledge-base-stats,
+body.theme-dark .paper-meta,
+body.theme-dark .no-papers,
+body.theme-dark .loading,
+body.theme-dark .error,
+body.theme-dark .mcp-empty-result,
+body.theme-dark .conversation-meta,
+body.theme-dark .conversation-count {
+    color: #aeb8c3;
+}
+
+body.theme-dark .paper-name,
+body.theme-dark .paper-item .filename {
+    color: #f3f6fa;
+}
+
+body.theme-dark .paper-item {
+    border-bottom-color: rgba(110, 121, 134, 0.24);
+}
+
+body.theme-dark .notification {
+    background: #2f343a;
+    color: #e4e9ef;
+    border: 1px solid rgba(100, 111, 123, 0.34);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+}
+
+body.theme-dark .notification.success {
+    border-left-color: #3e9254;
+}
+
+body.theme-dark .notification.error {
+    border-left-color: #c85e65;
+}
+
+body.theme-dark .notification.warning {
+    border-left-color: #d1a543;
+}
+
+body.theme-dark .notification.info {
+    border-left-color: #4e97dd;
+}
+
+#uploadButton::after {
+    content: attr(data-upload-hint);
+}
+
+@media (min-width: 1201px) {
+    body.main-app.live-app-shell .navbar-toggle,
+    body.main-app.live-app-shell .navbar-mobile-menu,
+    body.main-app.live-app-shell .mobile-overlay {
+        display: none !important;
+    }
+}
+
+@media (max-width: 1200px) {
+    body.main-app.live-app-shell {
+        padding: 0;
+        overflow: hidden;
+    }
+
+    body.main-app.live-app-shell .chat-container {
+        display: flex;
+        flex-direction: column;
+        min-height: 100dvh;
+        height: 100dvh;
+    }
+
+    body.main-app.live-app-shell .chat-header,
+    body.main-app.live-app-shell #chatDisplay,
+    body.main-app.live-app-shell #promptExamplesSection,
+    body.main-app.live-app-shell .chat-footer,
+    body.main-app.live-app-shell .disclaimer-text {
+        grid-column: auto;
+        grid-row: auto;
+    }
+
+    body.main-app.live-app-shell .chat-header {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        background: var(--header-gradient);
+    }
+
+    body.main-app.live-app-shell .header-content {
+        min-height: auto;
+        padding: clamp(12px, 2vw, 18px) clamp(16px, 3vw, 24px);
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    body.main-app.live-app-shell .header-actions .navbar-menu {
+        display: none !important;
+    }
+
+    body.main-app.live-app-shell .navbar-toggle {
+        display: flex !important;
+    }
+
+    body.main-app.live-app-shell .chat-display {
+        padding: 18px 12px 6px;
+    }
+
+    body.main-app.live-app-shell .chat-display > *,
+    body.main-app.live-app-shell #promptExamplesSection,
+    body.main-app.live-app-shell .prompt-row,
+    body.main-app.live-app-shell .disclaimer-text {
+        width: min(100%, 860px);
+    }
+
+    body.main-app.live-app-shell #promptExamplesSection,
+    body.main-app.live-app-shell .disclaimer-text {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+
+    body.main-app.live-app-shell .theme-panel-mobile {
+        display: flex;
+        margin-bottom: 16px;
+        background: var(--surface-alt);
+        border-color: var(--border);
+    }
+
+    body.main-app.live-app-shell .theme-panel-mobile .theme-panel-label {
+        color: var(--text-muted);
+    }
+
+    body.main-app.live-app-shell .theme-panel-mobile .theme-option {
+        color: var(--text-primary);
+        background: var(--surface);
+        border-color: var(--border);
+    }
+
+    body.main-app.live-app-shell .theme-panel-mobile .theme-option.active {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--primary-text);
+    }
+
+    body.main-app.live-app-shell .prompt-actions {
+        min-width: 72px;
+    }
+
+    body.main-app.live-app-shell .prompt-actions button {
+        padding: 0 9px;
+        font-size: 0.88rem;
+    }
+}
+
+@media (max-width: 520px) {
+    body.main-app.live-app-shell .prompt-actions {
+        min-width: 48px;
+        align-items: center;
+    }
+
+    body.main-app.live-app-shell .prompt-actions button {
+        width: 42px;
+        min-width: 42px;
+        height: 42px;
+        padding: 0;
+        border-radius: 999px;
+    }
+
+    body.main-app.live-app-shell .prompt-actions .button-text {
+        display: none;
+    }
+
+    body.main-app.live-app-shell .prompt-actions .button-icon {
+        display: inline-flex;
+    }
+
+    body.main-app.live-app-shell .input-main {
+        min-height: 72px;
+        align-items: stretch;
+    }
+
+    body.main-app.live-app-shell #messageInput {
+        min-height: 72px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        line-height: 1.45;
+    }
+
+    body.main-app.live-app-shell #sendButton {
+        background: var(--primary);
+        color: var(--primary-text);
+    }
+
+    body.main-app.live-app-shell #stopButton {
+        background: color-mix(in srgb, #ef7f88 84%, white 16%);
+        color: #ffffff;
+    }
+
+    body.main-app.live-app-shell #stopButton:disabled {
+        background: color-mix(in srgb, var(--text-muted) 26%, transparent 74%);
+        color: color-mix(in srgb, var(--text-muted) 68%, transparent 32%);
+        box-shadow: none;
     }
 }
