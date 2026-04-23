@@ -574,7 +574,9 @@ ALLOWED_EXTENSIONS = {
     '.mat',
     '.tif',
     '.png',
-    '.jpg'
+    '.jpg',
+    '.svg',
+    '.py'
 }  # Office docs + data/image formats
 
 # Rate limiting
