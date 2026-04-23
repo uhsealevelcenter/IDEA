@@ -22,6 +22,7 @@ coverage.xml
 .pytest_cache/
 .hypothesis/
 .DS_Store
+.codex/
 
 
 

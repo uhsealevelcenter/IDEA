@@ -1451,7 +1451,7 @@ function showWorkingIndicator() {
     contentElement.innerHTML = `
         <div class="thinking-content" role="status" aria-live="polite">
             <span class="thinking-spinner" aria-hidden="true"></span>
-            <span>Thinking</span>
+            <span class="thinking-label">Thinking</span>
             <span class="thinking-ellipsis" aria-hidden="true">
                 <span></span><span></span><span></span>
             </span>
