@@ -210,5 +210,5 @@ local_scripts/
 
 # Codex (sometimes allow config.toml & AGENTS.md but ignore everything else; MUST manually manage auth.json)
 .codex/
-#!.codex/config.toml
-#!.codex/AGENTS.md
+!.codex/config.toml
+!.codex/AGENTS.md
