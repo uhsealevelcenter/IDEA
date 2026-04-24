@@ -16,14 +16,23 @@
     <script>
         (function () {
             const THEME_STORAGE_KEY = 'idea-theme';
-            const stored = localStorage.getItem(THEME_STORAGE_KEY) || 'system';
-            const resolved = stored === 'system'
-                ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-                : stored;
-            document.body.classList.remove('theme-light', 'theme-dark');
-            document.body.classList.add(`theme-${resolved}`);
+            const normalizeThemePreference = (value) => {
+                if (value === 'light' || value === 'dark' || value === 'coast') {
+                    return value;
+                }
+                if (value === 'system') {
+                    return 'dark';
+                }
+                return 'dark';
+            };
+            const stored = normalizeThemePreference(localStorage.getItem(THEME_STORAGE_KEY));
+            document.body.classList.remove('theme-light', 'theme-dark', 'theme-coast');
+            document.body.classList.add(`theme-${stored}`);
             document.body.dataset.themePreference = stored;
-            document.documentElement.style.colorScheme = resolved;
+            document.documentElement.style.colorScheme = stored === 'coast' ? 'dark' : stored;
+            if (localStorage.getItem(THEME_STORAGE_KEY) !== stored) {
+                localStorage.setItem(THEME_STORAGE_KEY, stored);
+            }
         })();
     </script>
     <div class="app">
@@ -75,9 +84,18 @@
                             <div class="theme-panel" aria-label="Appearance mode">
                                 <span class="theme-panel-label">Appearance</span>
                                 <div class="theme-selector" role="group" aria-label="Theme mode">
-                                    <button type="button" class="theme-option" data-theme-option="light" aria-pressed="false">Light</button>
-                                    <button type="button" class="theme-option" data-theme-option="dark" aria-pressed="false">Dark</button>
-                                    <button type="button" class="theme-option" data-theme-option="system" aria-pressed="false">System</button>
+                                    <button type="button" class="theme-option" data-theme-option="light" aria-pressed="false">
+                                        <span class="material-icons theme-option-icon" aria-hidden="true">light_mode</span>
+                                        <span>Light</span>
+                                    </button>
+                                    <button type="button" class="theme-option" data-theme-option="dark" aria-pressed="false">
+                                        <span class="material-icons theme-option-icon" aria-hidden="true">dark_mode</span>
+                                        <span>Dark</span>
+                                    </button>
+                                    <button type="button" class="theme-option theme-option-coast" data-theme-option="coast" aria-pressed="false">
+                                        <span class="material-icons theme-option-icon" aria-hidden="true">waves</span>
+                                        <span>Coast</span>
+                                    </button>
                                 </div>
                             </div>
                             <button id="logoutButton" class="nav-btn logout-btn">
@@ -134,9 +152,18 @@
                 <div class="theme-panel theme-panel-mobile" aria-label="Appearance mode">
                     <span class="theme-panel-label">Appearance</span>
                     <div class="theme-selector" role="group" aria-label="Theme mode">
-                        <button type="button" class="theme-option" data-theme-option="light" aria-pressed="false">Light</button>
-                        <button type="button" class="theme-option" data-theme-option="dark" aria-pressed="false">Dark</button>
-                        <button type="button" class="theme-option" data-theme-option="system" aria-pressed="false">System</button>
+                        <button type="button" class="theme-option" data-theme-option="light" aria-pressed="false">
+                            <span class="material-icons theme-option-icon" aria-hidden="true">light_mode</span>
+                            <span>Light</span>
+                        </button>
+                        <button type="button" class="theme-option" data-theme-option="dark" aria-pressed="false">
+                            <span class="material-icons theme-option-icon" aria-hidden="true">dark_mode</span>
+                            <span>Dark</span>
+                        </button>
+                        <button type="button" class="theme-option theme-option-coast" data-theme-option="coast" aria-pressed="false">
+                            <span class="material-icons theme-option-icon" aria-hidden="true">waves</span>
+                            <span>Coast</span>
+                        </button>
                     </div>
                 </div>
                 <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">

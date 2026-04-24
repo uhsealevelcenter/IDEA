@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Undersea Workspace Background</title>
+  <desc id="desc">A wide undersea scene with sun rays, open water, reef detail, and marine life for the IDEA Coast theme workspace.</desc>
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f7fb5"/>
+      <stop offset="22%" stop-color="#0d5b8f"/>
+      <stop offset="58%" stop-color="#083b65"/>
+      <stop offset="100%" stop-color="#031928"/>
+    </linearGradient>
+    <radialGradient id="surfaceGlow" cx="48%" cy="8%" r="34%">
+      <stop offset="0%" stop-color="#dffaff" stop-opacity="0.96"/>
+      <stop offset="26%" stop-color="#a8f2ff" stop-opacity="0.36"/>
+      <stop offset="100%" stop-color="#a8f2ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ray" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dffcff" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#dffcff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="reef" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d4264"/>
+      <stop offset="48%" stop-color="#08293e"/>
+      <stop offset="100%" stop-color="#04131f"/>
+    </linearGradient>
+    <linearGradient id="coralA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4ecdbf"/>
+      <stop offset="100%" stop-color="#14685f"/>
+    </linearGradient>
+    <linearGradient id="coralB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c89ace"/>
+      <stop offset="100%" stop-color="#6d486e"/>
+    </linearGradient>
+    <linearGradient id="coralC" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e5d89e"/>
+      <stop offset="100%" stop-color="#78683c"/>
+    </linearGradient>
+    <filter id="softBlur">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+
+  <rect width="1800" height="1080" fill="url(#sea)"/>
+  <rect width="1800" height="1080" fill="url(#surfaceGlow)"/>
+
+  <g opacity="0.5" filter="url(#softBlur)">
+    <path d="M720 0L780 0L980 760L872 760Z" fill="url(#ray)"/>
+    <path d="M608 0L654 0L812 764L724 764Z" fill="url(#ray)"/>
+    <path d="M842 0L900 0L1120 804L1002 804Z" fill="url(#ray)"/>
+    <path d="M516 0L548 0L658 710L588 710Z" fill="url(#ray)"/>
+  </g>
+
+  <g opacity="0.18">
+    <circle cx="340" cy="468" r="2" fill="#d5fbff"/>
+    <circle cx="422" cy="548" r="2" fill="#d5fbff"/>
+    <circle cx="650" cy="392" r="2" fill="#d5fbff"/>
+    <circle cx="720" cy="624" r="2" fill="#d5fbff"/>
+    <circle cx="920" cy="522" r="2" fill="#d5fbff"/>
+    <circle cx="1038" cy="634" r="2" fill="#d5fbff"/>
+    <circle cx="1186" cy="426" r="2" fill="#d5fbff"/>
+    <circle cx="1440" cy="506" r="2" fill="#d5fbff"/>
+  </g>
+
+  <path d="M0 1080V846C154 784 312 748 476 742C662 734 844 766 1032 822C1206 874 1384 930 1800 964V1080Z" fill="#06253a" opacity="0.8"/>
+  <path d="M1180 1080C1236 888 1300 774 1384 674C1474 566 1586 504 1800 456V1080Z" fill="url(#reef)"/>
+  <path d="M1100 1080C1166 938 1236 838 1310 756C1388 670 1498 604 1680 558C1612 628 1570 688 1532 772C1482 878 1458 970 1440 1080Z" fill="#08283d" opacity="0.74"/>
+
+  <g opacity="0.92">
+    <path d="M1354 856C1388 814 1418 796 1454 792C1430 836 1418 870 1418 914C1390 902 1370 884 1354 856Z" fill="url(#coralA)"/>
+    <path d="M1414 1010C1442 960 1476 936 1518 932C1494 984 1488 1022 1494 1070C1456 1066 1430 1048 1414 1010Z" fill="url(#coralC)"/>
+    <path d="M1536 992C1586 936 1648 910 1728 904C1674 968 1658 1022 1668 1080C1604 1070 1562 1040 1536 992Z" fill="url(#coralB)"/>
+    <path d="M1272 1022C1310 976 1354 952 1406 946C1372 1002 1366 1048 1374 1080C1324 1074 1290 1054 1272 1022Z" fill="url(#coralA)"/>
+  </g>
+
+  <g fill="#071e2d" opacity="0.9">
+    <path d="M1360 782C1386 770 1412 770 1438 784C1412 798 1386 798 1360 782Z"/>
+    <path d="M1440 724C1468 710 1498 710 1528 726C1498 742 1468 742 1440 724Z"/>
+    <path d="M1498 686C1526 674 1554 674 1582 688C1554 700 1526 700 1498 686Z"/>
+    <path d="M1562 650C1588 638 1616 640 1644 654C1616 666 1588 666 1562 650Z"/>
+    <path d="M1626 624C1650 614 1676 616 1700 628C1676 638 1650 640 1626 624Z"/>
+    <path d="M1348 676C1372 666 1396 666 1420 678C1396 690 1372 690 1348 676Z"/>
+  </g>
+
+  <g transform="translate(1220 582)">
+    <path d="M0 36C36 18 70 18 104 38C70 60 36 60 0 36Z" fill="#182530"/>
+    <circle cx="88" cy="34" r="3" fill="#f5df8a"/>
+    <path d="M72 18C86 10 98 10 112 20C100 28 88 30 72 18Z" fill="#ffd25b"/>
+    <path d="M74 52C88 42 102 42 116 52C102 62 88 62 74 52Z" fill="#ffd25b"/>
+  </g>
+
+  <g transform="translate(1080 470)">
+    <path d="M210 68C170 54 138 26 118 -12C84 2 52 20 20 44C44 90 70 130 100 168C128 202 160 228 196 246C222 208 234 164 234 108C234 92 226 78 210 68Z" fill="#648a63"/>
+    <path d="M180 82C158 84 140 78 128 62C144 44 164 38 188 44C194 58 192 70 180 82Z" fill="#d8b56d"/>
+    <path d="M124 86C114 50 118 24 136 6C160 28 170 58 168 96C150 104 136 100 124 86Z" fill="#536d89"/>
+    <path d="M54 80C24 56 6 26 0 -10C34 -6 66 10 96 36C88 62 74 76 54 80Z" fill="#445e7c"/>
+  </g>
+
+  <path d="M0 0H1800V1080H0Z" fill="#04131c" opacity="0.16"/>
+</svg>

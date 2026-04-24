@@ -38,7 +38,7 @@ let welcomeRenderPromise = null;
 let welcomeRendered = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
-const THEME_PREFERENCES = ['light', 'dark', 'system'];
+const THEME_PREFERENCES = ['light', 'dark', 'coast'];
 const MOBILE_COMPOSER_BREAKPOINT = 520;
 const MOBILE_COMPOSER_MIN_HEIGHT = 72;
 const IMAGE_LIGHTBOX_INITIAL_SCALE = 1.25;
@@ -46,9 +46,7 @@ const IMAGE_LIGHTBOX_MIN_SCALE = 0.5;
 const IMAGE_LIGHTBOX_MAX_SCALE = 4;
 const IMAGE_LIGHTBOX_SCALE_STEP = 0.25;
 const CHAT_IMAGE_DRAG_TYPE = 'application/x-idea-chat-image';
-const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 let themeControlsInitialized = false;
-let systemThemeListenerBound = false;
 let imageLightboxState = {
     scale: IMAGE_LIGHTBOX_INITIAL_SCALE,
     fitScale: IMAGE_LIGHTBOX_INITIAL_SCALE
@@ -348,16 +346,22 @@ function getThemeControlButtons() {
     return document.querySelectorAll('[data-theme-option]');
 }
 
+function normalizeThemePreference(value) {
+    if (THEME_PREFERENCES.includes(value)) {
+        return value;
+    }
+    if (value === 'system') {
+        return 'dark';
+    }
+    return 'dark';
+}
+
 function getStoredThemePreference() {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return THEME_PREFERENCES.includes(stored) ? stored : 'system';
+    return normalizeThemePreference(localStorage.getItem(THEME_STORAGE_KEY));
 }
 
 function resolveTheme(preference = getStoredThemePreference()) {
-    if (preference === 'system') {
-        return systemThemeQuery?.matches ? 'dark' : 'light';
-    }
-    return preference;
+    return normalizeThemePreference(preference);
 }
 
 function syncThemeControls(preference) {
@@ -370,11 +374,11 @@ function syncThemeControls(preference) {
 
 function applyTheme(preference = getStoredThemePreference()) {
     const resolvedTheme = resolveTheme(preference);
-    document.body.classList.remove('theme-light', 'theme-dark');
+    document.body.classList.remove('theme-light', 'theme-dark', 'theme-coast');
     document.body.classList.add(`theme-${resolvedTheme}`);
-    document.body.dataset.themePreference = preference;
-    document.documentElement.style.colorScheme = resolvedTheme;
-    syncThemeControls(preference);
+    document.body.dataset.themePreference = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme === 'coast' ? 'dark' : resolvedTheme;
+    syncThemeControls(resolvedTheme);
 }
 
 function getImageLightboxElements() {
@@ -548,27 +552,11 @@ function bindThemeControls() {
     themeControlsInitialized = true;
 }
 
-function bindSystemThemeListener() {
-    if (!systemThemeQuery || systemThemeListenerBound) {
-        return;
-    }
-    const listener = () => {
-        if (getStoredThemePreference() === 'system') {
-            applyTheme('system');
-        }
-    };
-    if (typeof systemThemeQuery.addEventListener === 'function') {
-        systemThemeQuery.addEventListener('change', listener);
-    } else if (typeof systemThemeQuery.addListener === 'function') {
-        systemThemeQuery.addListener(listener);
-    }
-    systemThemeListenerBound = true;
-}
-
 function initializeTheme() {
     try {
         bindThemeControls();
-        bindSystemThemeListener();
+        const normalized = getStoredThemePreference();
+        localStorage.setItem(THEME_STORAGE_KEY, normalized);
         applyTheme();
     } catch (error) {
         console.error('Failed to initialize theme:', error);
