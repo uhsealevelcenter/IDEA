@@ -195,8 +195,22 @@ body.theme-coast {
     --nav-h: 60px;
     --coast-sidebar-overlay-top: rgba(1, 12, 16, 0.35);
     --coast-sidebar-overlay-bottom: rgba(1, 12, 16, 0.78);
-    --coast-sidebar-image: url("./images/themes/coast-sidebar-beach.svg");
-    --coast-main-image: url("./images/themes/coast-main-undersea-wide.svg");
+    --coast-sidebar-scene:
+        radial-gradient(circle at 18% 12%, rgba(255, 214, 136, 0.5), transparent 20%),
+        radial-gradient(circle at 62% 20%, rgba(255, 161, 96, 0.22), transparent 22%),
+        linear-gradient(112deg, rgba(11, 33, 21, 0.82) 0%, rgba(11, 33, 21, 0.18) 14%, transparent 28%),
+        linear-gradient(102deg, rgba(18, 56, 36, 0.68) 0%, rgba(18, 56, 36, 0.14) 12%, transparent 24%),
+        linear-gradient(166deg, transparent 0%, transparent 48%, rgba(245, 205, 145, 0.92) 49%, rgba(223, 180, 117, 0.96) 63%, rgba(175, 133, 83, 0.94) 100%),
+        linear-gradient(180deg, #1e5a67 0%, #1b6d73 20%, #21878a 34%, #3faeb0 47%, #71d7cf 58%, #c9e4cb 64%, #e7c88a 78%, #9f6f4b 100%);
+    /* --coast-sidebar-image: url("./images/themes/coast-sidebar-beach.svg"); */
+    --coast-main-scene:
+        radial-gradient(circle at 18% 14%, rgba(255, 246, 193, 0.16), transparent 18%),
+        radial-gradient(circle at 34% 12%, rgba(160, 238, 242, 0.16), transparent 24%),
+        radial-gradient(circle at 74% 66%, rgba(27, 126, 135, 0.24), transparent 18%),
+        linear-gradient(180deg, rgba(164, 244, 245, 0.2) 0%, rgba(164, 244, 245, 0.05) 18%, transparent 34%),
+        linear-gradient(102deg, rgba(210, 229, 192, 0.3) 0%, rgba(210, 229, 192, 0.12) 18%, transparent 34%),
+        linear-gradient(180deg, #7fe1e5 0%, #67d7df 12%, #56c7d4 25%, #4bb8ca 40%, #3ca7bc 55%, #2f8da3 72%, #1d6071 100%);
+    /* --coast-main-image: url("./images/themes/coast-main-undersea-wide.svg"); */
     --shadow-soft: 0 12px 36px rgba(0, 0, 0, 0.28);
 }
 
@@ -3845,8 +3859,9 @@ body.main-app.live-app-shell.theme-coast .chat-container::before {
     position: absolute;
     inset: 0 0 0 var(--rail-width);
     background:
+        var(--coast-main-image, none),
         linear-gradient(rgba(2, 12, 18, 0.2), rgba(2, 12, 18, 0.7)),
-        var(--coast-main-image);
+        var(--coast-main-scene);
     background-color: #041920;
     background-position: center top;
     background-repeat: no-repeat;
@@ -3870,7 +3885,8 @@ body.main-app.live-app-shell.theme-coast .chat-header {
     z-index: 1;
     background:
         linear-gradient(180deg, var(--coast-sidebar-overlay-top), var(--coast-sidebar-overlay-bottom)),
-        var(--coast-sidebar-image);
+        var(--coast-sidebar-image, none),
+        var(--coast-sidebar-scene);
     background-color: #09222a;
     background-position: 35% center;
     background-repeat: no-repeat;
@@ -4850,7 +4866,8 @@ body.theme-coast .paper-actions .btn-danger:hover {
     body.main-app.live-app-shell.theme-coast .navbar-mobile-menu {
         background:
             linear-gradient(180deg, rgba(1, 12, 16, 0.36), rgba(1, 12, 16, 0.82)),
-            var(--coast-sidebar-image);
+            var(--coast-sidebar-image, none),
+            var(--coast-sidebar-scene);
         background-color: #0a2128;
         background-position: 35% center;
         background-size: cover;
