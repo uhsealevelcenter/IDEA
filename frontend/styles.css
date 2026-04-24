@@ -93,9 +93,9 @@ body.theme-light {
 
 body.theme-dark {
     color-scheme: dark;
-    --body-gradient: linear-gradient(180deg, #24272b 0%, #2b2f34 100%);
-    --surface: rgba(28, 31, 36, 0.98);
-    --surface-alt: rgba(53, 56, 60, 0.98);
+    --body-gradient: linear-gradient(180deg, #212121 0%, #212121 100%);
+    --surface: rgba(33, 33, 33, 0.98);
+    --surface-alt: rgba(33, 33, 33, 0.98);
     --border: rgba(118, 128, 141, 0.22);
     --shadow: 0 18px 30px -20px rgba(0, 0, 0, 0.58);
     --primary: #4e97dd;
@@ -103,9 +103,9 @@ body.theme-dark {
     --primary-text: #f4f7fb;
     --text-primary: #d8dee7;
     --text-muted: rgba(177, 186, 196, 0.78);
-    --assistant-bg: rgba(90, 103, 118, 0.18);
+    --assistant-bg: rgba(33, 33, 33, 0.98);
     --assistant-border: rgba(97, 113, 129, 0.42);
-    --assistant-text: #d5dbe3;
+    --assistant-text: #eef2f6;
     --user-bg: #3f6f9f;
     --user-border: rgba(109, 145, 183, 0.42);
     --user-text: #edf3f8;
@@ -129,7 +129,7 @@ body.theme-dark {
     --disclaimer-bg: rgba(22, 25, 29, 0.96);
     --disclaimer-text: rgba(193, 201, 210, 0.82);
     --overlay-bg: rgba(18, 20, 24, 0.88);
-    --header-gradient: linear-gradient(180deg, #131a20 0%, #081018 100%);
+    --header-gradient: linear-gradient(180deg, rgb(13, 17, 23) 0%, rgb(13, 17, 23) 100%);
     --header-shadow: 0 14px 32px -20px rgba(0, 0, 0, 0.72);
     --select-bg: rgba(26, 29, 34, 0.98);
     --select-border: rgba(109, 120, 133, 0.34);
@@ -3435,16 +3435,16 @@ body.main-app.live-app-shell {
 }
 
 body.main-app.live-app-shell.theme-dark {
-    --shell-bg: #26292d;
-    background: #26292d;
+    --shell-bg: rgb(33, 33, 33);
+    background: rgb(33, 33, 33);
 }
 
 body.main-app.live-app-shell.theme-dark .chat-container {
-    background: #26292d;
+    background: rgb(33, 33, 33);
 }
 
 body.main-app.live-app-shell.theme-dark .chat-header {
-    background: linear-gradient(180deg, #121a21 0%, #081018 100%);
+    background: linear-gradient(180deg, rgb(13, 17, 23) 0%, rgb(13, 17, 23) 100%);
     box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03);
 }
 
@@ -3661,7 +3661,7 @@ body.main-app.live-app-shell #chatDisplay {
 }
 
 body.main-app.live-app-shell.theme-dark #chatDisplay {
-    background: #26292d;
+    background: rgb(33, 33, 33);
 }
 
 body.main-app.live-app-shell.theme-dark .chat-welcome-title,
