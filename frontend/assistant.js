@@ -2137,7 +2137,7 @@ function refreshStdoutPanel(codeId, { autoScroll = false } = {}) {
     }
 }
 
-function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
+function hydrateChatWithMessages(rawMessages, { persist = false, showExamplesWhenEmpty = true } = {}) {
     if (!Array.isArray(rawMessages)) {
         return;
     }
@@ -2147,9 +2147,17 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
     promptIdeasVisible = false;
     resetStdoutState();
     if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
-        showPromptIdeas();
+        if (showExamplesWhenEmpty) {
+            showPromptIdeas();
+        } else {
+            hidePromptIdeas();
+            renderWelcomeGreeting();
+            const welcomeSection = ensureWelcomeSection();
+            welcomeSection?.welcome?.classList.remove('hidden');
+        }
     } else {
         hideWelcomeSection();
+        hidePromptExamplesSection();
     }
 
     rawMessages.forEach(rawMessage => {

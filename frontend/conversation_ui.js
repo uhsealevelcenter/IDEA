@@ -239,7 +239,10 @@ async function loadConversation(conversationId) {
         const loadedMessages = conversationManager.getCurrentMessages() || [];
 
         if (typeof window.hydrateChatWithMessages === 'function') {
-            window.hydrateChatWithMessages(loadedMessages, { persist: false });
+            window.hydrateChatWithMessages(loadedMessages, {
+                persist: false,
+                showExamplesWhenEmpty: false
+            });
         } else {
             chatDisplay.innerHTML = '';
             if (typeof window.resetStdoutState === 'function') {
