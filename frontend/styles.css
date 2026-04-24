@@ -1529,15 +1529,18 @@ body.theme-light .thinking-label {
 #uploadButton::after {
     content: "Max file size: 50MB";
     position: absolute;
-    bottom: 6px;
-    left: 55%;
-    transform: translate(1px, 100%);
+    bottom: calc(100% + 3px);
+    left: 50%;
+    transform: translateX(8px);
     background: rgba(15, 33, 47, 0.88);
     color: #ffffff;
     padding: 4px 8px;
     border-radius: 6px;
     font-size: 12px;
-    white-space: nowrap;
+    white-space: normal;
+    max-width: min(320px, calc(100vw - 32px));
+    width: max-content;
+    line-height: 1.35;
     visibility: hidden;
     opacity: 0;
     transition: opacity 0.2s ease;
@@ -1552,9 +1555,9 @@ body.theme-light .thinking-label {
 #micButton::after {
     content: "Dictate";
     position: absolute;
-    bottom: 6px;
-    right: 55%;
-    transform: translate(1px, 100%);
+    bottom: calc(100% + 3px);
+    right: 50%;
+    transform: translateX(-8px);
     background: rgba(15, 33, 47, 0.88);
     color: #ffffff;
     padding: 4px 8px;
@@ -1757,7 +1760,7 @@ body.theme-light .thinking-label {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     transition: border 0.25s ease, box-shadow 0.25s ease;
     gap: 6px;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .input-container:focus-within {
