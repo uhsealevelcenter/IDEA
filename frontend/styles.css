@@ -2184,6 +2184,7 @@ body.theme-light .thinking-label {
 }
 
 .image-lightbox-body {
+    position: relative;
     padding: 1rem;
     overflow: hidden;
 }
@@ -2196,18 +2197,23 @@ body.theme-light .thinking-label {
     overflow: auto;
     border-radius: 12px;
     background: rgba(15, 23, 42, 0.08);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+}
+
+.image-lightbox-stage {
+    display: grid;
+    place-items: center;
+    min-width: 100%;
+    min-height: 100%;
+    padding: 1.5rem;
+    box-sizing: border-box;
 }
 
 .image-lightbox-preview {
-    transform-origin: center center;
-    transition: transform 0.15s ease;
     user-select: none;
     -webkit-user-drag: none;
-    max-width: min(88vw, 1100px);
-    max-height: 76vh;
+    display: block;
+    max-width: none;
+    max-height: none;
     width: auto;
     height: auto;
 }

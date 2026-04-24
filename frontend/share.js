@@ -12,7 +12,8 @@ const SHARED_IMAGE_LIGHTBOX_MIN_SCALE = 0.5;
 const SHARED_IMAGE_LIGHTBOX_MAX_SCALE = 4;
 const SHARED_IMAGE_LIGHTBOX_SCALE_STEP = 0.25;
 let sharedImageLightboxState = {
-    scale: SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE
+    scale: SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE,
+    fitScale: SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE
 };
 
 //// Math formatting helpers for shared/downloaded views
@@ -94,6 +95,7 @@ function getSharedImageLightboxElements() {
     return {
         modal: document.getElementById('sharedImageLightboxModal'),
         preview: document.getElementById('sharedImageLightboxPreview'),
+        stage: document.getElementById('sharedImageLightboxStage'),
         viewport: document.getElementById('sharedImageLightboxViewport'),
         close: document.getElementById('closeSharedImageLightboxModal'),
         zoomIn: document.getElementById('sharedImageZoomInButton'),
@@ -103,23 +105,53 @@ function getSharedImageLightboxElements() {
 }
 
 function clampSharedImageZoom(scale) {
-    return Math.min(SHARED_IMAGE_LIGHTBOX_MAX_SCALE, Math.max(SHARED_IMAGE_LIGHTBOX_MIN_SCALE, scale));
+    return Math.min(
+        SHARED_IMAGE_LIGHTBOX_MAX_SCALE,
+        Math.max(sharedImageLightboxState.fitScale || SHARED_IMAGE_LIGHTBOX_MIN_SCALE, scale)
+    );
+}
+
+function getSharedImageLightboxFitScale(preview, viewport, stage) {
+    const naturalWidth = preview.naturalWidth || preview.width;
+    const naturalHeight = preview.naturalHeight || preview.height;
+    if (!naturalWidth || !naturalHeight) return SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+
+    const stageStyles = window.getComputedStyle(stage);
+    const paddingX = (parseFloat(stageStyles.paddingLeft) || 0) + (parseFloat(stageStyles.paddingRight) || 0);
+    const paddingY = (parseFloat(stageStyles.paddingTop) || 0) + (parseFloat(stageStyles.paddingBottom) || 0);
+    const availableWidth = Math.max(viewport.clientWidth - paddingX, 1);
+    const availableHeight = Math.max(viewport.clientHeight - paddingY, 1);
+
+    return Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight);
 }
 
 function applySharedImageLightboxZoom() {
-    const { preview } = getSharedImageLightboxElements();
-    if (!preview) return;
-    preview.style.transform = `scale(${sharedImageLightboxState.scale})`;
+    const { preview, stage, viewport } = getSharedImageLightboxElements();
+    if (!preview || !stage || !viewport) return;
+    const naturalWidth = preview.naturalWidth || preview.width;
+    const naturalHeight = preview.naturalHeight || preview.height;
+    if (!naturalWidth || !naturalHeight) return;
+
+    const scaledWidth = naturalWidth * sharedImageLightboxState.scale;
+    const scaledHeight = naturalHeight * sharedImageLightboxState.scale;
+    const stageWidth = Math.max(scaledWidth, viewport.clientWidth);
+    const stageHeight = Math.max(scaledHeight, viewport.clientHeight);
+
+    stage.style.width = `${stageWidth}px`;
+    stage.style.height = `${stageHeight}px`;
+    preview.style.width = `${scaledWidth}px`;
+    preview.style.height = `${scaledHeight}px`;
 }
 
 function openSharedImageLightbox(src, alt = 'Expanded shared image') {
-    const { modal, preview, viewport } = getSharedImageLightboxElements();
-    if (!modal || !preview || !viewport) return;
-    sharedImageLightboxState.scale = SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+    const { modal, preview, viewport, stage } = getSharedImageLightboxElements();
+    if (!modal || !preview || !viewport || !stage) return;
     preview.src = src;
     preview.alt = alt;
     preview.draggable = false;
     preview.onload = () => {
+        sharedImageLightboxState.fitScale = getSharedImageLightboxFitScale(preview, viewport, stage);
+        sharedImageLightboxState.scale = sharedImageLightboxState.fitScale;
         applySharedImageLightboxZoom();
         viewport.scrollTop = 0;
         viewport.scrollLeft = 0;
@@ -128,11 +160,16 @@ function openSharedImageLightbox(src, alt = 'Expanded shared image') {
 }
 
 function closeSharedImageLightbox() {
-    const { modal, preview } = getSharedImageLightboxElements();
-    if (!modal || !preview) return;
+    const { modal, preview, stage } = getSharedImageLightboxElements();
+    if (!modal || !preview || !stage) return;
     modal.style.display = 'none';
     preview.removeAttribute('src');
-    preview.style.transform = '';
+    preview.style.width = '';
+    preview.style.height = '';
+    stage.style.width = '';
+    stage.style.height = '';
+    sharedImageLightboxState.scale = SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+    sharedImageLightboxState.fitScale = SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
 }
 
 function updateSharedImageLightboxZoom(delta) {
@@ -141,7 +178,7 @@ function updateSharedImageLightboxZoom(delta) {
 }
 
 function resetSharedImageLightboxZoom() {
-    sharedImageLightboxState.scale = SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+    sharedImageLightboxState.scale = sharedImageLightboxState.fitScale;
     applySharedImageLightboxZoom();
 }
 
@@ -185,6 +222,12 @@ function initializeSharedImageLightbox() {
             updateSharedImageLightboxZoom(-SHARED_IMAGE_LIGHTBOX_SCALE_STEP);
         } else if (event.key === '0') {
             resetSharedImageLightboxZoom();
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        if (modal.style.display === 'block') {
+            applySharedImageLightboxZoom();
         }
     });
 

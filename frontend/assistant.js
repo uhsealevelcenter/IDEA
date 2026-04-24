@@ -50,7 +50,8 @@ const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-s
 let themeControlsInitialized = false;
 let systemThemeListenerBound = false;
 let imageLightboxState = {
-    scale: IMAGE_LIGHTBOX_INITIAL_SCALE
+    scale: IMAGE_LIGHTBOX_INITIAL_SCALE,
+    fitScale: IMAGE_LIGHTBOX_INITIAL_SCALE
 };
 
 // Conversation manager instance
@@ -380,6 +381,7 @@ function getImageLightboxElements() {
     return {
         modal: document.getElementById('imageLightboxModal'),
         preview: document.getElementById('imageLightboxPreview'),
+        stage: document.getElementById('imageLightboxStage'),
         viewport: document.getElementById('imageLightboxViewport'),
         close: document.getElementById('closeImageLightboxModal'),
         zoomIn: document.getElementById('imageZoomInButton'),
@@ -389,7 +391,24 @@ function getImageLightboxElements() {
 }
 
 function clampImageZoom(scale) {
-    return Math.min(IMAGE_LIGHTBOX_MAX_SCALE, Math.max(IMAGE_LIGHTBOX_MIN_SCALE, scale));
+    return Math.min(
+        IMAGE_LIGHTBOX_MAX_SCALE,
+        Math.max(imageLightboxState.fitScale || IMAGE_LIGHTBOX_MIN_SCALE, scale)
+    );
+}
+
+function getImageLightboxFitScale(preview, viewport, stage) {
+    const naturalWidth = preview.naturalWidth || preview.width;
+    const naturalHeight = preview.naturalHeight || preview.height;
+    if (!naturalWidth || !naturalHeight) return IMAGE_LIGHTBOX_INITIAL_SCALE;
+
+    const stageStyles = window.getComputedStyle(stage);
+    const paddingX = (parseFloat(stageStyles.paddingLeft) || 0) + (parseFloat(stageStyles.paddingRight) || 0);
+    const paddingY = (parseFloat(stageStyles.paddingTop) || 0) + (parseFloat(stageStyles.paddingBottom) || 0);
+    const availableWidth = Math.max(viewport.clientWidth - paddingX, 1);
+    const availableHeight = Math.max(viewport.clientHeight - paddingY, 1);
+
+    return Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight);
 }
 
 function sanitizeDraggedImageFilename(name, fallbackExtension = 'png') {
@@ -447,19 +466,32 @@ async function createFileFromDraggedChatImage(payload) {
 }
 
 function applyImageLightboxZoom() {
-    const { preview } = getImageLightboxElements();
-    if (!preview) return;
-    preview.style.transform = `scale(${imageLightboxState.scale})`;
+    const { preview, stage, viewport } = getImageLightboxElements();
+    if (!preview || !stage || !viewport) return;
+    const naturalWidth = preview.naturalWidth || preview.width;
+    const naturalHeight = preview.naturalHeight || preview.height;
+    if (!naturalWidth || !naturalHeight) return;
+
+    const scaledWidth = naturalWidth * imageLightboxState.scale;
+    const scaledHeight = naturalHeight * imageLightboxState.scale;
+    const stageWidth = Math.max(scaledWidth, viewport.clientWidth);
+    const stageHeight = Math.max(scaledHeight, viewport.clientHeight);
+
+    stage.style.width = `${stageWidth}px`;
+    stage.style.height = `${stageHeight}px`;
+    preview.style.width = `${scaledWidth}px`;
+    preview.style.height = `${scaledHeight}px`;
 }
 
 function openImageLightbox(src, alt = 'Expanded chat image') {
-    const { modal, preview, viewport } = getImageLightboxElements();
-    if (!modal || !preview || !viewport) return;
-    imageLightboxState.scale = IMAGE_LIGHTBOX_INITIAL_SCALE;
+    const { modal, preview, viewport, stage } = getImageLightboxElements();
+    if (!modal || !preview || !viewport || !stage) return;
     preview.src = src;
     preview.alt = alt;
     preview.draggable = false;
     preview.onload = () => {
+        imageLightboxState.fitScale = getImageLightboxFitScale(preview, viewport, stage);
+        imageLightboxState.scale = imageLightboxState.fitScale;
         applyImageLightboxZoom();
         viewport.scrollTop = 0;
         viewport.scrollLeft = 0;
@@ -469,11 +501,16 @@ function openImageLightbox(src, alt = 'Expanded chat image') {
 }
 
 function closeImageLightbox() {
-    const { modal, preview } = getImageLightboxElements();
-    if (!modal || !preview) return;
+    const { modal, preview, stage } = getImageLightboxElements();
+    if (!modal || !preview || !stage) return;
     modal.style.display = 'none';
     preview.removeAttribute('src');
-    preview.style.transform = '';
+    preview.style.width = '';
+    preview.style.height = '';
+    stage.style.width = '';
+    stage.style.height = '';
+    imageLightboxState.scale = IMAGE_LIGHTBOX_INITIAL_SCALE;
+    imageLightboxState.fitScale = IMAGE_LIGHTBOX_INITIAL_SCALE;
     document.body.classList.remove('modal-open');
 }
 
@@ -483,7 +520,7 @@ function updateImageLightboxZoom(delta) {
 }
 
 function resetImageLightboxZoom() {
-    imageLightboxState.scale = IMAGE_LIGHTBOX_INITIAL_SCALE;
+    imageLightboxState.scale = imageLightboxState.fitScale;
     applyImageLightboxZoom();
 }
 
@@ -2568,6 +2605,12 @@ function initializeImageLightbox() {
             updateImageLightboxZoom(-IMAGE_LIGHTBOX_SCALE_STEP);
         } else if (event.key === '0') {
             resetImageLightboxZoom();
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        if (modal.style.display === 'block') {
+            applyImageLightboxZoom();
         }
     });
 
