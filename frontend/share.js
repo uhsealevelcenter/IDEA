@@ -7,6 +7,13 @@ const sharedStdoutMap = new Map();
 const sharedMessageCache = new Map();
 let lastSharedCodeId = null;
 const SHARED_STD_STREAM_RECIPIENTS = ['stdout', 'stderr'];
+const SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE = 1.25;
+const SHARED_IMAGE_LIGHTBOX_MIN_SCALE = 0.5;
+const SHARED_IMAGE_LIGHTBOX_MAX_SCALE = 4;
+const SHARED_IMAGE_LIGHTBOX_SCALE_STEP = 0.25;
+let sharedImageLightboxState = {
+    scale: SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE
+};
 
 //// Math formatting helpers for shared/downloaded views
 function protectMath(text) {
@@ -80,6 +87,111 @@ function addCopyButtonsShared(root) {
                 setTimeout(() => button.innerText = 'Copy', 2000);
             });
         });
+    });
+}
+
+function getSharedImageLightboxElements() {
+    return {
+        modal: document.getElementById('sharedImageLightboxModal'),
+        preview: document.getElementById('sharedImageLightboxPreview'),
+        viewport: document.getElementById('sharedImageLightboxViewport'),
+        close: document.getElementById('closeSharedImageLightboxModal'),
+        zoomIn: document.getElementById('sharedImageZoomInButton'),
+        zoomOut: document.getElementById('sharedImageZoomOutButton'),
+        zoomReset: document.getElementById('sharedImageZoomResetButton')
+    };
+}
+
+function clampSharedImageZoom(scale) {
+    return Math.min(SHARED_IMAGE_LIGHTBOX_MAX_SCALE, Math.max(SHARED_IMAGE_LIGHTBOX_MIN_SCALE, scale));
+}
+
+function applySharedImageLightboxZoom() {
+    const { preview } = getSharedImageLightboxElements();
+    if (!preview) return;
+    preview.style.transform = `scale(${sharedImageLightboxState.scale})`;
+}
+
+function openSharedImageLightbox(src, alt = 'Expanded shared image') {
+    const { modal, preview, viewport } = getSharedImageLightboxElements();
+    if (!modal || !preview || !viewport) return;
+    sharedImageLightboxState.scale = SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+    preview.src = src;
+    preview.alt = alt;
+    preview.draggable = false;
+    preview.onload = () => {
+        applySharedImageLightboxZoom();
+        viewport.scrollTop = 0;
+        viewport.scrollLeft = 0;
+    };
+    modal.style.display = 'block';
+}
+
+function closeSharedImageLightbox() {
+    const { modal, preview } = getSharedImageLightboxElements();
+    if (!modal || !preview) return;
+    modal.style.display = 'none';
+    preview.removeAttribute('src');
+    preview.style.transform = '';
+}
+
+function updateSharedImageLightboxZoom(delta) {
+    sharedImageLightboxState.scale = clampSharedImageZoom(sharedImageLightboxState.scale + delta);
+    applySharedImageLightboxZoom();
+}
+
+function resetSharedImageLightboxZoom() {
+    sharedImageLightboxState.scale = SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+    applySharedImageLightboxZoom();
+}
+
+function initializeSharedImageLightbox() {
+    const { modal, close, zoomIn, zoomOut, zoomReset, viewport } = getSharedImageLightboxElements();
+    if (!modal || !close || !zoomIn || !zoomOut || !zoomReset || !viewport) {
+        return;
+    }
+
+    close.addEventListener('click', closeSharedImageLightbox);
+    zoomIn.addEventListener('click', () => updateSharedImageLightboxZoom(SHARED_IMAGE_LIGHTBOX_SCALE_STEP));
+    zoomOut.addEventListener('click', () => updateSharedImageLightboxZoom(-SHARED_IMAGE_LIGHTBOX_SCALE_STEP));
+    zoomReset.addEventListener('click', resetSharedImageLightboxZoom);
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            closeSharedImageLightbox();
+        }
+    });
+
+    viewport.addEventListener('wheel', (event) => {
+        if (modal.style.display !== 'block') return;
+        event.preventDefault();
+        const delta = event.deltaY < 0 ? SHARED_IMAGE_LIGHTBOX_SCALE_STEP : -SHARED_IMAGE_LIGHTBOX_SCALE_STEP;
+        updateSharedImageLightboxZoom(delta);
+    }, { passive: false });
+
+    viewport.addEventListener('dragstart', (event) => {
+        if (event.target instanceof HTMLImageElement) {
+            event.preventDefault();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (modal.style.display !== 'block') return;
+        if (event.key === 'Escape') {
+            closeSharedImageLightbox();
+        } else if (event.key === '+' || event.key === '=') {
+            updateSharedImageLightboxZoom(SHARED_IMAGE_LIGHTBOX_SCALE_STEP);
+        } else if (event.key === '-') {
+            updateSharedImageLightboxZoom(-SHARED_IMAGE_LIGHTBOX_SCALE_STEP);
+        } else if (event.key === '0') {
+            resetSharedImageLightboxZoom();
+        }
+    });
+
+    document.addEventListener('click', (event) => {
+        const image = event.target.closest('#chatDisplay .chat-image-preview');
+        if (!image) return;
+        openSharedImageLightbox(image.currentSrc || image.src, image.alt || 'Expanded shared image');
     });
 }
 
@@ -329,11 +441,11 @@ function displayMessageInChat(message) {
         }
     } else if (message.message_type === 'image') {
         if (message.message_format === 'base64.png') {
-            contentElement.innerHTML = `<img src="data:image/png;base64,${message.content}" alt="Image">`;
+            contentElement.innerHTML = `<img src="data:image/png;base64,${message.content}" alt="Image" class="chat-image-preview">`;
         } else if (message.message_format === 'path') {
-            contentElement.innerHTML = `<img src="${message.content}" alt="Image">`;
+            contentElement.innerHTML = `<img src="${message.content}" alt="Image" class="chat-image-preview">`;
         } else {
-            contentElement.innerHTML = `<img src="${message.content}" alt="Image">`;
+            contentElement.innerHTML = `<img src="${message.content}" alt="Image" class="chat-image-preview">`;
         }
     } else if (message.message_type === 'code') {
         if (message.message_format === 'html') {
@@ -510,5 +622,6 @@ async function loadSharedConversation() {
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
+    initializeSharedImageLightbox();
     loadSharedConversation();
 });

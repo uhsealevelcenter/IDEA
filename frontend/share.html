@@ -295,6 +295,22 @@
         </div>
     </div>
 
+    <div id="sharedImageLightboxModal" class="modal image-lightbox-modal">
+        <div class="modal-content image-lightbox-content">
+            <div class="modal-body image-lightbox-body">
+                <div id="sharedImageLightboxViewport" class="image-lightbox-viewport">
+                    <div class="image-lightbox-controls" role="toolbar" aria-label="Image zoom controls">
+                        <button type="button" id="sharedImageZoomOutButton" class="image-zoom-btn" aria-label="Zoom out">-</button>
+                        <button type="button" id="sharedImageZoomResetButton" class="image-zoom-btn image-zoom-reset-btn" aria-label="Reset zoom">Reset</button>
+                        <button type="button" id="sharedImageZoomInButton" class="image-zoom-btn" aria-label="Zoom in">+</button>
+                        <button type="button" id="closeSharedImageLightboxModal" class="image-zoom-btn image-lightbox-close-btn" aria-label="Close image preview">&times;</button>
+                    </div>
+                    <img id="sharedImageLightboxPreview" class="image-lightbox-preview" alt="Expanded shared image">
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
