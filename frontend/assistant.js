@@ -41,9 +41,17 @@ const THEME_STORAGE_KEY = 'idea-theme';
 const THEME_PREFERENCES = ['light', 'dark', 'system'];
 const MOBILE_COMPOSER_BREAKPOINT = 520;
 const MOBILE_COMPOSER_MIN_HEIGHT = 72;
+const IMAGE_LIGHTBOX_INITIAL_SCALE = 1.25;
+const IMAGE_LIGHTBOX_MIN_SCALE = 0.5;
+const IMAGE_LIGHTBOX_MAX_SCALE = 4;
+const IMAGE_LIGHTBOX_SCALE_STEP = 0.25;
+const CHAT_IMAGE_DRAG_TYPE = 'application/x-idea-chat-image';
 const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 let themeControlsInitialized = false;
 let systemThemeListenerBound = false;
+let imageLightboxState = {
+    scale: IMAGE_LIGHTBOX_INITIAL_SCALE
+};
 
 // Conversation manager instance
 let conversationManager;
@@ -366,6 +374,117 @@ function applyTheme(preference = getStoredThemePreference()) {
     document.body.dataset.themePreference = preference;
     document.documentElement.style.colorScheme = resolvedTheme;
     syncThemeControls(preference);
+}
+
+function getImageLightboxElements() {
+    return {
+        modal: document.getElementById('imageLightboxModal'),
+        preview: document.getElementById('imageLightboxPreview'),
+        viewport: document.getElementById('imageLightboxViewport'),
+        close: document.getElementById('closeImageLightboxModal'),
+        zoomIn: document.getElementById('imageZoomInButton'),
+        zoomOut: document.getElementById('imageZoomOutButton'),
+        zoomReset: document.getElementById('imageZoomResetButton')
+    };
+}
+
+function clampImageZoom(scale) {
+    return Math.min(IMAGE_LIGHTBOX_MAX_SCALE, Math.max(IMAGE_LIGHTBOX_MIN_SCALE, scale));
+}
+
+function sanitizeDraggedImageFilename(name, fallbackExtension = 'png') {
+    const cleaned = (name || '')
+        .trim()
+        .replace(/[<>:"/\\|?*\x00-\x1F]+/g, '-')
+        .replace(/\s+/g, ' ');
+    if (!cleaned) {
+        return `chat-image-${Date.now()}.${fallbackExtension}`;
+    }
+    if (/\.[a-z0-9]+$/i.test(cleaned)) {
+        return cleaned;
+    }
+    return `${cleaned}.${fallbackExtension}`;
+}
+
+function extensionFromMimeType(mimeType = '') {
+    const normalized = mimeType.toLowerCase();
+    if (normalized === 'image/jpeg') return 'jpg';
+    if (normalized === 'image/svg+xml') return 'svg';
+    if (normalized.startsWith('image/')) return normalized.split('/')[1] || 'png';
+    return 'png';
+}
+
+function deriveDraggedImageName(src, alt = '', mimeType = '') {
+    const genericAlt = /^(image|uploaded image|expanded chat image)$/i;
+    const extension = extensionFromMimeType(mimeType);
+    if (alt && !genericAlt.test(alt.trim())) {
+        return sanitizeDraggedImageFilename(alt, extension);
+    }
+    try {
+        const url = new URL(src, window.location.href);
+        const basename = url.pathname.split('/').pop();
+        if (basename) {
+            return sanitizeDraggedImageFilename(decodeURIComponent(basename), extension);
+        }
+    } catch (error) {
+        // Ignore malformed or data URLs and fall back below.
+    }
+    return `chat-image-${Date.now()}.${extension}`;
+}
+
+async function createFileFromDraggedChatImage(payload) {
+    if (!payload?.src) {
+        throw new Error('Missing image source');
+    }
+    const response = await fetch(payload.src);
+    if (!response.ok) {
+        throw new Error('Unable to read chat image');
+    }
+    const blob = await response.blob();
+    const mimeType = blob.type || 'image/png';
+    const fileName = deriveDraggedImageName(payload.src, payload.alt || '', mimeType);
+    return new File([blob], fileName, { type: mimeType });
+}
+
+function applyImageLightboxZoom() {
+    const { preview } = getImageLightboxElements();
+    if (!preview) return;
+    preview.style.transform = `scale(${imageLightboxState.scale})`;
+}
+
+function openImageLightbox(src, alt = 'Expanded chat image') {
+    const { modal, preview, viewport } = getImageLightboxElements();
+    if (!modal || !preview || !viewport) return;
+    imageLightboxState.scale = IMAGE_LIGHTBOX_INITIAL_SCALE;
+    preview.src = src;
+    preview.alt = alt;
+    preview.draggable = false;
+    preview.onload = () => {
+        applyImageLightboxZoom();
+        viewport.scrollTop = 0;
+        viewport.scrollLeft = 0;
+    };
+    modal.style.display = 'block';
+    document.body.classList.add('modal-open');
+}
+
+function closeImageLightbox() {
+    const { modal, preview } = getImageLightboxElements();
+    if (!modal || !preview) return;
+    modal.style.display = 'none';
+    preview.removeAttribute('src');
+    preview.style.transform = '';
+    document.body.classList.remove('modal-open');
+}
+
+function updateImageLightboxZoom(delta) {
+    imageLightboxState.scale = clampImageZoom(imageLightboxState.scale + delta);
+    applyImageLightboxZoom();
+}
+
+function resetImageLightboxZoom() {
+    imageLightboxState.scale = IMAGE_LIGHTBOX_INITIAL_SCALE;
+    applyImageLightboxZoom();
 }
 
 function handleThemeSelection(preference) {
@@ -1289,7 +1408,7 @@ function appendMessage(message, options = {}) {
     } else if (message.type === 'image' && message.format === 'path') {
         const imageSrc = escapeHtml(message.content || '');
         const imageAlt = escapeHtml(message.filename || 'Uploaded image');
-        contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview">`;
+        contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview chat-image-preview">`;
     } else if (message.type === 'file') {
         const displayName = escapeHtml(message.filename || message.name || message.content || 'Attachment');
         const filePath = escapeHtml(message.content || '');
@@ -1480,14 +1599,14 @@ function updateMessageContent(id, content) {
                 const mime = message.format.replace('base64.', 'image/');
                 if (message.isComplete) {
                     contentDiv.innerHTML =
-                        `<img src="data:${mime};base64,${content}" alt="Image">`;
+                        `<img src="data:${mime};base64,${content}" alt="Image" class="chat-image-preview">`;
                 } else {
                     // still streaming, don't try to render partial base64
                     contentDiv.innerHTML = `<div class="image-placeholder"> Generating image… </div>`;
                 }
             } else if (message.format === 'path') {
                 // path-based images are usually already usable
-                contentDiv.innerHTML = `<img src="${content}" alt="Image">`;
+                contentDiv.innerHTML = `<img src="${content}" alt="Image" class="chat-image-preview">`;
             }
         } else if (message.type === 'code') {
             const preservedStdoutState = captureStdoutPanelState(message.id);
@@ -2409,6 +2528,71 @@ function initializeMobileNavigation() {
     });
 }
 
+function initializeImageLightbox() {
+    const { modal, close, zoomIn, zoomOut, zoomReset, viewport } = getImageLightboxElements();
+    if (!modal || !close || !zoomIn || !zoomOut || !zoomReset || !viewport) {
+        return;
+    }
+
+    close.addEventListener('click', closeImageLightbox);
+    zoomIn.addEventListener('click', () => updateImageLightboxZoom(IMAGE_LIGHTBOX_SCALE_STEP));
+    zoomOut.addEventListener('click', () => updateImageLightboxZoom(-IMAGE_LIGHTBOX_SCALE_STEP));
+    zoomReset.addEventListener('click', resetImageLightboxZoom);
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            closeImageLightbox();
+        }
+    });
+
+    viewport.addEventListener('wheel', (event) => {
+        if (modal.style.display !== 'block') return;
+        event.preventDefault();
+        const delta = event.deltaY < 0 ? IMAGE_LIGHTBOX_SCALE_STEP : -IMAGE_LIGHTBOX_SCALE_STEP;
+        updateImageLightboxZoom(delta);
+    }, { passive: false });
+
+    viewport.addEventListener('dragstart', (event) => {
+        if (event.target instanceof HTMLImageElement) {
+            event.preventDefault();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (modal.style.display !== 'block') return;
+        if (event.key === 'Escape') {
+            closeImageLightbox();
+        } else if (event.key === '+' || event.key === '=') {
+            updateImageLightboxZoom(IMAGE_LIGHTBOX_SCALE_STEP);
+        } else if (event.key === '-') {
+            updateImageLightboxZoom(-IMAGE_LIGHTBOX_SCALE_STEP);
+        } else if (event.key === '0') {
+            resetImageLightboxZoom();
+        }
+    });
+
+    chatDisplay.addEventListener('click', (event) => {
+        const image = event.target.closest('.chat-image-preview, .uploaded-image-preview');
+        if (!image) return;
+        openImageLightbox(image.currentSrc || image.src, image.alt || 'Expanded chat image');
+    });
+
+    chatDisplay.addEventListener('dragstart', (event) => {
+        if (!(event.target instanceof HTMLImageElement) || !event.target.closest('.chat-image-preview, .uploaded-image-preview')) {
+            return;
+        }
+        const payload = {
+            src: event.target.currentSrc || event.target.src,
+            alt: event.target.alt || ''
+        };
+        event.dataTransfer?.clearData();
+        event.dataTransfer?.setData(CHAT_IMAGE_DRAG_TYPE, JSON.stringify(payload));
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'copy';
+        }
+    });
+}
+
 function syncMessageInputLayout() {
     const messageInputField = document.getElementById('messageInput');
     if (!messageInputField) return;
@@ -3051,6 +3235,7 @@ function convertImageToDataURL(img) {
 document.addEventListener('DOMContentLoaded', () => {
     initializeFileUpload();
     initializeMobileNavigation();
+    initializeImageLightbox();
     syncMessageInputLayout();
     resetTextareaHeight();
     window.addEventListener('resize', syncMessageInputLayout);
@@ -3150,6 +3335,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let dragTimer;
 
     document.addEventListener('dragover', (e) => {
+        if (e.dataTransfer?.types?.includes(CHAT_IMAGE_DRAG_TYPE)) {
+            e.preventDefault();
+            return;
+        }
         e.preventDefault();
         dropOverlay.classList.add('show');
         clearTimeout(dragTimer);
@@ -3163,6 +3352,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.addEventListener('drop', async (e) => {
+        if (e.dataTransfer?.types?.includes(CHAT_IMAGE_DRAG_TYPE)) {
+            e.preventDefault();
+            dropOverlay.classList.remove('show');
+            return;
+        }
         e.preventDefault();
         dropOverlay.classList.remove('show');
 
@@ -3191,4 +3385,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
 messageInput.addEventListener('input', function() {
     resetTextareaHeight();
+});
+
+messageInput.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types?.includes(CHAT_IMAGE_DRAG_TYPE)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+});
+
+messageInput.addEventListener('drop', async (event) => {
+    if (!event.dataTransfer?.types?.includes(CHAT_IMAGE_DRAG_TYPE)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    document.getElementById('dropOverlay')?.classList.remove('show');
+
+    try {
+        const payload = JSON.parse(event.dataTransfer.getData(CHAT_IMAGE_DRAG_TYPE) || '{}');
+        const file = await createFileFromDraggedChatImage(payload);
+        await handleFiles([file]);
+        messageInput.focus();
+    } catch (error) {
+        console.error('Error attaching dragged chat image:', error);
+        appendSystemMessage(`Error attaching dragged image: ${error.message}`);
+    }
 });

@@ -1616,6 +1616,12 @@ pre {
     max-width: min(220px, 40vw);
     border-radius: 10px;
     border: 1px solid var(--assistant-border);
+    cursor: zoom-in;
+    user-select: none;
+}
+
+.chat-image-preview {
+    cursor: zoom-in;
 }
 
 .user-message-wrapper {
@@ -1873,23 +1879,10 @@ pre {
     font-weight: 500;
     cursor: pointer;
     transition: transform 0.2s ease;
-    margin-bottom: 10px;
 }
 
 .login-button:hover {
     transform: translateY(-2px);
-}
-
-.guest-login-button {
-    margin-top: 0.75rem;
-    background: transparent;
-    color: var(--primary);
-    border: 1px solid var(--border);
-    box-shadow: inset 0 0 0 1px rgba(15, 51, 72, 0.04);
-}
-
-.guest-login-button:hover {
-    background: rgba(15, 51, 72, 0.06);
 }
 
 .login-button:disabled {
@@ -2070,40 +2063,99 @@ pre {
     flex-direction: column;
 }
 
-.guest-notice-modal {
-    z-index: 2500;
+.image-lightbox-modal {
+    z-index: 2100;
 }
 
-.guest-notice-content {
-    width: min(560px, calc(100% - 2rem));
-    max-width: 560px;
-    height: auto;
-    margin: 8vh auto;
+.image-lightbox-content {
+    width: min(94vw, 1400px);
+    max-width: 1400px;
+    height: min(92vh, 980px);
 }
 
-.guest-notice-close {
-    background: transparent;
-    border: none;
+.image-lightbox-controls {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.72);
+    box-shadow: 0 16px 32px rgba(15, 23, 42, 0.18);
+    backdrop-filter: blur(10px);
+}
+
+.image-zoom-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    height: 44px;
+    padding: 0 0.95rem;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #f8fafc;
+    font-size: 1.1rem;
+    font-weight: 700;
     line-height: 1;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
 }
 
-.guest-notice-body {
-    gap: 1rem;
-    overflow: visible;
+.image-zoom-btn:hover,
+.image-zoom-btn:focus {
+    background: rgba(255, 255, 255, 0.24);
+    border-color: rgba(191, 219, 254, 0.48);
+    transform: translateY(-1px);
 }
 
-.guest-notice-body p {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: 1rem;
-    line-height: 1.65;
+.image-zoom-btn:focus-visible {
+    outline: 2px solid rgba(147, 197, 253, 0.72);
+    outline-offset: 2px;
 }
 
-.guest-notice-dismiss {
-    align-self: flex-end;
+.image-zoom-reset-btn {
+    font-size: 0.94rem;
+    font-weight: 600;
+}
+
+.image-lightbox-close-btn {
+    min-width: 44px;
+    padding: 0;
+    font-size: 1.45rem;
+}
+
+.image-lightbox-body {
+    padding: 1rem;
+    overflow: hidden;
+}
+
+.image-lightbox-viewport {
+    position: relative;
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-lightbox-preview {
+    transform-origin: center center;
+    transition: transform 0.15s ease;
+    user-select: none;
+    -webkit-user-drag: none;
+    max-width: min(88vw, 1100px);
+    max-height: 76vh;
     width: auto;
-    min-width: 180px;
-    padding-inline: 1.25rem;
+    height: auto;
 }
 
 .prompt-management-container {
@@ -3879,6 +3931,27 @@ body.theme-dark .modal-header {
 body.theme-dark .modal-header h2,
 body.theme-dark .close {
     color: #eef2f6;
+}
+
+body.theme-dark .image-lightbox-viewport {
+    background: rgba(9, 17, 25, 0.88);
+}
+
+body.theme-dark .image-lightbox-controls {
+    background: rgba(13, 17, 23, 0.82);
+    box-shadow: 0 18px 36px rgba(0, 0, 0, 0.34);
+}
+
+body.theme-dark .image-zoom-btn {
+    background: rgba(71, 85, 105, 0.28);
+    border-color: rgba(148, 163, 184, 0.22);
+    color: #f8fafc;
+}
+
+body.theme-dark .image-zoom-btn:hover,
+body.theme-dark .image-zoom-btn:focus {
+    background: rgba(96, 165, 250, 0.28);
+    border-color: rgba(96, 165, 250, 0.44);
 }
 
 body.theme-dark .modal-body,

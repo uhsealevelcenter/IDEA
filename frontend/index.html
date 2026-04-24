@@ -650,15 +650,18 @@
         </div>
     </div>
 
-    <div id="guestNoticeModal" class="modal guest-notice-modal" aria-hidden="true">
-        <div class="modal-content guest-notice-content">
-            <div class="modal-header">
-                <h2>Guest Access</h2>
-                <button type="button" class="close guest-notice-close" id="dismissGuestNotice" aria-label="Close guest notice">&times;</button>
-            </div>
-            <div class="modal-body guest-notice-body">
-                <p id="guestNoticeMessage"></p>
-                <button type="button" class="login-button guest-notice-dismiss" id="guestNoticeConfirmButton">Start testing IDEA</button>
+    <div id="imageLightboxModal" class="modal image-lightbox-modal">
+        <div class="modal-content image-lightbox-content">
+            <div class="modal-body image-lightbox-body">
+                <div id="imageLightboxViewport" class="image-lightbox-viewport">
+                    <div class="image-lightbox-controls" role="toolbar" aria-label="Image zoom controls">
+                        <button type="button" id="imageZoomOutButton" class="image-zoom-btn" aria-label="Zoom out">-</button>
+                        <button type="button" id="imageZoomResetButton" class="image-zoom-btn image-zoom-reset-btn" aria-label="Reset zoom">Reset</button>
+                        <button type="button" id="imageZoomInButton" class="image-zoom-btn" aria-label="Zoom in">+</button>
+                        <button type="button" id="closeImageLightboxModal" class="image-zoom-btn image-lightbox-close-btn" aria-label="Close image preview">&times;</button>
+                    </div>
+                    <img id="imageLightboxPreview" class="image-lightbox-preview" alt="Expanded chat image">
+                </div>
             </div>
         </div>
     </div>
