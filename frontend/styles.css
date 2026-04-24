@@ -1476,7 +1476,7 @@ pre {
 }
 
 #uploadButton::after {
-    content: "Max file size: 10MB";
+    content: "Max file size: 50MB";
     position: absolute;
     bottom: 6px;
     left: 55%;
