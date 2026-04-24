@@ -3899,14 +3899,24 @@ body.main-app.live-app-shell.theme-dark #micButton:hover {
     color: #c6d1dc;
 }
 
+body.main-app.live-app-shell #sendButton {
+    background: #33404c;
+    color: #f5f7fa;
+    box-shadow: none;
+}
+
+body.main-app.live-app-shell #sendButton:hover:not(:disabled) {
+    background: #2a3641;
+}
+
 body.main-app.live-app-shell.theme-dark #sendButton {
-    background: #4e97dd;
-    color: #f4f7fb;
+    background: #c7cdd4;
+    color: #1b232b;
     box-shadow: none;
 }
 
 body.main-app.live-app-shell.theme-dark #sendButton:hover:not(:disabled) {
-    background: #4286c8;
+    background: #b6bec7;
 }
 
 body.main-app.live-app-shell.theme-dark #stopButton {
