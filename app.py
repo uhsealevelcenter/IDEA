@@ -566,7 +566,7 @@ GUEST_NAME = "Guest User"
 # Constants for file upload
 STATIC_DIR = Path("./static") # Use relative path instead of absolute "/app/static"
 UPLOAD_DIR = Path("uploads")
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 ALLOWED_EXTENSIONS = {
     '.csv',
     '.txt',
