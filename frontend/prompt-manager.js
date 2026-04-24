@@ -1,4 +1,4 @@
-// prompt-manager.js - System Prompt Management Interface
+// prompt-manager.js - Assistant Management Interface
 
 class PromptManager {
     constructor() {
@@ -249,7 +249,7 @@ class PromptManager {
             <div class="preview-actions">
                 <button class="btn btn-primary" onclick="promptManager.editPrompt('${prompt.id}')">
                     <span class="material-icons">edit</span>
-                    Edit Prompt
+                    Modify Assistant
                 </button>
                 ${!prompt.is_active ? `
                     <button class="btn btn-success" onclick="promptManager.setActivePrompt('${prompt.id}')">
@@ -267,7 +267,7 @@ class PromptManager {
     createNewPrompt() {
         this.currentPromptId = null;
         this.isEditing = true;
-        this.editorTitle.textContent = 'Create New Prompt';
+        this.editorTitle.textContent = 'Create New Assistant';
         
         // Clear form
         this.promptName.value = '';
@@ -289,7 +289,7 @@ class PromptManager {
 
         this.currentPromptId = promptId;
         this.isEditing = true;
-        this.editorTitle.textContent = `Edit Prompt: ${prompt.name}`;
+        this.editorTitle.textContent = `Modify Assistant: ${prompt.name}`;
         
         // Populate form with safety checks
         if (this.promptName) this.promptName.value = prompt.name || '';
@@ -357,7 +357,7 @@ class PromptManager {
             // Update current prompt and continue editing with the saved data
             this.currentPromptId = savedPrompt.id;
             this.isEditing = true;
-            this.editorTitle.textContent = `Edit Prompt: ${savedPrompt.name}`;
+            this.editorTitle.textContent = `Modify Assistant: ${savedPrompt.name}`;
             
             // Populate form directly with saved data
             this.promptName.value = savedPrompt.name || '';
@@ -610,4 +610,4 @@ const additionalCSS = `
 // Inject additional CSS
 const style = document.createElement('style');
 style.textContent = additionalCSS;
-document.head.appendChild(style); 
+document.head.appendChild(style);

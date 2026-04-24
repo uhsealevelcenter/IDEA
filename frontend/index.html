@@ -38,7 +38,7 @@
                         <div class="navbar-menu" id="headerMenu">
                             <button id="systemPromptButton" class="nav-btn">
                                 <span class="material-icons">settings</span>
-                                Instructions
+                                Assistants
                             </button>
                             <button id="knowledgeBaseButton" class="nav-btn">
                                 <span class="material-icons">psychology</span>
@@ -97,7 +97,7 @@
             <div class="navbar-mobile-menu" id="navbarMobileMenu">
                 <button id="systemPromptButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">settings</span>
-                    Instructions
+                    Assistants
                 </button>
                 <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">psychology</span>
@@ -260,11 +260,11 @@
         </div>
     </div>
 
-    <!-- System Prompt Management Modal -->
+    <!-- Assistant Management Modal -->
     <div id="promptManagementModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>System Prompt Management</h2>
+                <h2>Manage Assistants</h2>
                 <span class="close" id="closePromptModal">&times;</span>
             </div>
             <div class="modal-body">
@@ -272,7 +272,7 @@
                     <!-- Prompt List Section -->
                     <div class="prompt-list-section">
                         <div class="section-header">
-                            <h3>Available Prompts</h3>
+                            <h3>Available Assistants</h3>
                             <button id="createNewPromptBtn" class="btn btn-primary">
                                 <span class="material-icons">add</span>
                                 Create New
@@ -286,7 +286,7 @@
                     <!-- Prompt Editor Section -->
                     <div class="prompt-editor-section">
                         <div id="promptEditor" class="prompt-editor" style="display: none;">
-                            <h3 id="editorTitle">Edit Prompt</h3>
+                            <h3 id="editorTitle">Modify Assistant</h3>
                             <form id="promptForm">
                                 <div class="form-group">
                                     <label for="promptName">Name:</label>
@@ -297,7 +297,7 @@
                                     <input type="text" id="promptDescription" name="description">
                                 </div>
                                 <div class="form-group">
-                                    <label for="promptContent">Content:</label>
+                                    <label for="promptContent">Instructions:</label>
                                     <textarea id="promptContent" name="content" required rows="20"></textarea>
                                 </div>
                                 <div class="form-actions">
