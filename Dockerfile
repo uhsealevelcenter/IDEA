@@ -65,7 +65,7 @@ RUN apt-get update && apt-get install -y \
 # Install Node.js and Codex CLI
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get update && apt-get install -y nodejs git && \
-    npm install -g @openai/codex && \
+    npm install -g @openai/codex@0.93.0 && \
     npm cache clean --force && \
     rm -rf /var/lib/apt/lists/*
 
