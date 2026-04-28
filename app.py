@@ -46,7 +46,8 @@ litellm.request_timeout = 600  # 10 minutes timeout for API requests
 
 from utils.transcription_prompt import \
     transcription_prompt  # Transcription prompt for Generic IDEA example (abbreviations, etc.)
-from utils.custom_instructions import get_custom_instructions  # Generic Assistant (Custom Instructions)
+## from utils.custom_instructions import get_custom_instructions  # Generic Assistant (Custom Instructions)
+from utils.custom_instructions_v04_2026 import get_custom_instructions  # Generic Assistant (Custom Instructions), v04-2026
 #from utils.custom_instructions_ClimateIndices import get_custom_instructions  # Climate Assistant
 
 # Import prompt manager
