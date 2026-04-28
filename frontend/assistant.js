@@ -65,6 +65,13 @@ const GUEST_NOTICE_STORAGE_KEY = 'idea-guest-notice';
 const LOGIN_MESSAGE_STORAGE_KEY = 'idea-login-message';
 const AUTH_POLL_INTERVAL_MS = 60 * 1000;
 
+function notifyUserProfileLoaded(profile) {
+    window.currentUserProfile = profile;
+    window.dispatchEvent(new CustomEvent('idea:user-profile-loaded', {
+        detail: { profile }
+    }));
+}
+
 function setLoginRedirectMessage(message, type = 'error') {
     localStorage.setItem(LOGIN_MESSAGE_STORAGE_KEY, JSON.stringify({ message, type }));
 }
@@ -165,6 +172,7 @@ function logout(options = {}) {
     }
     authToken = null;
     currentUserProfile = null;
+    window.currentUserProfile = null;
     redirectToLogin();
 }
 
@@ -198,6 +206,7 @@ async function loadCurrentUserProfile() {
             }
             const profile = await response.json();
             currentUserProfile = profile;
+            notifyUserProfileLoaded(profile);
             currentUserFirstName = deriveFirstName(profile.full_name);
             if (profile.is_guest && profile.guest_expires_at) {
                 saveGuestNotice({
@@ -213,12 +222,16 @@ async function loadCurrentUserProfile() {
         } catch (error) {
             console.warn('Unable to load user profile for greeting:', error);
             currentUserProfile = null;
+            notifyUserProfileLoaded(null);
             currentUserFirstName = null;
             return null;
         }
     })();
     return userProfilePromise;
 }
+
+window.getCurrentUserProfile = () => currentUserProfile;
+window.loadCurrentUserProfile = loadCurrentUserProfile;
 
 function startAuthenticationPolling() {
     if (authPollingTimerId) return;

@@ -2006,6 +2006,10 @@ body.theme-light .thinking-label {
     transition: transform 0.2s ease;
 }
 
+.login-button + .login-button {
+    margin-top: 1rem;
+}
+
 .login-button:hover {
     transform: translateY(-2px);
 }
@@ -2851,18 +2855,55 @@ body.theme-light .thinking-label {
 
 .prompt-preview {
     padding: 2rem;
-    text-align: center;
-    color: #666;
+    text-align: left;
+    color: var(--text-muted);
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    align-items: center;
+    justify-content: flex-start;
+    align-items: stretch;
     flex: 1;
+    overflow-y: auto;
 }
 
 .prompt-preview h3 {
     margin-bottom: 1rem;
-    color: #333;
+    color: var(--text-primary);
+}
+
+.prompt-content-preview {
+    width: 100%;
+}
+
+.prompt-content-preview pre {
+    width: 100%;
+    max-height: min(60vh, 640px);
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+body.theme-dark .prompt-content-preview pre {
+    background: #20252b;
+    color: #eef2f6;
+    border-color: rgba(118, 128, 141, 0.34);
+}
+
+body.theme-coast .prompt-content-preview pre {
+    background: rgba(7, 28, 37, 0.92);
+    color: #ecf7fb;
+    border-color: rgba(114, 193, 197, 0.32);
+}
+
+body.theme-dark .prompt-meta,
+body.theme-coast .prompt-meta {
+    color: var(--text-primary);
+}
+
+body.theme-dark .prompt-content-preview h4,
+body.theme-coast .prompt-content-preview h4,
+body.theme-dark .prompt-meta strong,
+body.theme-coast .prompt-meta strong {
+    color: var(--text-primary);
 }
 
 #promptForm {

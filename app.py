@@ -951,9 +951,8 @@ async def shared_conversation_page(share_token: str):
 async def change_password(payload: UpdatePassword, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Change password for the current authenticated user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
+        _ensure_non_guest_user(user, "change passwords")
 
         # Re-fetch user in this DB session to avoid detached instance issues
         db_user = crud.get_user_by_id(session=db, user_id=user.id)
@@ -981,6 +980,22 @@ def _ensure_superuser(token: str) -> User:
     if not user.is_superuser:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     return user
+
+
+def _get_current_user_or_401(token: str) -> User:
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
+def _is_guest_user(user_id: UUID) -> bool:
+    return redis_client.zscore(GUEST_USER_EXPIRY_ZSET, str(user_id)) is not None
+
+
+def _ensure_non_guest_user(user: User, action: str) -> None:
+    if _is_guest_user(user.id):
+        raise HTTPException(status_code=403, detail=f"Guest users cannot {action}")
 
 
 @app.get("/users", response_model=List[UserPublic])
@@ -1058,9 +1073,7 @@ async def delete_user_admin(user_id: UUID, token: str = Depends(get_auth_token),
 async def list_prompts(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """List all available prompts for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
         prompts = get_prompt_manager().list_prompts(db, user.id)
         return prompts
     except HTTPException:
@@ -1073,9 +1086,7 @@ async def list_prompts(token: str = Depends(get_auth_token), db: Session = Depen
 async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Get a specific prompt by ID for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
         prompt = get_prompt_manager().get_prompt(db, user.id, prompt_id)
         if not prompt:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -1090,9 +1101,8 @@ async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: S
 async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Create a new prompt for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
+        _ensure_non_guest_user(user, "create assistants")
         new_prompt = get_prompt_manager().create_prompt(
             db,
             user.id,
@@ -1111,9 +1121,8 @@ async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(g
 async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Update an existing prompt for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
+        _ensure_non_guest_user(user, "edit assistants")
         updated_prompt = get_prompt_manager().update_prompt(
             db,
             user.id,
@@ -1135,9 +1144,8 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token:
 async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Delete a prompt for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
+        _ensure_non_guest_user(user, "delete assistants")
         success = get_prompt_manager().delete_prompt(db, user.id, prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -1152,9 +1160,7 @@ async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token), db
 async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Set a prompt as the active one for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
         success = get_prompt_manager().set_active_prompt(db, user.id, request.prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -1197,7 +1203,8 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         interpreter.llm.supports_vision = True
 
         ## OpenAI Models
-        interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
+        interpreter.llm.model = "gpt-5.5-2026-04-23" # "Reasoning" model
+        #interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.2-2025-12-11" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.1-2025-11-13" # "Reasoning" model
         #interpreter.llm.model = "gpt-5-2025-08-07" # "Reasoning" model

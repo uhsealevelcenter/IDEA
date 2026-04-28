@@ -6,9 +6,11 @@ class PromptManager {
         this.currentPromptId = null;
         this.prompts = [];
         this.isEditing = false;
+        this.isGuestUser = false;
         
         this.initializeElements();
         this.attachEventListeners();
+        this.initializeUserState();
     }
 
     initializeElements() {
@@ -23,6 +25,7 @@ class PromptManager {
         this.promptDescription = document.getElementById('promptDescription');
         this.promptContent = document.getElementById('promptContent');
         this.editorTitle = document.getElementById('editorTitle');
+        this.createNewBtn = document.getElementById('createNewPromptBtn');
     }
 
     attachEventListeners() {
@@ -53,9 +56,8 @@ class PromptManager {
         });
 
         // Create new prompt button
-        const createNewBtn = document.getElementById('createNewPromptBtn');
-        if (createNewBtn) {
-            createNewBtn.addEventListener('click', () => this.createNewPrompt());
+        if (this.createNewBtn) {
+            this.createNewBtn.addEventListener('click', () => this.createNewPrompt());
         }
 
         // Form submission
@@ -77,6 +79,32 @@ class PromptManager {
         });
     }
 
+    initializeUserState() {
+        const applyProfile = (profile) => {
+            this.isGuestUser = Boolean(profile?.is_guest);
+            this.applyGuestAccessState();
+        };
+
+        applyProfile(window.getCurrentUserProfile?.() || window.currentUserProfile || null);
+        window.addEventListener('idea:user-profile-loaded', (event) => {
+            applyProfile(event.detail?.profile || null);
+        });
+    }
+
+    applyGuestAccessState() {
+        if (this.createNewBtn) {
+            this.createNewBtn.style.display = this.isGuestUser ? 'none' : '';
+        }
+
+        if (this.promptEditor) {
+            this.promptEditor.style.display = this.isGuestUser ? 'none' : this.promptEditor.style.display;
+        }
+
+        if (this.isGuestUser && this.currentPromptId) {
+            this.showPromptPreview(this.currentPromptId);
+        }
+    }
+
     closeMobileMenu() {
         const navbarToggle = document.getElementById('navbarToggle');
         const navbarMobileMenu = document.getElementById('navbarMobileMenu');
@@ -91,6 +119,10 @@ class PromptManager {
     async openModal() {
         this.modal.style.display = 'block';
         document.body.style.overflow = 'hidden';
+        if (window.loadCurrentUserProfile) {
+            await window.loadCurrentUserProfile();
+        }
+        this.applyGuestAccessState();
         await this.loadPrompts();
     }
 
@@ -166,17 +198,21 @@ class PromptManager {
                 <div class="prompt-item-meta">Updated: ${formattedDate}</div>
             </div>
             <div class="prompt-item-actions">
-                <button class="btn btn-sm btn-primary edit-prompt" title="Edit">
-                    <span class="material-icons">edit</span>
-                </button>
+                ${this.isGuestUser ? '' : `
+                    <button class="btn btn-sm btn-primary edit-prompt" title="Edit">
+                        <span class="material-icons">edit</span>
+                    </button>
+                `}
                 ${!prompt.is_active ? `
                     <button class="btn btn-sm btn-success activate-prompt" title="Set as Active">
                         <span class="material-icons">check_circle</span>
                     </button>
                 ` : ''}
-                <button class="btn btn-sm btn-danger delete-prompt" title="Delete">
-                    <span class="material-icons">delete</span>
-                </button>
+                ${this.isGuestUser ? '' : `
+                    <button class="btn btn-sm btn-danger delete-prompt" title="Delete">
+                        <span class="material-icons">delete</span>
+                    </button>
+                `}
             </div>
         `;
 
@@ -227,6 +263,11 @@ class PromptManager {
         }
 
         this.currentPromptId = promptId;
+        if (this.isGuestUser) {
+            this.showPromptPreview(promptId);
+            return;
+        }
+
         // Go directly to edit view instead of preview
         this.editPrompt(promptId);
     }
@@ -244,13 +285,15 @@ class PromptManager {
             </div>
             <div class="prompt-content-preview">
                 <h4>Content Preview:</h4>
-                <pre>${this.escapeHtml(prompt.content.substring(0, 500))}${prompt.content.length > 500 ? '...' : ''}</pre>
+                <pre>${this.escapeHtml(prompt.content || '')}</pre>
             </div>
             <div class="preview-actions">
-                <button class="btn btn-primary" onclick="promptManager.editPrompt('${prompt.id}')">
-                    <span class="material-icons">edit</span>
-                    Modify Assistant
-                </button>
+                ${this.isGuestUser ? '' : `
+                    <button class="btn btn-primary" onclick="promptManager.editPrompt('${prompt.id}')">
+                        <span class="material-icons">edit</span>
+                        Modify Assistant
+                    </button>
+                `}
                 ${!prompt.is_active ? `
                     <button class="btn btn-success" onclick="promptManager.setActivePrompt('${prompt.id}')">
                         <span class="material-icons">check_circle</span>
@@ -265,6 +308,10 @@ class PromptManager {
     }
 
     createNewPrompt() {
+        if (this.isGuestUser) {
+            this.showError('Guest users cannot create assistants.');
+            return;
+        }
         this.currentPromptId = null;
         this.isEditing = true;
         this.editorTitle.textContent = 'Create New Assistant';
@@ -281,6 +328,11 @@ class PromptManager {
     }
 
     editPrompt(promptId) {
+        if (this.isGuestUser) {
+            this.showPromptPreview(promptId);
+            return;
+        }
+
         const prompt = this.prompts.find(p => p.id === promptId);
         if (!prompt) {
             console.error(`Prompt with ID ${promptId} not found in prompts list:`, this.prompts);
@@ -304,6 +356,11 @@ class PromptManager {
 
     async handleFormSubmit(e) {
         e.preventDefault();
+
+        if (this.isGuestUser) {
+            this.showError('Guest users cannot modify assistants.');
+            return;
+        }
         
         const formData = {
             name: this.promptName.value.trim(),
@@ -407,6 +464,11 @@ class PromptManager {
     }
 
     async deletePrompt(promptId) {
+        if (this.isGuestUser) {
+            this.showError('Guest users cannot delete assistants.');
+            return;
+        }
+
         const prompt = this.prompts.find(p => p.id === promptId);
         if (!prompt) return;
 
@@ -458,8 +520,10 @@ class PromptManager {
             this.promptPreview.style.display = 'block';
         } else {
             this.promptPreview.innerHTML = `
-                <h3>Select a prompt to view or edit</h3>
-                <p>Choose a prompt from the list on the left to view its content or make changes.</p>
+                <h3>${this.isGuestUser ? 'Select an assistant to view or activate' : 'Select a prompt to view or edit'}</h3>
+                <p>${this.isGuestUser
+                    ? 'Guest users can switch between the available assistants, but cannot create, edit, or delete them.'
+                    : 'Choose a prompt from the list on the left to view its content or make changes.'}</p>
             `;
             this.promptPreview.style.display = 'block';
         }
@@ -549,15 +613,17 @@ document.addEventListener('DOMContentLoaded', () => {
 const additionalCSS = `
     .prompt-description {
         font-style: italic;
-        color: #666;
+        color: var(--text-muted);
         margin-bottom: 1rem;
     }
     
     .prompt-meta {
-        background-color: #f8f9fa;
+        background-color: var(--surface-alt);
+        border: 1px solid var(--border);
         padding: 1rem;
         border-radius: 6px;
         margin-bottom: 1rem;
+        color: var(--text-primary);
     }
     
     .prompt-meta p {
@@ -570,17 +636,24 @@ const additionalCSS = `
     
     .prompt-content-preview h4 {
         margin-bottom: 0.5rem;
-        color: #333;
+        color: var(--text-primary);
     }
     
     .prompt-content-preview pre {
-        background-color: #f8f9fa;
+        background-color: var(--input-bg);
+        color: var(--input-text);
         padding: 1rem;
         border-radius: 6px;
-        border: 1px solid #e9ecef;
+        border: 1px solid var(--input-border);
         font-size: 0.85rem;
-        line-height: 1.4;
+        line-height: 1.55;
         overflow-x: auto;
+        overflow-y: auto;
+        max-height: min(60vh, 640px);
+        white-space: pre-wrap;
+        word-break: break-word;
+        text-align: left;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
     }
     
     .preview-actions {
@@ -602,7 +675,7 @@ const additionalCSS = `
     .no-prompts {
         text-align: center;
         padding: 2rem;
-        color: #666;
+        color: var(--text-muted);
         font-style: italic;
     }
 `;
