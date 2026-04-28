@@ -105,6 +105,7 @@ Important notes:
             This function is already defined and available for immediate use. You must use get_climate_index("<INDEX_NAME>") whenever a user requests climate index data.
             -- DO NOT attempt to reimplement, replace, or fetch climate indices through alternative methods such as web scraping or external libraries.
             -- DO NOT ask whether get_climate_index is available—it is always present in your environment.
+            -- Inform the user if any climate index takes longer than 20 seconds to load, as some data sources may be down or slow.
             Example usage: 
                 oni_data = get_climate_index("RONI")
             Note:   
@@ -141,7 +142,6 @@ Important notes:
             plt.legend()
             plt.grid()
             plt.show()
-            {mcp_section}
 
             4. web_search(web_query)
             The function web_search is available in the environment for immediate use (do not import it).
@@ -226,6 +226,8 @@ Important notes:
             **IF NO RELEVANT INFORMATION IS FOUND:**
             - If the query_knowledge_base function returns no relevant information, you may attempt to review the actual document directly.
             - papers_dir = '/app/data/papers/{user_id}/'
+
+            {mcp_section}
 
             END OF CUSTOM FUNCTION USAGE NOTE
 
