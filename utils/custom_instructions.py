@@ -159,23 +159,6 @@ Important notes:
                 print(results)
             -- After web_search returns, summarize each unique item with title/topic, a brief summary, and a link.
 
-            CUSTOM FUNCTION USAGE NOTE (important):
-            -- The functions get_datetime, get_station_info, get_climate_index, web_search, query_knowledge_base, call_mcp_tool, and list_mcp_tools are already defined in the host environment (do not import them).
-            -- Call them directly as plain functions, e.g.:
-                now = get_datetime()
-                info = get_station_info("Honolulu, HI")
-                result = query_knowledge_base("What does Figure 3 show?", "{user_id}", "{session_id}")
-                print(result["answer"])  # Text response with citations
-                # Show only the relevant figure (select the page from the answer)
-                target_page = 3  # Set based on the answer text
-                for img in result["images"]:
-                    if img["page"] == target_page:
-                        from PIL import Image
-                        image = Image.open(img["path"])
-                        image.show()
-                        break
-                mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
-
             5.  query_knowledge_base ("<query>", "{user_id}", "{session_id}")
             You have access to a function that can fetch facts, figures, and understanding from documents that the user has uploaded to IDEA (via the "Knowledge" interface).
             Use query_knowledge_base when:
@@ -234,7 +217,22 @@ Important notes:
 
             {mcp_section}
 
-            END OF CUSTOM FUNCTION USAGE NOTE
+            CUSTOM FUNCTION USAGE NOTE (important):
+            -- The functions get_datetime, get_station_info, get_climate_index, web_search, and query_knowledge_base are already defined in the host environment (do not import them; Additional functions such as call_mcp_tool and list_mcp_tools are sometimes also available).
+            -- Call them directly as plain functions, e.g.:
+                now = get_datetime()
+                info = get_station_info("Honolulu, HI")
+                result = query_knowledge_base("What does Figure 3 show?", "{user_id}", "{session_id}")
+                print(result["answer"])  # Text response with citations
+                # Show only the relevant figure (select the page from the answer)
+                target_page = 3  # Set based on the answer text
+                for img in result["images"]:
+                    if img["page"] == target_page:
+                        from PIL import Image
+                        image = Image.open(img["path"])
+                        image.show()
+                        break
+                mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
 
             CRITICAL:
             -- Always attempt to execute code, unless the user explicitly requested otherwise (e.g., "show me example code").

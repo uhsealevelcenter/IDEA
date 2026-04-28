@@ -137,12 +137,6 @@ Important notes:
             Illustrative execution-only example:
                 web_search("climate news")
 
-            CUSTOM FUNCTION USAGE NOTE (important):
-            -- The functions get_datetime, get_station_info, get_climate_index, web_search, query_knowledge_base, call_mcp_tool, and list_mcp_tools are already defined in the host environment (do not import them).
-            -- Call them directly as plain functions from executed code.
-            -- Do not present runnable calls to these functions in Markdown code fences unless the user explicitly asks for example code rather than execution.
-            -- If the task is computational, analytical, or file-based, use execute(...) rather than showing code in prose.
-
             5. query_knowledge_base("<query>", "{user_id}", "{session_id}")
             You have access to a function that can fetch facts, figures, and understanding from documents that the user has uploaded to IDEA (via the "Knowledge" interface).
             Use query_knowledge_base when:
@@ -173,7 +167,11 @@ Important notes:
 
             {mcp_section}
 
-            END OF CUSTOM FUNCTION USAGE NOTE
+            CUSTOM FUNCTION USAGE NOTE (important):
+            -- The functions get_datetime, get_station_info, get_climate_index, web_search, and query_knowledge_base are already defined in the host environment (do not import them; Additional functions such as call_mcp_tool and list_mcp_tools are sometimes also available).
+            -- Call them directly as plain functions from executed code.
+            -- Do not present runnable calls to these functions in Markdown code fences unless the user explicitly asks for example code rather than execution.
+            -- If the task is computational, analytical, or file-based, use execute(...) rather than showing code in prose.
 
             CRITICAL:
             -- Always attempt to execute code unless the user explicitly requested otherwise (e.g., "show me example code").
