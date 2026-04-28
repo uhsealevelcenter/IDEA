@@ -998,6 +998,19 @@ def _ensure_non_guest_user(user: User, action: str) -> None:
         raise HTTPException(status_code=403, detail=f"Guest users cannot {action}")
 
 
+def _get_user_first_name(user: User | None) -> str:
+    if user is None:
+        return "User"
+    if _is_guest_user(user.id):
+        return "Guest"
+
+    full_name = (user.full_name or "").strip()
+    if not full_name:
+        return "User"
+
+    return full_name.split()[0]
+
+
 @app.get("/users", response_model=List[UserPublic])
 async def list_users(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """List all users (superuser only)"""
@@ -1470,6 +1483,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             session_id=session_id,
             static_dir=STATIC_DIR,
             upload_dir=UPLOAD_DIR,
+            user_first_name=_get_user_first_name(user),
             mcp_tools=mcp_tool_descriptions,
         )
 

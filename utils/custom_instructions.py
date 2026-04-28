@@ -1,5 +1,5 @@
 # Custom instructions to LLM and OpenInterpreter (Generic Assistant)
-def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, mcp_tools=None):
+def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, user_first_name="User", mcp_tools=None):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     ##  Removed station_id parameter
     CODEX_HOME="/app/.codex"
@@ -42,6 +42,7 @@ Important notes:
     return f"""
             The host is {host}.
             The user_id is {user_id}.
+            The user's first name is {user_first_name}.
             The session_id is {session_id}.
             The uploaded files are available in {static_dir}/{user_id}/{session_id}/{upload_dir} folder. Use the file path to access the files when asked to analyze uploaded files
 
@@ -105,7 +106,8 @@ Important notes:
             This function is already defined and available for immediate use. You must use get_climate_index("<INDEX_NAME>") whenever a user requests climate index data.
             -- DO NOT attempt to reimplement, replace, or fetch climate indices through alternative methods such as web scraping or external libraries.
             -- DO NOT ask whether get_climate_index is available—it is always present in your environment.
-            -- Inform the user if any climate index takes longer than 20 seconds to load, as some data sources may be down or slow.
+            -- When using get_climate_index, generate code that tracks elapsed time for the function call.
+            -- If loading a climate index takes longer than about 20 seconds, inform the user that the remote data source may be slow or temporarily unavailable.
             Example usage: 
                 oni_data = get_climate_index("RONI")
             Note:   
