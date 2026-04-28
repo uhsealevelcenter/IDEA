@@ -1236,7 +1236,8 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
 
         ## Specific settings for LLMs
         # Reasoning models (e.g, GPT5+)
-        interpreter.llm.reasoning_effort = "low" # GPT-5.1 "none" | "low" | "medium" | "high"
+        interpreter.llm.reasoning_effort = "medium"
+        #interpreter.llm.reasoning_effort = "low" # GPT-5.1 "none" | "low" | "medium" | "high"
         #interpreter.llm.reasoning_effort = "minimal" # GPT-5 "minimal" | "low" | "medium" | "high"
         interpreter.llm.temperature = 0.2 # Temperature not used by reasoning models, set to default (e.g., GPT-5)
         interpreter.llm.context_window = 400000 # GPT-5 (max context window)
