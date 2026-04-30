@@ -130,8 +130,83 @@ def convert_to_openai_responses_messages(
     """
     out: List[Dict[str, Any]] = []
     emitted_tool_outputs: set[str] = set()
+    tool_outputs_by_call_id: Dict[str, str] = {}
+    console_outputs_by_call_id: Dict[str, List[str]] = {}
+    normalized_messages: List[Dict[str, Any]] = []
+    active_call_id = None
 
     for m in messages:
+        normalized = dict(m)
+        role = normalized.get("role")
+        mtype = normalized.get("type")
+
+        if role in ("user", "assistant") and mtype == "message":
+            active_call_id = None
+        if mtype == "code" and normalized.get("call_id"):
+            active_call_id = normalized["call_id"]
+        elif (
+            active_call_id
+            and role == "computer"
+            and mtype in ("console", "image", "file", "code")
+            and not normalized.get("call_id")
+        ):
+            normalized["call_id"] = active_call_id
+        if (
+            role == "computer"
+            and mtype == "console"
+            and normalized.get("format") == "active_line"
+            and normalized.get("content") is None
+        ):
+            active_call_id = None
+
+        normalized_messages.append(normalized)
+
+    for m in normalized_messages:
+        call_id = m.get("call_id")
+        if not call_id:
+            continue
+
+        mtype = m.get("type")
+        if mtype == "console" and m.get("format") == "output":
+            text = m.get("content") or ""
+            if not isinstance(text, str):
+                text = str(text)
+            text = text if text.strip() else "No output"
+            console_outputs_by_call_id.setdefault(call_id, []).append(text)
+            tool_outputs_by_call_id[call_id] = "\n".join(
+                console_outputs_by_call_id[call_id]
+            )
+        elif mtype == "image" and call_id not in tool_outputs_by_call_id:
+            fmt = m.get("format", "")
+            if fmt == "path":
+                tool_outputs_by_call_id[call_id] = (
+                    f"Output: tool produced an image at path: {m.get('content', '')}"
+                )
+            else:
+                tool_outputs_by_call_id[call_id] = (
+                    f"Output: tool produced an image ({fmt or 'unknown format'})."
+                )
+        elif (
+            mtype == "code"
+            and m.get("role") in ("computer", "tool", "function")
+            and call_id not in tool_outputs_by_call_id
+        ):
+            lang = m.get("format", "") or "code"
+            tool_outputs_by_call_id[call_id] = f"Output: tool produced {lang} output."
+
+    def _emit_function_call_output(call_id: str):
+        if call_id in emitted_tool_outputs:
+            return
+        out.append(
+            {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": tool_outputs_by_call_id.get(call_id, "Output received."),
+            }
+        )
+        emitted_tool_outputs.add(call_id)
+
+    for m in normalized_messages:
         # Skip messages not intended for the assistant
         if "recipient" in m and m["recipient"] != "assistant":
             continue
@@ -157,52 +232,29 @@ def convert_to_openai_responses_messages(
                 text = str(text)
             if text.strip() == "":
                 text = "No output"
-            if m.get("call_id") and m["call_id"] not in emitted_tool_outputs:
-                out.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": m["call_id"],
-                        "output": text,
-                    }
-                )
-                emitted_tool_outputs.add(m["call_id"])
+            if m.get("call_id"):
+                _emit_function_call_output(m["call_id"])
                 continue
             parts = _parts_for_text("user", text)
-            if m.get("role") in ("computer", "tool", "function"):
-                parts += _parts_for_text(
-                    "user",
-                    "This console STDOUT/STDERR is the result of the last tool output. What does it mean / are we done?",
-                )
             out.append({"role": "user", "content": parts})
-            # Nudge the model to keep using the execute() tool for follow-up work
-            out.append(
-                {
-                    "role": "developer",
-                    "content": _parts_for_text(
-                        "developer",
-                        "Reminder: use your execute() tool to run code when needed; this is a standing instruction, not feedback on the last turn.",
-                    ),
-                }
-            )
+            if m.get("role") in ("computer", "tool", "function"):
+                out.append(
+                    {
+                        "role": "developer",
+                        "content": _parts_for_text(
+                            "developer",
+                            "The previous User message contains console STDOUT/STDERR from code execution. Use it to decide whether to continue with execute(), provide an answer, explain its meaning, or otherwise communicate with the User.",
+                        ),
+                    }
+                )
             continue
 
         if mtype == "code":
             # Code messages are execution requests, not assistant prose. Do not
             # replay them as assistant messages when reconstructing history.
             if m.get("call_id"):
-                if (
-                    m.get("role") in ("computer", "tool", "function")
-                    and m["call_id"] not in emitted_tool_outputs
-                ):
-                    lang = m.get("format", "") or "code"
-                    out.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": m["call_id"],
-                            "output": f"Tool produced {lang} output.",
-                        }
-                    )
-                    emitted_tool_outputs.add(m["call_id"])
+                if m.get("role") in ("computer", "tool", "function"):
+                    _emit_function_call_output(m["call_id"])
                 continue
             code = m.get("content", "")
             lang = m.get("format", "") or ""
@@ -214,19 +266,8 @@ def convert_to_openai_responses_messages(
             fmt = m.get("format", "")
             parts: List[Dict[str, Any]] = []
 
-            if m.get("call_id") and m["call_id"] not in emitted_tool_outputs:
-                if fmt == "path":
-                    output = f"Tool produced an image at path: {m.get('content', '')}"
-                else:
-                    output = f"Tool produced an image ({fmt or 'unknown format'})."
-                out.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": m["call_id"],
-                        "output": output,
-                    }
-                )
-                emitted_tool_outputs.add(m["call_id"])
+            if m.get("call_id"):
+                _emit_function_call_output(m["call_id"])
 
             if fmt == "description":
                 parts += _parts_for_text(role, m.get("content", ""))
@@ -246,7 +287,7 @@ def convert_to_openai_responses_messages(
 
                 # (Optional) annotate tool-produced images
                 if m.get("role") in ("computer", "tool", "function"):
-                    parts += _parts_for_text("user", "This image is the result of the last tool output. What does it mean / are we done?")
+                    parts += _parts_for_text("user", "Image output from the execute tool.")
                     if fmt == "path":
                         parts += _parts_for_text("user", f"This image is at this path: {m.get('content')}")
 
