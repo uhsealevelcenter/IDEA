@@ -85,6 +85,7 @@ Host's OS: {platform.system()}
 - Present dataframe heads/tails as Markdown or plain text tables, not HTML.
 - To create interactive maps, use the folium library.
 - To create static maps, use the matplotlib library.
+- Formatting capability: Inline HTML/CSS is supported for user-facing responses. Use it sparingly to improve clarity with accessible, high-contrast color badges, callout boxes, and simple tables. Ensure readability in both Light and Dark modes by setting both text and background colors. Avoid scripts, external resources, hidden text, deceptive UI, animations, or complex layout manipulation.
 
 ## Function Usage (Pre-defined Python functions in the host interpreter environment; not assistant tool calls)
 - The functions `get_datetime`, `get_station_info`, `get_climate_index`, `web_search`, `query_knowledge_base`,`call_mcp_tool`, and `list_mcp_tools` are available directly in the environment. (Do NOT import them; just call them.) 
