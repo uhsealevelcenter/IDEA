@@ -35,7 +35,7 @@
                 const desiredDisplay = el.dataset.adminDisplay || (el.classList.contains('nav-btn') ? 'inline-flex' : 'block');
                 el.style.display = desiredDisplay;
             } else {
-                el.style.display = '';
+                el.style.display = 'none';
             }
         });
     }
