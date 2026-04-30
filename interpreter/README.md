@@ -15,10 +15,11 @@ That made deployment depend on an external source checkout and made it harder to
 iterate on behavior that is specific to IDEA's chat UI, execution lifecycle, and
 conversation persistence.
 
-This vendored interpreter keeps only the runtime path IDEA currently relies on:
-streaming model output, executing generated code, collecting console/image
-outputs, and returning those outputs to the model. Keeping it in the IDEA
-repository lets us:
+This vendored interpreter is intended to be reduced over time toward the runtime
+path IDEA actually relies on: streaming model output, executing generated code,
+collecting console/image outputs, and returning those outputs to the model. Some
+upstream modules remain for import compatibility while this migration settles.
+Keeping the interpreter in the IDEA repository lets us:
 
 - control exactly which interpreter code is deployed with IDEA;
 - patch Responses API behavior without maintaining a separate GitHub dependency;
@@ -33,6 +34,14 @@ Responses `response.id` and sends it as `previous_response_id` on the next turn.
 When the model calls IDEA's `execute` tool, the interpreter preserves the
 Responses `call_id` and converts console, image, or other execution output into
 `function_call_output` items before continuing the model turn.
+
+For mixed outputs from one code execution, such as text, then a plot, then more
+text, the converter aggregates all console STDOUT/STDERR chunks for the same
+`call_id` into one `function_call_output`. Image output is still sent as visual
+context, but it should not replace useful text output such as file paths,
+summary statistics, warnings, or printed diagnostics. Stored histories are also
+normalized so computer output chunks that lost their `call_id` can inherit it
+from the surrounding execution group.
 
 This is intentionally different from replaying tool calls as assistant messages.
 The Responses API expects tool output to be tied to the original function call,
@@ -65,6 +74,13 @@ information, or stop. IDEA uses a chat UI, so prompts such as "what's next" or
 "are we done" can leak into user-visible assistant responses and make the
 conversation feel awkward.
 
+As an initial polish step, fallback console-output context now uses a developer
+message rather than adding "are we done" wording to user text:
+
+> The previous User message contains console STDOUT/STDERR from code execution.
+> Use it to decide whether to continue with execute(), provide an answer,
+> explain its meaning, or otherwise communicate with the User.
+
 The next refinement should separate internal continuation control from
 user-facing prose. Options to evaluate:
 
@@ -76,5 +92,3 @@ user-facing prose. Options to evaluate:
   final user-facing answer;
 - add explicit state in the interpreter for "tool output received, assistant
   should summarize or continue" rather than relying on conversational nudges.
-
-No behavior change has been made for this loop in this pass.
