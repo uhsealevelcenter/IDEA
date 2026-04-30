@@ -2015,7 +2015,6 @@ dependencies = [
     { name = "numba" },
     { name = "numcodecs" },
     { name = "numpy" },
-    { name = "open-interpreter" },
     { name = "openai" },
     { name = "openpyxl" },
     { name = "outcome" },
@@ -2230,7 +2229,6 @@ requires-dist = [
     { name = "numba" },
     { name = "numcodecs", specifier = "==0.14.1" },
     { name = "numpy", specifier = ">=1.24.0,<2.0" },
-    { name = "open-interpreter", git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.4_robust-exec-mod-AND-interupt" },
     { name = "openai", specifier = ">=1.61.0" },
     { name = "openpyxl" },
     { name = "outcome", specifier = "==1.3.0.post0" },
@@ -3338,44 +3336,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/69/1b/077b508e3e500e1629d366249c3ccb32f95e50258b231705c09e3c7a4366/olefile-0.47.zip", hash = "sha256:599383381a0bf3dfbd932ca0ca6515acd174ed48870cbf7fee123d698c192c1c", size = 112240, upload-time = "2023-12-01T16:22:53.025Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/17/d3/b64c356a907242d719fc668b71befd73324e47ab46c8ebbbede252c154b2/olefile-0.47-py2.py3-none-any.whl", hash = "sha256:543c7da2a7adadf21214938bb79c83ea12b473a4b6ee4ad4bf854e7715e13d1f", size = 114565, upload-time = "2023-12-01T16:22:51.518Z" },
-]
-
-[[package]]
-name = "open-interpreter"
-version = "0.4.3"
-source = { git = "https://github.com/M-J-W1/open-interpreter?rev=responses_v3.0.4_robust-exec-mod-AND-interupt#26dceb13e28a19ab97543034d58c4d5b4cb835bf" }
-dependencies = [
-    { name = "anthropic" },
-    { name = "astor" },
-    { name = "git-python" },
-    { name = "google-generativeai" },
-    { name = "html2image" },
-    { name = "html2text" },
-    { name = "inquirer" },
-    { name = "ipykernel" },
-    { name = "jupyter-client" },
-    { name = "litellm" },
-    { name = "matplotlib" },
-    { name = "platformdirs" },
-    { name = "psutil" },
-    { name = "pydantic" },
-    { name = "pyperclip" },
-    { name = "pyreadline3", marker = "sys_platform == 'win32'" },
-    { name = "pyyaml" },
-    { name = "rich" },
-    { name = "selenium" },
-    { name = "send2trash" },
-    { name = "setuptools" },
-    { name = "shortuuid" },
-    { name = "six" },
-    { name = "starlette" },
-    { name = "tiktoken" },
-    { name = "tokentrim" },
-    { name = "toml" },
-    { name = "typer" },
-    { name = "webdriver-manager" },
-    { name = "wget" },
-    { name = "yaspin" },
 ]
 
 [[package]]
