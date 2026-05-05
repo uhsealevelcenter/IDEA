@@ -25,6 +25,7 @@ let controller = null;
 let promptIdeasVisible = false;
 const activeMessageIds = new Map();
 let workingIndicatorId = null;
+let workingIndicatorTimer = null;
 let pendingUploads = [];
 let lastExecutableCodeId = null;
 let pendingConsoleParentId = null;
@@ -38,6 +39,7 @@ let welcomeRenderPromise = null;
 let welcomeRendered = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
+const THINKING_PAUSE_DELAY_MS = 1400;
 const THEME_PREFERENCES = ['light', 'dark', 'coast'];
 const MOBILE_COMPOSER_BREAKPOINT = 520;
 const MOBILE_COMPOSER_MIN_HEIGHT = 72;
@@ -969,6 +971,7 @@ stopButton.addEventListener('click', () => {
     if (isGenerating && controller) {
         stopRequested = true;
         stopRequestedCodeId = activeLineCodeId || lastExecutableCodeId || pendingConsoleParentId;
+        requestExecutionStop();
         isGenerating = false;
         controller.abort();
         appendSystemMessage("Generation stopped by user.");
@@ -1072,8 +1075,28 @@ function appendPrematureStopNotice(codeId, reason = 'Execution stopped before co
     };
     messages.push(noticeMessage);
     appendMessage(noticeMessage);
+    saveCompletedAssistantMessage(noticeMessage);
     addConsoleMapping(codeId, messageId);
     refreshStdoutPanel(codeId, { autoScroll: true });
+}
+
+async function requestExecutionStop(reason = 'Execution stopped before completion.') {
+    try {
+        const response = await fetch(config.getEndpoints().interrupt, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
+            },
+            body: JSON.stringify({ reason })
+        });
+        if (!response.ok) {
+            console.warn(`Interpreter interrupt request failed with status ${response.status}`);
+        }
+    } catch (error) {
+        console.warn('Interpreter interrupt request failed:', error);
+    }
 }
 
 function serializeMessagesForRequest(messageList = []) {
@@ -1209,6 +1232,7 @@ async function sendRequest(msgOverride=null) {
                     try {
                         const chunk = JSON.parse(data);
                         await processChunk(chunk);
+                        scheduleWorkingIndicator();
                     } catch (e) {
                         console.error("Failed to parse chunk:", e);
                     }
@@ -1728,6 +1752,7 @@ function appendConfirmationChunk(chunk) {
         } else {
             // User canceled, abort the generation
             isGenerating = false;
+            requestExecutionStop('Code execution canceled by user.');
             if (controller) {
                 controller.abort();
             }
@@ -1863,7 +1888,28 @@ function showWorkingIndicator() {
     return workingIndicatorId;
 }
 
+function clearWorkingIndicatorTimer() {
+    if (workingIndicatorTimer) {
+        clearTimeout(workingIndicatorTimer);
+        workingIndicatorTimer = null;
+    }
+}
+
+function scheduleWorkingIndicator() {
+    clearWorkingIndicatorTimer();
+    if (!isGenerating) {
+        return;
+    }
+    workingIndicatorTimer = setTimeout(() => {
+        workingIndicatorTimer = null;
+        if (isGenerating) {
+            showWorkingIndicator();
+        }
+    }, THINKING_PAUSE_DELAY_MS);
+}
+
 function removeWorkingIndicator() {
+    clearWorkingIndicatorTimer();
     if (!workingIndicatorId) return;
 
     const indicator = chatDisplay.querySelector(`.message[data-id="${workingIndicatorId}"]`);

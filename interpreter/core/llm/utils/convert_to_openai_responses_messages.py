@@ -134,6 +134,11 @@ def convert_to_openai_responses_messages(
     console_outputs_by_call_id: Dict[str, List[str]] = {}
     normalized_messages: List[Dict[str, Any]] = []
     active_call_id = None
+    use_native_tool_outputs = bool(
+        interpreter
+        and getattr(interpreter, "llm", None)
+        and getattr(interpreter.llm, "previous_response_id", None)
+    )
 
     for m in messages:
         normalized = dict(m)
@@ -195,8 +200,10 @@ def convert_to_openai_responses_messages(
             tool_outputs_by_call_id[call_id] = f"Output: tool produced {lang} output."
 
     def _emit_function_call_output(call_id: str):
+        if not use_native_tool_outputs:
+            return False
         if call_id in emitted_tool_outputs:
-            return
+            return True
         out.append(
             {
                 "type": "function_call_output",
@@ -205,6 +212,7 @@ def convert_to_openai_responses_messages(
             }
         )
         emitted_tool_outputs.add(call_id)
+        return True
 
     for m in normalized_messages:
         # Skip messages not intended for the assistant
@@ -232,8 +240,7 @@ def convert_to_openai_responses_messages(
                 text = str(text)
             if text.strip() == "":
                 text = "No output"
-            if m.get("call_id"):
-                _emit_function_call_output(m["call_id"])
+            if m.get("call_id") and _emit_function_call_output(m["call_id"]):
                 continue
             parts = _parts_for_text("user", text)
             out.append({"role": "user", "content": parts})
@@ -252,7 +259,7 @@ def convert_to_openai_responses_messages(
         if mtype == "code":
             # Code messages are execution requests, not assistant prose. Do not
             # replay them as assistant messages when reconstructing history.
-            if m.get("call_id"):
+            if m.get("call_id") and use_native_tool_outputs:
                 if m.get("role") in ("computer", "tool", "function"):
                     _emit_function_call_output(m["call_id"])
                 continue
@@ -266,7 +273,7 @@ def convert_to_openai_responses_messages(
             fmt = m.get("format", "")
             parts: List[Dict[str, Any]] = []
 
-            if m.get("call_id"):
+            if m.get("call_id") and use_native_tool_outputs:
                 _emit_function_call_output(m["call_id"])
 
             if fmt == "description":

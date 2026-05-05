@@ -88,6 +88,12 @@ class Llm:
         self.previous_response_message_count = None
         self.pending_tool_call_id = None
 
+    def reset_response_continuation(self):
+        """Clear provider-side Responses continuation metadata."""
+        self.previous_response_id = None
+        self.previous_response_message_count = None
+        self.pending_tool_call_id = None
+
     def _ensure_responses_message_shape(self, m):
         """
         Coerce a chat-like message into a valid Responses input item:
@@ -293,9 +299,14 @@ class Llm:
         ):
             system_msg = messages[0]
             conversation_messages = messages[1:]
-            recent_messages = conversation_messages[self.previous_response_message_count :]
-            if recent_messages:
+            if self.previous_response_message_count <= len(conversation_messages):
+                recent_messages = conversation_messages[self.previous_response_message_count :]
                 messages = [system_msg] + recent_messages
+            else:
+                # Local history no longer matches the provider-side thread.
+                # Replay local history without previous_response_id instead of
+                # sending duplicate history into the existing Responses thread.
+                self.reset_response_continuation()
 
         # 1) Pull out the system message (string) for trimming.
         assert messages and messages[0].get("role") == "system", "First message must be system"

@@ -323,6 +323,10 @@ class OpenInterpreter:
                     return message["call_id"]
             return getattr(self.llm, "pending_tool_call_id", None)
 
+        def append_missing_tool_output(content):
+            call_id = last_code_call_id()
+            self.append_missing_tool_output_for_call_id(call_id, content)
+
         last_flag_base = None
         stop_requested = False
         in_execution = False
@@ -454,6 +458,7 @@ class OpenInterpreter:
                     and chunk.get("format") == "active_line"
                     and chunk.get("content") == None
                 ):
+                    append_missing_tool_output("No output")
                     in_execution = False
                     if stop_requested:
                         break
@@ -477,6 +482,11 @@ class OpenInterpreter:
                 self.computer.interrupt(timeout=1.5)
             except Exception:
                 pass
+            self.append_tool_output_for_call_id(
+                last_code_call_id(),
+                "Execution stopped before completion.",
+                allow_existing_output=True,
+            )
             raise  # gotta pass this up!
 
     def reset(self):
@@ -484,12 +494,65 @@ class OpenInterpreter:
         self.computer._has_imported_computer_api = False  # Flag reset
         self.messages = []
         self.last_messages_count = 0
-        if hasattr(self.llm, "previous_response_id"):
-            self.llm.previous_response_id = None
-        if hasattr(self.llm, "previous_response_message_count"):
-            self.llm.previous_response_message_count = None
-        if hasattr(self.llm, "pending_tool_call_id"):
-            self.llm.pending_tool_call_id = None
+        if hasattr(self.llm, "reset_response_continuation"):
+            self.llm.reset_response_continuation()
+
+    def append_tool_output_for_call_id(self, call_id, content, allow_existing_output=False):
+        if not call_id:
+            return
+        if any(
+            message.get("call_id") == call_id
+            and message.get("role") == "computer"
+            and message.get("type") == "console"
+            and message.get("format") == "output"
+            and message.get("content") == content
+            for message in self.messages
+        ):
+            return
+        if not allow_existing_output:
+            has_output = any(
+                message.get("call_id") == call_id
+                and message.get("role") in ("computer", "tool", "function")
+                and (
+                    message.get("type") in ("image", "file")
+                    or (
+                        message.get("type") == "console"
+                        and message.get("format") == "output"
+                    )
+                )
+                for message in self.messages
+            )
+            if has_output:
+                return
+        self.messages.append(
+            {
+                "role": "computer",
+                "type": "console",
+                "format": "output",
+                "content": content,
+                "call_id": call_id,
+            }
+        )
+
+    def append_missing_tool_output_for_call_id(self, call_id, content):
+        self.append_tool_output_for_call_id(call_id, content)
+
+    def append_missing_tool_output_for_pending_call(self, content):
+        self.append_tool_output_for_pending_call(content)
+
+    def append_tool_output_for_pending_call(self, content, allow_existing_output=False):
+        call_id = None
+        for message in reversed(self.messages):
+            if message.get("type") == "code" and message.get("call_id"):
+                call_id = message["call_id"]
+                break
+        if not call_id:
+            call_id = getattr(self.llm, "pending_tool_call_id", None)
+        self.append_tool_output_for_call_id(
+            call_id,
+            content,
+            allow_existing_output=allow_existing_output,
+        )
 
     def interrupt(self, timeout=1.5):
         """

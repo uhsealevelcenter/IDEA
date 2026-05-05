@@ -3,6 +3,7 @@ import json
 from math import ceil
 import os
 import shutil
+import threading
 from datetime import date, datetime, timedelta
 from time import time
 import logging
@@ -1257,6 +1258,7 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         interpreter.computer.import_computer_api = False
         interpreter.computer.run("python", custom_tool)
         interpreter.auto_run = True
+        interpreter.stop_event = threading.Event()
 
         # Store the instance
         interpreter_instances[session_key] = interpreter
@@ -1450,6 +1452,9 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
 
         logger.info(f"Received messages for session {session_key}")
         interpreter = get_or_create_interpreter(session_key, token, db)
+        if not hasattr(interpreter, "stop_event"):
+            interpreter.stop_event = threading.Event()
+        interpreter.stop_event.clear()
 
         # Ensure user PQA directories and settings exist
         # Index building now happens lazily in query_knowledge_base()
@@ -1495,7 +1500,10 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         stored_messages = redis_client.get(f"messages:{session_key}")
         if stored_messages:
             try:
-                interpreter.messages = json.loads(stored_messages)
+                restored_messages = json.loads(stored_messages)
+                if interpreter.messages != restored_messages and hasattr(interpreter.llm, "reset_response_continuation"):
+                    interpreter.llm.reset_response_continuation()
+                interpreter.messages = restored_messages
                 logger.info(f"Restored {len(interpreter.messages)} messages from Redis for session {session_key}")
             except Exception as e:
                 logger.warning(f"Failed to restore messages from Redis: {str(e)}")
@@ -1576,11 +1584,20 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                 for result in interpreter.chat(messages[-1], stream=True):
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
+            except GeneratorExit:
+                if hasattr(interpreter, "append_tool_output_for_pending_call"):
+                    interpreter.append_tool_output_for_pending_call(
+                        "Execution stopped before completion.",
+                        allow_existing_output=True,
+                    )
+                raise
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
                 error_message = {"error": str(e)}
                 yield f"data: {json.dumps(error_message)}\n\n"
             finally:
+                if hasattr(interpreter, "stop_event"):
+                    interpreter.stop_event.clear()
                 redis_client.set(
                     f"messages:{session_key}", json.dumps(interpreter.messages)
                 )
@@ -1629,6 +1646,54 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.post("/interrupt")
+async def interrupt_endpoint(request: Request, token: str = Depends(get_auth_token)):
+    try:
+        session_id = request.headers.get("x-session-id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="x-session-id header is required")
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = body.get("reason") or "Execution stopped before completion."
+
+        session_key = make_session_key(user.id, session_id)
+        interpreter = interpreter_instances.get(session_key)
+        if interpreter is None:
+            return {"status": "no_active_interpreter"}
+
+        if not hasattr(interpreter, "stop_event"):
+            interpreter.stop_event = threading.Event()
+        interpreter.stop_event.set()
+
+        try:
+            interpreter.interrupt(timeout=1.5)
+        except Exception as exc:
+            logger.warning("Interpreter interrupt failed for session %s: %s", session_key, exc)
+
+        if hasattr(interpreter, "append_tool_output_for_pending_call"):
+            interpreter.append_tool_output_for_pending_call(
+                reason,
+                allow_existing_output=True,
+            )
+        redis_client.set(f"messages:{session_key}", json.dumps(interpreter.messages))
+        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+        return {"status": "interrupted"}
+    except redis.RedisError as e:
+        logger.error(f"Redis error in interrupt_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to interrupt execution")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in interrupt_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.post("/load-conversation")
 async def load_conversation_endpoint(request: Request, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Load a conversation's messages into the interpreter context"""
@@ -1648,7 +1713,40 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
         session_key = make_session_key(user.id, session_id)
         
         # Convert frontend message format to interpreter format
-        interpreter_messages = []
+        max_console_output_chars = 6000
+        max_total_console_output_chars = 24000
+        total_console_output_chars = 0
+        valid_loaded_message_types = {"message", "code", "image", "file", "confirmation"}
+        restore_notice = (
+            "This conversation was loaded from saved history. Treat prior code blocks "
+            "and outputs as historical transcript only. The execution environment has "
+            "been reset; variables, unsaved files, running processes, and in-memory "
+            "state from earlier turns are not available unless recreated."
+        )
+        interpreter_messages = [
+            {
+                "role": "developer",
+                "type": "message",
+                "content": restore_notice,
+            }
+        ]
+
+        def _stringify_loaded_content(content: Any) -> str:
+            if content is None:
+                return ""
+            if isinstance(content, str):
+                return content
+            try:
+                return json.dumps(content, ensure_ascii=False)
+            except Exception:
+                return str(content)
+
+        def _truncate_loaded_content(content: str, limit: int) -> str:
+            if len(content) <= limit:
+                return content
+            omitted = len(content) - limit
+            return f"{content[:limit]}\n\n[... truncated {omitted} characters from restored history ...]"
+
         for msg in messages:
             # Skip console messages with active_line format as they cause issues
             if (msg.get("message_type") == "console" and 
@@ -1657,25 +1755,48 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
                 
             # Convert to format the interpreter expects (with required fields)
             if msg.get("role") in ["user", "assistant"]:
-                # For user/assistant messages, use message type
+                msg_type = msg.get("message_type", "message")
                 interpreter_msg = {
                     "role": msg.get("role"),
-                    "type": "message",
-                    "content": msg.get("content", "")
+                    "type": msg_type if msg_type in valid_loaded_message_types else "message",
+                    "content": _stringify_loaded_content(msg.get("content", ""))
                 }
+                if msg.get("message_format"):
+                    interpreter_msg["format"] = msg.get("message_format")
                 interpreter_messages.append(interpreter_msg)
             elif msg.get("role") == "computer":
                 # For computer messages, convert to user with appropriate type (computer outputs are shown as user messages)
                 msg_type = msg.get("message_type", "message")
                 if msg_type == "console":
-                    # Skip console messages entirely as they're not needed for context
-                    # (Python environment state is not preserved between sessions)
+                    if total_console_output_chars >= max_total_console_output_chars:
+                        continue
+                    console_content = _stringify_loaded_content(msg.get("content", "")).strip()
+                    if not console_content:
+                        continue
+                    remaining_chars = max_total_console_output_chars - total_console_output_chars
+                    console_content = _truncate_loaded_content(
+                        console_content,
+                        min(max_console_output_chars, remaining_chars),
+                    )
+                    total_console_output_chars += len(console_content)
+                    console_format = msg.get("message_format") or "output"
+                    interpreter_messages.append(
+                        {
+                            "role": "developer",
+                            "type": "message",
+                            "content": (
+                                f"Historical console output from the restored conversation "
+                                f"({console_format}; not from the current runtime):\n"
+                                f"{console_content}"
+                            ),
+                        }
+                    )
                     continue
                 else:
                     interpreter_msg = {
                         "role": "user", # "assistant", # Changed to "user" as assistant role does not support image output
-                        "type": msg_type if msg_type in ["code", "message", "image"] else "message",
-                        "content": msg.get("content", "")
+                        "type": msg_type if msg_type in ["code", "message", "image", "file"] else "message",
+                        "content": _stringify_loaded_content(msg.get("content", ""))
                     }
                     if msg.get("message_format"):
                         interpreter_msg["format"] = msg.get("message_format")
