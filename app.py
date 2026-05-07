@@ -41,6 +41,12 @@ from sqlalchemy.exc import IntegrityError
 # from openai import OpenAI # Uncomment if using OpenAI Whisper API instead of LiteLLM
 from litellm import transcription, completion  # LiteLLM for audio transcription & tool planning
 import litellm
+from litellm.responses.main import compact_responses
+
+try:
+    import tiktoken
+except Exception:
+    tiktoken = None
 
 # Set longer timeout for LiteLLM to handle long-running MCP tool calls
 litellm.request_timeout = 600  # 10 minutes timeout for API requests
@@ -91,6 +97,18 @@ from core.mcp_manager import mcp_manager
 # )
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+COMPACTION_INPUT_TOKEN_THRESHOLD = int(
+    os.getenv("IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD", "10000")
+)
+COMPACTION_IMAGE_TOKEN_ESTIMATE = int(
+    os.getenv("IDEA_COMPACTION_IMAGE_TOKEN_ESTIMATE", "1200")
+)
+COMPACTION_DEVELOPER_MESSAGE = (
+    "The prior conversation was compacted before this request. The preceding "
+    "compaction item summarizes the earlier Responses thread. Continue seamlessly "
+    "for the user; do not mention compaction unless directly relevant."
+)
 
 # # Inject reasoning_effort at the completions layer (affects both text + tool paths)
 # _orig_completions = llm_mod.fixed_litellm_completions
@@ -1013,6 +1031,161 @@ def _get_user_first_name(user: User | None) -> str:
     return full_name.split()[0]
 
 
+def _response_to_dict(response: Any) -> dict[str, Any]:
+    if isinstance(response, dict):
+        return response
+    if hasattr(response, "model_dump"):
+        return response.model_dump(mode="json", exclude_none=True, warnings=False)
+    if hasattr(response, "dict"):
+        return response.dict(exclude_none=True)
+    return json.loads(json.dumps(response, default=lambda obj: getattr(obj, "__dict__", str(obj))))
+
+
+def _normalize_compacted_content_parts(parts: Any, role: str | None) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    text_type = "output_text" if role == "assistant" else "input_text"
+    for part in parts or []:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str):
+            normalized.append({"type": text_type, "text": text})
+    return normalized
+
+
+def _normalize_compacted_item_for_create(item: dict[str, Any]) -> dict[str, Any] | None:
+    item_type = item.get("type")
+    if item_type == "compaction":
+        return {
+            key: item[key]
+            for key in ("id", "encrypted_content", "type")
+            if key in item and item[key] is not None
+        }
+
+    if item_type == "message":
+        role = item.get("role")
+        normalized = {
+            "type": "message",
+            "role": role,
+            "content": _normalize_compacted_content_parts(item.get("content"), role),
+        }
+        if role == "assistant":
+            for key in ("id", "status", "phase"):
+                if key in item and item[key] is not None:
+                    normalized[key] = item[key]
+        elif item.get("status") is not None:
+            normalized["status"] = item["status"]
+        return normalized
+
+    return item
+
+
+def _normalize_compacted_output_for_create(output: list[Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        normalized_item = _normalize_compacted_item_for_create(item)
+        if normalized_item is not None:
+            normalized.append(normalized_item)
+    return normalized
+
+
+def _rough_count_text_tokens(text: Any, model: str | None = None) -> int:
+    if text is None:
+        return 0
+    if not isinstance(text, str):
+        try:
+            text = json.dumps(text, ensure_ascii=False)
+        except Exception:
+            text = str(text)
+    if not text:
+        return 0
+    if tiktoken is not None:
+        try:
+            token_model = (model or "gpt-4").split("/")[-1]
+            encoder = tiktoken.encoding_for_model(token_model)
+            return len(encoder.encode(text))
+        except Exception:
+            pass
+    return max(1, ceil(len(text) / 4))
+
+
+def _rough_count_message_tokens(message: Any, model: str | None = None) -> int:
+    if not isinstance(message, dict):
+        return _rough_count_text_tokens(message, model=model)
+
+    tokens = 4
+    msg_type = message.get("type") or message.get("message_type") or "message"
+    content = message.get("content", "")
+
+    if msg_type == "image":
+        return tokens + COMPACTION_IMAGE_TOKEN_ESTIMATE
+
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in {"input_image", "image_url"}:
+                tokens += COMPACTION_IMAGE_TOKEN_ESTIMATE
+            else:
+                tokens += _rough_count_text_tokens(part, model=model)
+        return tokens
+
+    tokens += _rough_count_text_tokens(content, model=model)
+    for key in ("role", "type", "format", "recipient"):
+        if message.get(key):
+            tokens += _rough_count_text_tokens(message[key], model=model)
+    return tokens
+
+
+def estimate_conversation_input_tokens(
+    interpreter: OpenInterpreter,
+    prospective_messages: list[Any],
+) -> int:
+    model = getattr(interpreter.llm, "model", None)
+    total = _rough_count_text_tokens(interpreter.system_message, model=model)
+    if interpreter.custom_instructions:
+        total += _rough_count_text_tokens(interpreter.custom_instructions, model=model)
+    for message in prospective_messages:
+        total += _rough_count_message_tokens(message, model=model)
+    return total
+
+
+def compact_interpreter_runtime(
+    interpreter: OpenInterpreter,
+    estimated_tokens: int,
+) -> list[dict[str, Any]]:
+    previous_response_id = getattr(interpreter.llm, "previous_response_id", None)
+    if not previous_response_id:
+        return []
+
+    logger.info(
+        "Compacting interpreter runtime at approximately %d input tokens from response %s",
+        estimated_tokens,
+        previous_response_id,
+    )
+    original_drop_params = litellm.drop_params
+    try:
+        litellm.drop_params = False
+        compacted = compact_responses(
+            model=interpreter.llm.model,
+            instructions=interpreter.system_message,
+            previous_response_id=previous_response_id,
+            input=[],
+        )
+    finally:
+        litellm.drop_params = original_drop_params
+    compacted_output = _response_to_dict(compacted).get("output") or []
+    compacted_input = _normalize_compacted_output_for_create(compacted_output)
+    if not compacted_input:
+        raise RuntimeError("Compaction returned no reusable input items.")
+
+    interpreter.messages = []
+    interpreter.llm.reset_response_continuation()
+    interpreter.llm.compacted_input_items = compacted_input
+    interpreter.llm.compaction_developer_message = COMPACTION_DEVELOPER_MESSAGE
+    return compacted_input
+
+
 @app.get("/users", response_model=List[UserPublic])
 async def list_users(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """List all users (superuser only)"""
@@ -1508,6 +1681,21 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             except Exception as e:
                 logger.warning(f"Failed to restore messages from Redis: {str(e)}")
 
+        estimated_input_tokens = estimate_conversation_input_tokens(
+            interpreter,
+            [*interpreter.messages, messages[-1]],
+        )
+        should_compact_runtime = (
+            estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
+            and bool(getattr(interpreter.llm, "previous_response_id", None))
+        )
+        if estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD and not should_compact_runtime:
+            logger.info(
+                "Runtime is above compaction threshold (%d >= %d) but no previous_response_id is available.",
+                estimated_input_tokens,
+                COMPACTION_INPUT_TOKEN_THRESHOLD,
+            )
+
         # MCP tools are now available via mcp_tools.py (generated at startup and when connections change)
         # No need to regenerate on every chat request
 
@@ -1532,6 +1720,32 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
 
         def event_stream():
             try:
+                if should_compact_runtime:
+                    start_chunk = {
+                        "start": True,
+                        "role": "assistant",
+                        "type": "message",
+                        "format": "compaction_status",
+                        "content": "",
+                    }
+                    yield f"data: {json.dumps(start_chunk)}\n\n"
+                    status_chunk = {
+                        "role": "assistant",
+                        "type": "message",
+                        "format": "compaction_status",
+                        "content": "Compacting conversation",
+                    }
+                    yield f"data: {json.dumps(status_chunk)}\n\n"
+                    compact_interpreter_runtime(interpreter, estimated_input_tokens)
+                    end_chunk = {
+                        "end": True,
+                        "role": "assistant",
+                        "type": "message",
+                        "format": "compaction_status",
+                        "content": "",
+                    }
+                    yield f"data: {json.dumps(end_chunk)}\n\n"
+
                 if tool_runs:
                     streamed_keys: set[str] = set()
                     repos_summary = None

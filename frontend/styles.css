@@ -25,6 +25,16 @@
 .message.tool-status-message .tool-status-text {
   color: #666;
 }
+.message.compaction-status-message .tool-status-text {
+  color: var(--text-muted, #666);
+}
+.message.compaction-status-message .tool-status::before {
+  content: "compress";
+  font-family: "Material Icons";
+  font-size: 16px;
+  line-height: 1;
+  color: var(--primary, #0f3247);
+}
 /* styles.css */
 
 * {

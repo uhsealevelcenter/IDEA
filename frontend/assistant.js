@@ -1306,8 +1306,8 @@ function saveCompletedAssistantMessage(message) {
         }
         message.format = message.format || 'output';
     }
-    // Do not persist transient tool-status lines
-    if (message.format === 'tool_status') {
+    // Do not persist transient status lines
+    if (message.format === 'tool_status' || message.format === 'compaction_status') {
         return;
     }
     const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
@@ -1490,10 +1490,13 @@ function appendMessage(message, options = {}) {
         contentElement.innerHTML = message.content; 
     }
 
-    // Tool-status messages: add compact UI classes
-    if (message.format === 'tool_status') {
+    // Status messages: add compact UI classes
+    if (message.format === 'tool_status' || message.format === 'compaction_status') {
         messageElement.classList.add('tool-status-message');
         contentElement.classList.add('tool-status-content');
+        if (message.format === 'compaction_status') {
+            messageElement.classList.add('compaction-status-message');
+        }
     }
 
     messageElement.appendChild(contentElement);
@@ -1610,10 +1613,13 @@ function updateMessageContent(id, content) {
         }
         
         // Handle different message types (more robust Math rendering)
-        if (message.format === 'tool_status') {
+        if (message.format === 'tool_status' || message.format === 'compaction_status') {
             messageElement.classList.add('tool-status-message');
             contentDiv.classList.add('tool-status-content');
-            // Render a compact tool-status line with spinner/check
+            if (message.format === 'compaction_status') {
+                messageElement.classList.add('compaction-status-message');
+            }
+            // Render a compact status line with spinner/check
             const isDone = !!message.isComplete;
             const text = (content && content.trim()) ? content : message.content || '';
             const statusHtml = `

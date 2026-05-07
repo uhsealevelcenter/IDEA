@@ -12,7 +12,7 @@ aiohappyeyeballs==2.6.1
     # via
     #   aiohttp
     #   idea
-aiohttp==3.10.8
+aiohttp==3.13.4
     # via
     #   aiobotocore
     #   httpx-aiohttp
@@ -23,7 +23,7 @@ aioitertools==0.7.1
     # via
     #   aiobotocore
     #   idea
-aiosignal==1.3.1
+aiosignal==1.4.0
     # via
     #   aiohttp
     #   idea
@@ -149,7 +149,7 @@ charset-normalizer==3.3.2
     #   unstructured
 clamd==1.0.2
     # via idea
-click==8.1.7
+click==8.1.8
     # via
     #   click-option-group
     #   click-plugins
@@ -278,6 +278,8 @@ fasteners==0.20 ; sys_platform != 'emscripten'
     # via zarr
 fastjsonschema==2.21.2
     # via nbformat
+fastuuid==0.14.0
+    # via litellm
 fhaviary==0.28.0
     # via
     #   fhlmi
@@ -413,7 +415,7 @@ httplib2==0.22.0
     #   google-api-python-client
     #   google-auth-httplib2
     #   idea
-httpx==0.27.2
+httpx==0.28.1
     # via
     #   erddapy
     #   fhaviary
@@ -474,7 +476,7 @@ jedi==0.19.1
     # via
     #   idea
     #   ipython
-jinja2==3.1.4
+jinja2==3.1.6
     # via
     #   altair
     #   branca
@@ -484,7 +486,7 @@ jinja2==3.1.4
     #   pydeck
 jinxed==1.3.0 ; sys_platform == 'win32'
     # via blessed
-jiter==0.5.0
+jiter==0.12.0
     # via
     #   idea
     #   openai
@@ -535,7 +537,7 @@ limits==5.5.0
     # via
     #   fhlmi
     #   slowapi
-litellm==1.75.8
+litellm==1.83.14
     # via
     #   fhaviary
     #   fhlmi
@@ -673,7 +675,7 @@ olefile==0.47
     # via
     #   msoffcrypto-tool
     #   python-oxmsg
-openai==1.102.0
+openai==2.24.0
     # via
     #   idea
     #   litellm
@@ -779,6 +781,10 @@ prompt-toolkit==3.0.48
     # via
     #   idea
     #   ipython
+propcache==0.4.1
+    # via
+    #   aiohttp
+    #   yarl
 proto-plus==1.24.0
     # via
     #   google-ai-generativelanguage
@@ -827,7 +833,7 @@ pybtex==0.25.1
     # via paper-qa
 pycparser==2.22
     # via cffi
-pydantic==2.11.7
+pydantic==2.12.5
     # via
     #   copernicusmarine
     #   fastapi
@@ -842,7 +848,7 @@ pydantic==2.11.7
     #   pydantic-settings
     #   sqlmodel
     #   unstructured-client
-pydantic-core==2.33.2
+pydantic-core==2.41.5
     # via
     #   idea
     #   pydantic
@@ -915,7 +921,7 @@ python-docx==1.2.0
     # via
     #   idea
     #   unstructured
-python-dotenv==1.0.1
+python-dotenv==1.2.2
     # via
     #   idea
     #   litellm
@@ -1091,7 +1097,6 @@ smmap==5.0.1
 sniffio==1.3.1
     # via
     #   anyio
-    #   httpx
     #   idea
     #   openai
     #   trio
@@ -1147,7 +1152,7 @@ threadpoolctl==3.6.0
     # via scikit-learn
 tifffile==2025.8.28
     # via scikit-image
-tiktoken==0.7.0
+tiktoken==0.12.0
     # via
     #   fhlmi
     #   idea
@@ -1158,7 +1163,7 @@ timezonefinder==6.5.9
     # via idea
 tinynetrc==1.3.1
     # via earthaccess
-tokenizers==0.20.0
+tokenizers==0.22.2
     # via
     #   idea
     #   litellm
@@ -1212,9 +1217,10 @@ trio-websocket==0.11.1
     #   selenium
 typer==0.12.5
     # via idea
-typing-extensions==4.12.2
+typing-extensions==4.15.0
     # via
     #   aioitertools
+    #   aiosignal
     #   alembic
     #   altair
     #   anyio
@@ -1245,7 +1251,7 @@ typing-extensions==4.12.2
     #   unstructured
 typing-inspect==0.9.0
     # via dataclasses-json
-typing-inspection==0.4.1
+typing-inspection==0.4.2
     # via
     #   pydantic
     #   pydantic-settings
@@ -1329,7 +1335,7 @@ xyzservices==2025.4.0
     #   folium
 yara-python==4.5.4
     # via guarddog
-yarl==1.13.1
+yarl==1.22.0
     # via
     #   aiohttp
     #   idea

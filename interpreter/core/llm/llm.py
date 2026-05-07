@@ -87,12 +87,16 @@ class Llm:
         self.previous_response_id = None
         self.previous_response_message_count = None
         self.pending_tool_call_id = None
+        self.compacted_input_items = []
+        self.compaction_developer_message = None
 
     def reset_response_continuation(self):
         """Clear provider-side Responses continuation metadata."""
         self.previous_response_id = None
         self.previous_response_message_count = None
         self.pending_tool_call_id = None
+        self.compacted_input_items = []
+        self.compaction_developer_message = None
 
     def _ensure_responses_message_shape(self, m):
         """
@@ -102,6 +106,13 @@ class Llm:
         - Strip Chat Completions-only fields
         - Map legacy roles ('tool', 'function') to 'user'
         """
+        if m.get("type") == "compaction":
+            return {
+                key: m[key]
+                for key in ("id", "encrypted_content", "type")
+                if key in m and m[key] is not None
+            }
+
         if m.get("type") == "function_call_output":
             return {
                 "type": "function_call_output",
@@ -388,6 +399,24 @@ class Llm:
         # 8) Final safety normalize (no tool_calls/function_call fields, correct part types).
         messages = [self._ensure_responses_message_shape(m) for m in messages]
         # --- end: normalize + trim + convert -----------------------------------------
+
+        if self.compacted_input_items and not self.previous_response_id:
+            compaction_developer_message = self.compaction_developer_message or (
+                "The prior conversation was compacted before this request. "
+                "The preceding compaction item summarizes the earlier Responses thread. "
+                "Continue seamlessly for the user; do not mention compaction unless directly relevant."
+            )
+            messages = [
+                *self.compacted_input_items,
+                self._ensure_responses_message_shape(
+                    {
+                        "type": "message",
+                        "role": "developer",
+                        "content": compaction_developer_message,
+                    }
+                ),
+                *messages,
+            ]
 
         #print("DEBUG first input item:", messages[0])
 
@@ -684,6 +713,8 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
             if pending_response_id and llm is not None:
                 llm.previous_response_id = pending_response_id
                 llm.previous_response_message_count = len(llm.interpreter.messages)
+                llm.compacted_input_items = []
+                llm.compaction_developer_message = None
             yield {"choices": [{"finish_reason": "stop"}]}
             break
         if (t == "response.error") or t.endswith("response_error"):
@@ -715,7 +746,7 @@ def fixed_litellm_completions(**params):
     # --- DEBUG/SAFETY: validate Responses shape before calling
     def _validate_responses_input(items):
         for idx, it in enumerate(items or []):
-            if it.get("type") == "function_call_output":
+            if it.get("type") in {"function_call_output", "compaction"}:
                 continue
             c = it.get("content")
             if not isinstance(c, list):

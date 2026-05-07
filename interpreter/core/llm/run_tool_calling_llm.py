@@ -75,6 +75,17 @@ def process_messages(messages):
         msg = msg.copy() if isinstance(msg, dict) else {"role": "user", "content": str(msg)}
         role = msg.get("role", "user")
 
+        if responses_mode and msg.get("type") == "compaction":
+            processed.append(
+                {
+                    key: msg[key]
+                    for key in ("id", "encrypted_content", "type")
+                    if key in msg and msg[key] is not None
+                }
+            )
+            i += 1
+            continue
+
         if responses_mode and msg.get("type") == "function_call_output":
             processed.append(
                 {
