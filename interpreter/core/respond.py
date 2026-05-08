@@ -280,7 +280,7 @@ def respond(interpreter):
                         "role": "computer",
                         "type": "console",
                         "format": "output",
-                        "content": "Code block was empty. Please try again, be sure to write code before executing.",
+                        "content": "No code was provided to execute.",
                     }
                     continue
 

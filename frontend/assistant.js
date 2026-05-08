@@ -1393,7 +1393,7 @@ function processChunk(chunk) {
             message = newMessage;
         } else if (chunk.error) {
             const errorMessage = chunk.error.message || chunk.error;
-            appendSystemMessage(errorMessage);
+            appendSystemMessage(errorMessage, { persist: true });
             resolve({ scheduleThinking: false });
             return;
         }
@@ -1767,7 +1767,8 @@ function updateMessageContent(id, content) {
 }
 
 // Function to append system messages (like errors or notifications)
-function appendSystemMessage(message) {
+function appendSystemMessage(message, options = {}) {
+    const { persist = false } = options;
     const id = generateId('msg');
     const systemMessage = {
         id: id,
@@ -1793,6 +1794,18 @@ function appendSystemMessage(message) {
     messageElement.appendChild(content);
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+
+    if (persist && conversationManager && message) {
+        conversationManager.addMessage(
+            'assistant',
+            message,
+            'message',
+            null,
+            null
+        ).catch(error => {
+            console.error('Failed to persist system message:', error);
+        });
+    }
 }
 
 // Function to append confirmation chunks
@@ -2586,12 +2599,6 @@ function renderStdoutPanel(codeId) {
     });
     if (outputs.length > 0) {
         addCopyButtons(panel);
-    }
-    if (outputs.length === 0) {
-        const emptyState = document.createElement('div');
-        emptyState.className = 'stdout-empty';
-        emptyState.textContent = 'No console output captured.';
-        panel.appendChild(emptyState);
     }
 }
 

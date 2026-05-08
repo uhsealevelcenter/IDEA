@@ -358,7 +358,7 @@ class OpenInterpreter:
                         except Exception:
                             pass
 
-                if chunk["content"] == "":
+                if chunk["content"] == "" and chunk.get("type") != "code":
                     continue
 
                 # If active_line is None, we finished running code.

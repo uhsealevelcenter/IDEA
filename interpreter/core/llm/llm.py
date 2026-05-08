@@ -407,6 +407,65 @@ class Llm:
         messages = [self._ensure_responses_message_shape(m) for m in messages]
         # --- end: normalize + trim + convert -----------------------------------------
 
+        def _function_call_output_ids(items):
+            return {
+                item.get("call_id")
+                for item in items or []
+                if isinstance(item, dict)
+                and item.get("type") == "function_call_output"
+                and item.get("call_id")
+            }
+
+        def _recent_message_summary(limit=8):
+            summary = []
+            for item in self.interpreter.messages[-limit:]:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content", "")
+                try:
+                    content_len = len(content)
+                except Exception:
+                    content_len = len(str(content))
+                summary.append(
+                    {
+                        "role": item.get("role"),
+                        "type": item.get("type"),
+                        "format": item.get("format"),
+                        "call_id": item.get("call_id"),
+                        "content_len": content_len,
+                    }
+                )
+            return summary
+
+        if self.previous_response_id and self.pending_tool_call_id:
+            output_ids = _function_call_output_ids(messages)
+            if self.pending_tool_call_id not in output_ids:
+                logger.warning(
+                    "Responses continuation missing function_call_output; appending fallback. "
+                    "previous_response_id=%s pending_tool_call_id=%s output_ids=%s recent_messages=%s",
+                    self.previous_response_id,
+                    self.pending_tool_call_id,
+                    sorted(output_ids),
+                    _recent_message_summary(),
+                )
+                messages.insert(
+                    0,
+                    {
+                        "type": "function_call_output",
+                        "call_id": self.pending_tool_call_id,
+                        "output": "The execute tool did not return a captured output for this call.",
+                    }
+                )
+            else:
+                logger.debug(
+                    "Responses continuation includes function_call_output. previous_response_id=%s "
+                    "pending_tool_call_id=%s output_ids=%s recent_messages=%s",
+                    self.previous_response_id,
+                    self.pending_tool_call_id,
+                    sorted(output_ids),
+                    _recent_message_summary(),
+                )
+
         if self.compacted_input_items and not self.previous_response_id:
             compaction_developer_message = self.compaction_developer_message or (
                 "The prior conversation was compacted before this request. "
@@ -722,6 +781,8 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
                 llm.previous_response_message_count = len(llm.interpreter.messages)
                 llm.compacted_input_items = []
                 llm.compaction_developer_message = None
+                if not func_calls:
+                    llm.pending_tool_call_id = None
             yield {"choices": [{"finish_reason": "stop"}]}
             break
         if (t == "response.error") or t.endswith("response_error"):

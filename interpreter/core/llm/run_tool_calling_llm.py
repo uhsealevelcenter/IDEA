@@ -258,6 +258,8 @@ def run_tool_calling_llm(llm, request_params):
     review_category = None
     buffer = ""
     assistant_text = ""
+    saw_code_argument = False
+    emitted_code_chunk = False
 
     for chunk in llm.completions(**request_params):
         # If this is a Responses adapter delta without 'choices', skip
@@ -329,6 +331,7 @@ def run_tool_calling_llm(llm, request_params):
             arguments_text = accumulated_deltas["function_call"]["arguments"]
             arguments = parse_partial_json(arguments_text)
             if arguments and "code" in arguments:
+                saw_code_argument = True
                 if language is None:
                     language = arguments.get("language") or "python"
                     call_id = accumulated_deltas["function_call"].get("call_id")
@@ -341,10 +344,18 @@ def run_tool_calling_llm(llm, request_params):
                     call_id = accumulated_deltas["function_call"].get("call_id")
                     if call_id:
                         chunk["call_id"] = call_id
+                    emitted_code_chunk = True
                     yield chunk
             else:
                 if llm.interpreter.verbose:
                     print("Arguments not a dict or no 'code' yet.")
+
+    if function_call_detected and saw_code_argument and not emitted_code_chunk:
+        chunk = {"type": "code", "format": language or "python", "content": ""}
+        call_id = accumulated_deltas.get("function_call", {}).get("call_id")
+        if call_id:
+            chunk["call_id"] = call_id
+        yield chunk
 
     # Fallback: if the model never produced a tool call but returned a pure code payload, execute it.
     if not function_call_detected and assistant_text.strip():

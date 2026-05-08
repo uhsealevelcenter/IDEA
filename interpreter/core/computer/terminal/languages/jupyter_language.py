@@ -208,12 +208,14 @@ import matplotlib.pyplot as plt
                             },
                             {"role": "user", "type": "message", "content": text},
                         ]
+                        model = self.computer.interpreter.llm.model
                         params = {
                             "messages": messages,
-                            "model": self.computer.interpreter.llm.model,
+                            "model": model,
                             "stream": True,
-                            "temperature": 0,
                         }
+                        if not model.startswith(("gpt-5", "o4", "o3")):
+                            params["temperature"] = 0
                         if self.computer.interpreter.llm.api_key:
                             params["api_key"] = self.computer.interpreter.llm.api_key
 
