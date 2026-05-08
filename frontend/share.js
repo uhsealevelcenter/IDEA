@@ -11,10 +11,16 @@ const SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE = 1.25;
 const SHARED_IMAGE_LIGHTBOX_MIN_SCALE = 0.5;
 const SHARED_IMAGE_LIGHTBOX_MAX_SCALE = 4;
 const SHARED_IMAGE_LIGHTBOX_SCALE_STEP = 0.25;
+const SHARED_COMPACTION_MARKER_PREFIX = '[IDEA conversation compacted at ';
+const SHARED_COMPACTION_MARKER_SUFFIX = ']';
 let sharedImageLightboxState = {
     scale: SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE,
     fitScale: SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE
 };
+let sharedCodeApplyAllEnabled = false;
+let sharedCodeVisibilityAllMode = null;
+let sharedOutputApplyAllEnabled = false;
+let sharedOutputVisibilityAllMode = null;
 
 //// Math formatting helpers for shared/downloaded views
 function protectMath(text) {
@@ -89,6 +95,43 @@ function addCopyButtonsShared(root) {
             });
         });
     });
+}
+
+function parseSharedCompactionMarker(content) {
+    if (typeof content !== 'string') return null;
+    const trimmed = content.trim();
+    if (!trimmed.startsWith(SHARED_COMPACTION_MARKER_PREFIX) || !trimmed.endsWith(SHARED_COMPACTION_MARKER_SUFFIX)) {
+        return null;
+    }
+    const timestamp = trimmed.slice(SHARED_COMPACTION_MARKER_PREFIX.length, -SHARED_COMPACTION_MARKER_SUFFIX.length);
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return null;
+    return { timestamp, date };
+}
+
+function isSharedCompactionMarker(message) {
+    return Boolean(message && message.message_type === 'message' && parseSharedCompactionMarker(message.content));
+}
+
+function formatSharedCompactionTime(date) {
+    return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short'
+    });
+}
+
+function renderSharedCompactionMarker(message) {
+    const marker = parseSharedCompactionMarker(message?.content) || { date: new Date(message?.created_at || Date.now()) };
+    return `
+        <div class="compaction-marker" role="status">
+            <span class="material-icons compaction-marker-icon" aria-hidden="true">compress</span>
+            <span>Conversation compacted ${escapeHtml(formatSharedCompactionTime(marker.date))}</span>
+        </div>
+    `;
 }
 
 function getSharedImageLightboxElements() {
@@ -353,7 +396,25 @@ function ensureSharedStdoutElements(codeId) {
         button.setAttribute('aria-expanded', 'false');
         button.disabled = true;
         button.addEventListener('click', () => toggleSharedStdoutPanel(codeId));
+        const applyAllLabel = document.createElement('label');
+        applyAllLabel.className = 'output-apply-all';
+        const applyAllCheckbox = document.createElement('input');
+        applyAllCheckbox.type = 'checkbox';
+        applyAllCheckbox.checked = sharedOutputApplyAllEnabled;
+        applyAllCheckbox.addEventListener('change', () => {
+            sharedOutputApplyAllEnabled = applyAllCheckbox.checked;
+            if (!sharedOutputApplyAllEnabled) {
+                sharedOutputVisibilityAllMode = null;
+            } else {
+                const currentPanel = messageElement.querySelector('.stdout-panel');
+                sharedOutputVisibilityAllMode = Boolean(currentPanel?.classList.contains('open'));
+            }
+            syncSharedOutputApplyAllCheckboxes();
+        });
+        applyAllLabel.appendChild(applyAllCheckbox);
+        applyAllLabel.appendChild(document.createTextNode(' all'));
         controls.appendChild(button);
+        controls.appendChild(applyAllLabel);
         contentElement.appendChild(controls);
     }
 
@@ -366,7 +427,44 @@ function ensureSharedStdoutElements(codeId) {
         contentElement.appendChild(panel);
     }
 
+    syncSharedOutputApplyAllCheckboxes();
     return { messageElement, contentElement, controls, button, panel };
+}
+
+function getSharedOutputMessageElements() {
+    return Array.from(document.querySelectorAll('.message')).filter(element => {
+        const codeId = element.getAttribute('data-id');
+        return (sharedStdoutMap.get(codeId) || []).length > 0;
+    });
+}
+
+function syncSharedOutputApplyAllCheckboxes() {
+    document.querySelectorAll('.output-apply-all input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = sharedOutputApplyAllEnabled;
+    });
+}
+
+function setSharedStdoutVisibility(codeId, showOutput, { autoScroll = false } = {}) {
+    const { button, panel } = ensureSharedStdoutElements(codeId);
+    if (!button || !panel || button.disabled) return;
+    panel.classList.toggle('open', showOutput);
+    panel.setAttribute('aria-hidden', showOutput ? 'false' : 'true');
+    button.textContent = showOutput ? 'Hide Output' : 'Show Output';
+    button.setAttribute('aria-expanded', String(showOutput));
+    if (showOutput) {
+        renderSharedStdoutPanel(codeId);
+        if (autoScroll) {
+            panel.scrollTop = panel.scrollHeight;
+            panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }
+}
+
+function applySharedStdoutVisibilityToAll(showOutput) {
+    getSharedOutputMessageElements().forEach(element => {
+        const codeId = element.getAttribute('data-id');
+        setSharedStdoutVisibility(codeId, showOutput);
+    });
 }
 
 function updateSharedStdoutAvailability(codeId) {
@@ -374,14 +472,15 @@ function updateSharedStdoutAvailability(codeId) {
     if (!controls || !button) return;
     const hasOutput = (sharedStdoutMap.get(codeId) || []).length > 0;
     controls.classList.toggle('stdout-hidden', !hasOutput);
-    button.disabled = !hasOutput;
     if (!hasOutput) {
-        button.textContent = 'Show Output';
-        button.setAttribute('aria-expanded', 'false');
-        if (panel) {
-            panel.classList.remove('open');
-            panel.setAttribute('aria-hidden', 'true');
-        }
+        button.disabled = false;
+        setSharedStdoutVisibility(codeId, false);
+        button.disabled = true;
+    } else if (sharedOutputVisibilityAllMode !== null) {
+        button.disabled = false;
+        setSharedStdoutVisibility(codeId, sharedOutputVisibilityAllMode);
+    } else {
+        button.disabled = false;
     }
 }
 
@@ -436,18 +535,105 @@ function renderSharedStdoutPanel(codeId) {
 function toggleSharedStdoutPanel(codeId) {
     const { button, panel } = ensureSharedStdoutElements(codeId);
     if (!button || !panel || button.disabled) return;
-    const isOpen = panel.classList.toggle('open');
-    if (isOpen) {
-        panel.setAttribute('aria-hidden', 'false');
-        button.textContent = 'Hide Output';
-        renderSharedStdoutPanel(codeId);
-        panel.scrollTop = panel.scrollHeight;
-        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const showOutput = !panel.classList.contains('open');
+    if (sharedOutputApplyAllEnabled) {
+        sharedOutputVisibilityAllMode = showOutput;
+        applySharedStdoutVisibilityToAll(showOutput);
+        if (showOutput) {
+            panel.scrollTop = panel.scrollHeight;
+            panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
     } else {
-        panel.setAttribute('aria-hidden', 'true');
-        button.textContent = 'Show Output';
+        setSharedStdoutVisibility(codeId, showOutput, { autoScroll: showOutput });
     }
-    button.setAttribute('aria-expanded', String(isOpen));
+}
+
+function getSharedCodeMessageElements() {
+    return Array.from(document.querySelectorAll('.message')).filter(element => {
+        const id = element.getAttribute('data-id');
+        return shouldTrackSharedCode(sharedMessageCache.get(id));
+    });
+}
+
+function setSharedCodeVisibility(codeId, showCode) {
+    const messageElement = document.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return;
+    messageElement.classList.toggle('code-collapsed', !showCode);
+    const button = messageElement.querySelector('.code-toggle-button');
+    if (button) {
+        button.textContent = showCode ? 'Hide Code' : 'Show Code';
+        button.setAttribute('aria-expanded', String(showCode));
+    }
+}
+
+function applySharedCodeVisibilityToAll(showCode) {
+    getSharedCodeMessageElements().forEach(element => {
+        setSharedCodeVisibility(element.getAttribute('data-id'), showCode);
+    });
+}
+
+function syncSharedCodeApplyAllCheckboxes() {
+    document.querySelectorAll('.code-apply-all input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = sharedCodeApplyAllEnabled;
+    });
+}
+
+function ensureSharedCodeControls(codeId) {
+    const messageElement = document.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return;
+    const contentElement = messageElement.querySelector('.content');
+    const pre = contentElement?.querySelector(':scope > pre');
+    const codeBlock = pre?.querySelector('code');
+    if (!contentElement || !pre || !codeBlock || contentElement.querySelector(':scope > .code-controls')) return;
+
+    const controls = document.createElement('div');
+    controls.className = 'code-controls';
+
+    const left = document.createElement('div');
+    left.className = 'code-controls-left';
+
+    const toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.className = 'code-toggle-button';
+    toggleButton.setAttribute('aria-expanded', 'true');
+    toggleButton.textContent = 'Hide Code';
+    toggleButton.addEventListener('click', () => {
+        const showCode = messageElement.classList.contains('code-collapsed');
+        if (sharedCodeApplyAllEnabled) {
+            sharedCodeVisibilityAllMode = showCode;
+            applySharedCodeVisibilityToAll(showCode);
+        } else {
+            setSharedCodeVisibility(codeId, showCode);
+        }
+    });
+
+    const applyAllLabel = document.createElement('label');
+    applyAllLabel.className = 'code-apply-all';
+    const applyAllCheckbox = document.createElement('input');
+    applyAllCheckbox.type = 'checkbox';
+    applyAllCheckbox.checked = sharedCodeApplyAllEnabled;
+    applyAllCheckbox.addEventListener('change', () => {
+        sharedCodeApplyAllEnabled = applyAllCheckbox.checked;
+        if (!sharedCodeApplyAllEnabled) {
+            sharedCodeVisibilityAllMode = null;
+        } else {
+            sharedCodeVisibilityAllMode = !messageElement.classList.contains('code-collapsed');
+        }
+        syncSharedCodeApplyAllCheckboxes();
+    });
+    applyAllLabel.appendChild(applyAllCheckbox);
+    applyAllLabel.appendChild(document.createTextNode(' all'));
+
+    left.appendChild(toggleButton);
+    left.appendChild(applyAllLabel);
+    controls.appendChild(left);
+    contentElement.insertBefore(controls, pre);
+    addCopyButtonsShared(pre);
+
+    if (sharedCodeVisibilityAllMode !== null) {
+        setSharedCodeVisibility(codeId, sharedCodeVisibilityAllMode);
+    }
+    syncSharedCodeApplyAllCheckboxes();
 }
 
 // Display message in chat (similar to conversation_ui.js but simplified for read-only)
@@ -473,7 +659,11 @@ function displayMessageInChat(message) {
     contentElement.setAttribute('data-type', message.message_type);
     
     // Handle different message types and formats similar to conversation_ui.js
-    if (message.message_type === 'message') {
+    if (isSharedCompactionMarker(message)) {
+        messageDiv.classList.add('compaction-marker-message');
+        contentElement.classList.add('compaction-marker-content');
+        contentElement.innerHTML = renderSharedCompactionMarker(message);
+    } else if (message.message_type === 'message') {
         const raw = message.content || '';
         const { text: shielded, store } = protectMath(raw);
         if (!hasBalancedMath(raw)) {
@@ -513,10 +703,13 @@ function displayMessageInChat(message) {
     
     messageDiv.appendChild(contentElement);
     chatDisplay.appendChild(messageDiv);
-    addCopyButtonsShared(contentElement);
+    if (!shouldTrackSharedCode(message)) {
+        addCopyButtonsShared(contentElement);
+    }
     
     if (shouldTrackSharedCode(message)) {
         lastSharedCodeId = messageId;
+        ensureSharedCodeControls(messageId);
         ensureSharedStdoutElements(messageId);
     } else if (isSharedConsoleMessage(message)) {
         messageDiv.classList.add('console-output-message');
@@ -555,10 +748,26 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Format date for display
+function parseUtcDate(dateString) {
+    if (!dateString) return null;
+    const value = String(dateString);
+    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+    const date = new Date(hasTimezone ? value : `${value}Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+// Format UTC timestamps for display in the viewer's browser timezone.
 function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    const date = parseUtcDate(dateString);
+    if (!date) return '';
+    return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short'
+    });
 }
 
 // Show error state
@@ -597,7 +806,7 @@ function updateConversationInfo(conversation) {
     const createdDate = formatDate(conversation.created_at);
     
     conversationInfo.innerHTML = `
-        <span><strong>Created:</strong> ${createdDate} UTC</span>
+        <span><strong>Created:</strong> ${createdDate}</span>
     `;
 }
 

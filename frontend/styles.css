@@ -35,6 +35,41 @@
   line-height: 1;
   color: var(--primary, #0f3247);
 }
+
+.message.compaction-marker-message {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.message.compaction-marker-message .content {
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.compaction-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.compaction-marker-icon {
+  font-size: 15px;
+  color: var(--primary);
+}
 /* styles.css */
 
 * {
@@ -925,14 +960,69 @@ body.theme-light .message .content pre {
     border-bottom-color: var(--link-color);
 }
 
-/* Style for the copy button */
+.code-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 4px 0 8px;
+}
+
+.code-controls-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.code-toggle-button,
+.stdout-button,
+.copy-button {
+    padding: 5px 11px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid var(--input-border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-primary);
+    transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
+}
+
+.code-toggle-button:hover,
+.stdout-button:hover:not(:disabled),
+.copy-button:hover {
+    background: var(--assistant-bg);
+    border-color: var(--assistant-border);
+    transform: translateY(-1px);
+}
+
+.code-apply-all,
+.output-apply-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+}
+
+.code-apply-all input,
+.output-apply-all input {
+    width: 13px;
+    height: 13px;
+    accent-color: var(--primary);
+}
+
+.message.code-collapsed .content > pre {
+    display: none;
+}
+
+/* Style for legacy copy buttons inside markdown/output blocks */
 .copy-button {
     position: absolute;
     top: 8px;
     right: 8px;
-    padding: 4px 10px;
-    font-size: 12px;
-    cursor: pointer;
     background-color: #007bff;
     color: #ffffff;
     border: none;
@@ -942,6 +1032,7 @@ body.theme-light .message .content pre {
 }
 
 .copy-button:hover {
+    background-color: #007bff;
     opacity: 1;
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(0, 123, 255, 0.35);
@@ -958,9 +1049,9 @@ pre {
 
 .stdout-controls {
     display: flex;
-    justify-content: flex-end;
     align-items: center;
-    width: 100%;
+    justify-content: flex-end;
+    gap: 8px;
     margin-top: 12px;
 }
 
@@ -969,20 +1060,7 @@ pre {
 }
 
 .stdout-button {
-    padding: 6px 14px;
-    font-size: 12px;
-    border-radius: 999px;
-    border: 1px solid var(--input-border);
-    background: var(--surface);
-    color: var(--text-primary);
-    cursor: pointer;
-    transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
-}
-
-.stdout-button:hover:not(:disabled) {
-    background: var(--assistant-bg);
-    border-color: var(--assistant-border);
-    transform: translateY(-1px);
+    min-width: 92px;
 }
 
 .stdout-button:disabled {
@@ -1141,16 +1219,23 @@ pre {
     background-color: rgba(255, 255, 0, 0.1);
 }
 
+.code-execution-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 650;
+}
+
 .code-spinner {
-    position: absolute;
-    bottom: 12px;
-    left: 12px;
-    width: 52px;
-    height: 52px;
-    border: 3px solid rgba(255, 255, 255, 0.18);
-    border-top: 3px solid rgba(255, 255, 255, 0.75);
+    width: 14px;
+    height: 14px;
+    border: 2px solid color-mix(in srgb, var(--primary) 28%, transparent);
+    border-top-color: color-mix(in srgb, var(--primary) 76%, transparent);
     border-radius: 50%;
-    animation: spin 1s linear infinite;
+    animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {

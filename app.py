@@ -1962,6 +1962,8 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
             return f"{content[:limit]}\n\n[... truncated {omitted} characters from restored history ...]"
 
         for msg in messages:
+            if isinstance(msg.get("content"), str) and msg.get("content", "").strip().startswith("[IDEA conversation compacted at "):
+                continue
             # Skip console messages with active_line format as they cause issues
             if (msg.get("message_type") == "console" and 
                 msg.get("message_format") == "active_line"):

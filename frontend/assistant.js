@@ -37,9 +37,15 @@ let stopRequestedCodeId = null;
 let userProfilePromise = null;
 let welcomeRenderPromise = null;
 let welcomeRendered = false;
+let codeApplyAllEnabled = false;
+let codeVisibilityAllMode = null;
+let outputApplyAllEnabled = false;
+let outputVisibilityAllMode = null;
 
 const THEME_STORAGE_KEY = 'idea-theme';
 const THINKING_PAUSE_DELAY_MS = 1400;
+const COMPACTION_MARKER_PREFIX = '[IDEA conversation compacted at ';
+const COMPACTION_MARKER_SUFFIX = ']';
 const THEME_PREFERENCES = ['light', 'dark', 'coast'];
 const MOBILE_COMPOSER_BREAKPOINT = 520;
 const MOBILE_COMPOSER_MIN_HEIGHT = 72;
@@ -1231,8 +1237,12 @@ async function sendRequest(msgOverride=null) {
                     // console.log("Received data:", data);
                     try {
                         const chunk = JSON.parse(data);
-                        await processChunk(chunk);
-                        scheduleWorkingIndicator();
+                        const result = await processChunk(chunk);
+                        if (result?.scheduleThinking) {
+                            scheduleWorkingIndicator();
+                        } else {
+                            clearWorkingIndicatorTimer();
+                        }
                     } catch (e) {
                         console.error("Failed to parse chunk:", e);
                     }
@@ -1306,8 +1316,23 @@ function saveCompletedAssistantMessage(message) {
         }
         message.format = message.format || 'output';
     }
+    if (message.format === 'compaction_status') {
+        const markerContent = parseCompactionMarker(message.content)
+            ? message.content
+            : buildCompactionMarkerContent(message.created_at || new Date().toISOString());
+        conversationManager.addMessage(
+            'assistant',
+            markerContent,
+            'message',
+            null,
+            null
+        ).catch(error => {
+            console.error('Failed to save compaction marker to conversation:', error);
+        });
+        return;
+    }
     // Do not persist transient status lines
-    if (message.format === 'tool_status' || message.format === 'compaction_status') {
+    if (message.format === 'tool_status') {
         return;
     }
     const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
@@ -1345,7 +1370,7 @@ function processChunk(chunk) {
         if (chunk.type === 'console' && chunk.format === 'active_line') {
             //console.log(chunk); // Debug log for active line chunks
             handleActiveLineChunk(chunk.content);
-            resolve();
+            resolve({ scheduleThinking: false });
             return;
         }
 
@@ -1369,6 +1394,7 @@ function processChunk(chunk) {
         } else if (chunk.error) {
             const errorMessage = chunk.error.message || chunk.error;
             appendSystemMessage(errorMessage);
+            resolve({ scheduleThinking: false });
             return;
         }
 
@@ -1395,6 +1421,9 @@ function processChunk(chunk) {
             if (chunk.end) {
                 chunk.format = chunk.format || message.format || chunk.recipient || 'output';
                 message.isComplete = true;
+                if (message.format === 'compaction_status') {
+                    message.content = buildCompactionMarkerContent(message.created_at || new Date().toISOString());
+                }
                 saveCompletedAssistantMessage(message);
                 clearActiveMessageId(chunk);
             }
@@ -1406,8 +1435,16 @@ function processChunk(chunk) {
             updateMessageContent(message.id, message.content);
         }
 
-        resolve();
+        resolve({ scheduleThinking: shouldScheduleThinkingAfterChunk(chunk) });
     });
+}
+
+function shouldScheduleThinkingAfterChunk(chunk) {
+    if (!chunk || chunk.end || chunk.error) return false;
+    if (chunk.format === 'tool_status' || chunk.format === 'compaction_status') return false;
+    if (chunk.type === 'code' || chunk.type === 'console' || chunk.type === 'confirmation') return false;
+    if (chunk.role === 'computer') return false;
+    return chunk.role === 'assistant' && (chunk.type === 'message' || chunk.type === 'text');
 }
 
 // Function to append a message to the chat display, gets called on chunk start
@@ -1427,7 +1464,11 @@ function appendMessage(message, options = {}) {
     const contentElement = document.createElement('div');
     contentElement.classList.add('content');
     contentElement.setAttribute('data-type', message.type);
-    if (message.role === 'user' && message.type === 'message') {
+    if (isCompactionMarkerMessage(message)) {
+        messageElement.classList.add('compaction-marker-message');
+        contentElement.classList.add('compaction-marker-content');
+        contentElement.innerHTML = renderCompactionMarkerHtml(message);
+    } else if (message.role === 'user' && message.type === 'message') {
         const userContentWrapper = document.createElement('div');
         userContentWrapper.classList.add('user-message-wrapper');
 
@@ -1613,6 +1654,16 @@ function updateMessageContent(id, content) {
         }
         
         // Handle different message types (more robust Math rendering)
+        if (isCompactionMarkerMessage(message) && message.isComplete) {
+            messageElement.classList.add('compaction-marker-message');
+            messageElement.classList.remove('tool-status-message');
+            messageElement.classList.remove('compaction-status-message');
+            contentDiv.classList.add('compaction-marker-content');
+            contentDiv.classList.remove('tool-status-content');
+            contentDiv.innerHTML = renderCompactionMarkerHtml(message);
+            return;
+        }
+
         if (message.format === 'tool_status' || message.format === 'compaction_status') {
             messageElement.classList.add('tool-status-message');
             contentDiv.classList.add('tool-status-content');
@@ -1699,7 +1750,7 @@ function updateMessageContent(id, content) {
                     codeBlock.textContent = content;
                     Prism.highlightElement(codeBlock);
                 }
-                addCopyButtons();
+                ensureCodeControls(message.id);
                 ensureStdoutElements(message.id);
                 updateStdoutAvailability(message.id);
                 restoreStdoutPanelState(message.id, preservedStdoutState);
@@ -1837,6 +1888,54 @@ function escapeHtml(text) {
     return text.replace(/[&<>"']/g, function(m) { return map[m]; });
 }
 
+function buildCompactionMarkerContent(timestamp = new Date().toISOString()) {
+    return `${COMPACTION_MARKER_PREFIX}${timestamp}${COMPACTION_MARKER_SUFFIX}`;
+}
+
+function parseCompactionMarker(content) {
+    if (typeof content !== 'string') return null;
+    const trimmed = content.trim();
+    if (!trimmed.startsWith(COMPACTION_MARKER_PREFIX) || !trimmed.endsWith(COMPACTION_MARKER_SUFFIX)) {
+        return null;
+    }
+    const timestamp = trimmed.slice(COMPACTION_MARKER_PREFIX.length, -COMPACTION_MARKER_SUFFIX.length);
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+    return { timestamp, date };
+}
+
+function isCompactionMarkerMessage(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type || 'message';
+    return msgType === 'message' && Boolean(parseCompactionMarker(message.content));
+}
+
+function formatCompactionTime(date) {
+    return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short'
+    });
+}
+
+function renderCompactionMarkerHtml(message, { includeIcon = true } = {}) {
+    const marker = parseCompactionMarker(message?.content) || { date: new Date(message?.created_at || Date.now()) };
+    const iconHtml = includeIcon
+        ? '<span class="material-icons compaction-marker-icon" aria-hidden="true">compress</span>'
+        : '';
+    return `
+        <div class="compaction-marker" role="status">
+            ${iconHtml}
+            <span>Conversation compacted ${escapeHtml(formatCompactionTime(marker.date))}</span>
+        </div>
+    `;
+}
+
 function formatAttachmentLabel(count) {
     return count === 1 ? 'File' : 'Files';
 }
@@ -1960,6 +2059,161 @@ function addCopyButtons(root) {
     });
 }
 
+function getCodeMessageElements() {
+    return Array.from(chatDisplay.querySelectorAll('.message')).filter(element => {
+        const id = element.getAttribute('data-id');
+        const message = messages.find(msg => msg.id === id);
+        return shouldTrackCodeMessage(message);
+    });
+}
+
+function setCodeVisibility(codeId, showCode) {
+    const messageElement = getCodeMessageElement(codeId);
+    if (!messageElement) return;
+    messageElement.classList.toggle('code-collapsed', !showCode);
+    const button = messageElement.querySelector('.code-toggle-button');
+    if (button) {
+        button.textContent = showCode ? 'Hide Code' : 'Show Code';
+        button.setAttribute('aria-expanded', String(showCode));
+    }
+}
+
+function applyCodeVisibilityToAll(showCode) {
+    getCodeMessageElements().forEach(element => {
+        const codeId = element.getAttribute('data-id');
+        setCodeVisibility(codeId, showCode);
+    });
+}
+
+function syncCodeApplyAllCheckboxes() {
+    chatDisplay.querySelectorAll('.code-apply-all input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = codeApplyAllEnabled;
+    });
+}
+
+function getOutputMessageElements() {
+    return Array.from(chatDisplay.querySelectorAll('.message')).filter(element => {
+        const codeId = element.getAttribute('data-id');
+        return (codeConsoleMap.get(codeId) || []).length > 0;
+    });
+}
+
+function syncOutputApplyAllCheckboxes() {
+    chatDisplay.querySelectorAll('.output-apply-all input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = outputApplyAllEnabled;
+    });
+}
+
+function setStdoutVisibility(codeId, showOutput, { autoScroll = false } = {}) {
+    const { button, panel } = ensureStdoutElements(codeId);
+    if (!button || !panel || button.disabled) return;
+    panel.classList.toggle('open', showOutput);
+    panel.setAttribute('aria-hidden', showOutput ? 'false' : 'true');
+    button.textContent = showOutput ? 'Hide Output' : 'Show Output';
+    button.setAttribute('aria-expanded', String(showOutput));
+    if (showOutput) {
+        renderStdoutPanel(codeId);
+        if (autoScroll) {
+            autoScrollStdoutPanel(panel);
+        }
+    }
+}
+
+function applyStdoutVisibilityToAll(showOutput) {
+    getOutputMessageElements().forEach(element => {
+        const codeId = element.getAttribute('data-id');
+        setStdoutVisibility(codeId, showOutput);
+    });
+}
+
+function ensureCodeControls(codeId) {
+    const messageElement = getCodeMessageElement(codeId);
+    if (!messageElement) return {};
+    const contentElement = messageElement.querySelector('.content');
+    const pre = contentElement?.querySelector(':scope > pre');
+    const codeBlock = pre?.querySelector('code');
+    if (!contentElement || !pre || !codeBlock) return {};
+
+    let controls = contentElement.querySelector(':scope > .code-controls');
+    if (!controls) {
+        controls = document.createElement('div');
+        controls.className = 'code-controls';
+
+        const left = document.createElement('div');
+        left.className = 'code-controls-left';
+
+        const toggleButton = document.createElement('button');
+        toggleButton.type = 'button';
+        toggleButton.className = 'code-toggle-button';
+        toggleButton.setAttribute('aria-expanded', 'true');
+        toggleButton.textContent = 'Hide Code';
+        toggleButton.addEventListener('click', () => {
+            const showCode = messageElement.classList.contains('code-collapsed');
+            if (codeApplyAllEnabled) {
+                codeVisibilityAllMode = showCode;
+                applyCodeVisibilityToAll(showCode);
+            } else {
+                setCodeVisibility(codeId, showCode);
+            }
+        });
+
+        const applyAllLabel = document.createElement('label');
+        applyAllLabel.className = 'code-apply-all';
+        const applyAllCheckbox = document.createElement('input');
+        applyAllCheckbox.type = 'checkbox';
+        applyAllCheckbox.checked = codeApplyAllEnabled;
+        applyAllCheckbox.addEventListener('change', () => {
+            codeApplyAllEnabled = applyAllCheckbox.checked;
+            if (!codeApplyAllEnabled) {
+                codeVisibilityAllMode = null;
+            } else {
+                codeVisibilityAllMode = !messageElement.classList.contains('code-collapsed');
+            }
+            syncCodeApplyAllCheckboxes();
+        });
+        applyAllLabel.appendChild(applyAllCheckbox);
+        applyAllLabel.appendChild(document.createTextNode(' all'));
+
+        left.appendChild(toggleButton);
+        left.appendChild(applyAllLabel);
+
+        controls.appendChild(left);
+        contentElement.insertBefore(controls, pre);
+    }
+    ensureCodeBlockCopyButton(pre, codeBlock);
+
+    if (codeVisibilityAllMode !== null) {
+        setCodeVisibility(codeId, codeVisibilityAllMode);
+    } else {
+        setCodeVisibility(codeId, !messageElement.classList.contains('code-collapsed'));
+    }
+    syncCodeApplyAllCheckboxes();
+    return { controls, pre, codeBlock };
+}
+
+function ensureCodeBlockCopyButton(pre, codeBlock) {
+    if (!pre || !codeBlock || pre.querySelector(':scope > .copy-button')) return;
+    const button = document.createElement('button');
+    button.className = 'copy-button';
+    button.type = 'button';
+    button.textContent = 'Copy';
+    pre.appendChild(button);
+    button.addEventListener('click', () => {
+        navigator.clipboard.writeText(codeBlock.innerText).then(() => {
+            button.textContent = 'Copied!';
+            setTimeout(() => {
+                button.textContent = 'Copy';
+            }, 2000);
+        }).catch((err) => {
+            console.error('Failed to copy code: ', err);
+            button.textContent = 'Error';
+            setTimeout(() => {
+                button.textContent = 'Copy';
+            }, 2000);
+        });
+    });
+}
+
 function resetStdoutState() {
     codeConsoleMap.clear();
     lastExecutableCodeId = null;
@@ -2063,13 +2317,20 @@ function renderActiveLineSpinner() {
     if (!activeLineCodeId || !isActiveLineRunning) return;
     const messageElement = getCodeMessageElement(activeLineCodeId);
     if (!messageElement) return;
-    const pre = messageElement.querySelector('pre');
-    if (!pre) return;
-    let spinner = pre.querySelector('.code-spinner');
-    if (!spinner) {
-        spinner = document.createElement('div');
-        spinner.className = 'code-spinner';
-        pre.appendChild(spinner);
+    const contentElement = messageElement.querySelector('.content');
+    const pre = contentElement?.querySelector(':scope > pre');
+    if (!contentElement || !pre) return;
+    let status = contentElement.querySelector(':scope > .code-execution-status');
+    if (!status) {
+        status = document.createElement('div');
+        status.className = 'code-execution-status';
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+        status.innerHTML = `
+            <span class="code-spinner" aria-hidden="true"></span>
+            <span>Analyzing</span>
+        `;
+        pre.insertAdjacentElement('afterend', status);
     }
 }
 
@@ -2077,9 +2338,9 @@ function removeActiveLineSpinner() {
     if (!activeLineCodeId) return;
     const messageElement = getCodeMessageElement(activeLineCodeId);
     if (!messageElement) return;
-    const spinner = messageElement.querySelector('pre .code-spinner');
-    if (spinner) {
-        spinner.remove();
+    const status = messageElement.querySelector('.code-execution-status');
+    if (status) {
+        status.remove();
     }
 }
 
@@ -2207,7 +2468,25 @@ function ensureStdoutElements(codeId) {
         button.setAttribute('aria-expanded', 'false');
         button.disabled = true;
         button.addEventListener('click', () => toggleStdoutPanel(codeId));
+        const applyAllLabel = document.createElement('label');
+        applyAllLabel.className = 'output-apply-all';
+        const applyAllCheckbox = document.createElement('input');
+        applyAllCheckbox.type = 'checkbox';
+        applyAllCheckbox.checked = outputApplyAllEnabled;
+        applyAllCheckbox.addEventListener('change', () => {
+            outputApplyAllEnabled = applyAllCheckbox.checked;
+            if (!outputApplyAllEnabled) {
+                outputVisibilityAllMode = null;
+            } else {
+                const currentPanel = messageElement.querySelector('.stdout-panel');
+                outputVisibilityAllMode = Boolean(currentPanel?.classList.contains('open'));
+            }
+            syncOutputApplyAllCheckboxes();
+        });
+        applyAllLabel.appendChild(applyAllCheckbox);
+        applyAllLabel.appendChild(document.createTextNode(' all'));
         controls.appendChild(button);
+        controls.appendChild(applyAllLabel);
         contentElement.appendChild(controls);
     }
 
@@ -2220,6 +2499,7 @@ function ensureStdoutElements(codeId) {
         contentElement.appendChild(panel);
     }
 
+    syncOutputApplyAllCheckboxes();
     return { messageElement, contentElement, controls, button, panel };
 }
 
@@ -2230,14 +2510,15 @@ function updateStdoutAvailability(codeId) {
     }
     const hasOutput = (codeConsoleMap.get(codeId) || []).length > 0;
     controls.classList.toggle('stdout-hidden', !hasOutput);
-    button.disabled = !hasOutput;
     if (!hasOutput) {
-        button.textContent = 'Show Output';
-        button.setAttribute('aria-expanded', 'false');
-        if (panel) {
-            panel.classList.remove('open');
-            panel.setAttribute('aria-hidden', 'true');
-        }
+        button.disabled = false;
+        setStdoutVisibility(codeId, false);
+        button.disabled = true;
+    } else if (outputVisibilityAllMode !== null) {
+        button.disabled = false;
+        setStdoutVisibility(codeId, outputVisibilityAllMode);
+    } else {
+        button.disabled = false;
     }
 }
 
@@ -2323,17 +2604,16 @@ function autoScrollStdoutPanel(panel) {
 function toggleStdoutPanel(codeId) {
     const { button, panel } = ensureStdoutElements(codeId);
     if (!button || !panel || button.disabled) return;
-    const isOpen = panel.classList.toggle('open');
-    if (isOpen) {
-        panel.setAttribute('aria-hidden', 'false');
-        button.textContent = 'Hide Output';
-        renderStdoutPanel(codeId);
-        autoScrollStdoutPanel(panel);
+    const showOutput = !panel.classList.contains('open');
+    if (outputApplyAllEnabled) {
+        outputVisibilityAllMode = showOutput;
+        applyStdoutVisibilityToAll(showOutput);
+        if (showOutput) {
+            autoScrollStdoutPanel(panel);
+        }
     } else {
-        panel.setAttribute('aria-hidden', 'true');
-        button.textContent = 'Show Output';
+        setStdoutVisibility(codeId, showOutput, { autoScroll: showOutput });
     }
-    button.setAttribute('aria-expanded', String(isOpen));
 }
 
 function refreshStdoutPanel(codeId, { autoScroll = false } = {}) {
@@ -2772,6 +3052,9 @@ function shouldIncludeMessageInExport(message) {
 }
 
 function renderMessageContentForExport(message) {
+    if (isCompactionMarkerMessage(message)) {
+        return renderCompactionMarkerHtml(message, { includeIcon: false });
+    }
     const msgType = message.type || message.message_type || 'message';
     const format = message.format || message.message_format || '';
     if (msgType === 'message') {
@@ -2896,6 +3179,7 @@ function attachStdoutControlsForExport(contentElement, codeId, outputs) {
     button.setAttribute('data-stdout-target', codeId);
     button.setAttribute('aria-expanded', 'false');
     controls.appendChild(button);
+    controls.insertAdjacentHTML('beforeend', '<label class="output-apply-all"><input type="checkbox" data-output-apply-all> all</label>');
     contentElement.appendChild(controls);
 
     const panel = document.createElement('div');
@@ -2908,6 +3192,20 @@ function attachStdoutControlsForExport(contentElement, codeId, outputs) {
         </div>
     `).join('');
     contentElement.appendChild(panel);
+}
+
+function attachCodeControlsForExport(contentElement, codeId) {
+    const pre = contentElement?.querySelector(':scope > pre');
+    if (!contentElement || !pre) return;
+    const controls = document.createElement('div');
+    controls.className = 'code-controls';
+    controls.innerHTML = `
+        <div class="code-controls-left">
+            <button type="button" class="code-toggle-button" data-code-target="${codeId}" aria-expanded="true">Hide Code</button>
+            <label class="code-apply-all"><input type="checkbox" data-code-apply-all> all</label>
+        </div>
+    `;
+    contentElement.insertBefore(controls, pre);
 }
 
 function getMessageDataForExport(messageId) {
@@ -2954,14 +3252,23 @@ function prepareChatCloneForExport() {
         
         contentEl.setAttribute('data-type', messageData.type || messageData.message_type || 'message');
         contentEl.innerHTML = renderMessageContentForExport(messageData);
+
+        if (isCompactionMarkerMessage(messageData)) {
+            element.classList.add('compaction-marker-message');
+            contentEl.classList.add('compaction-marker-content');
+            return;
+        }
         
         if (isExportConsoleOutput(messageData)) {
             element.classList.add('console-output-message');
         }
 
         const outputs = stdoutAssociations.get(messageId);
-        if (outputs && outputs.length && isExportCodeMessage(messageData)) {
-            attachStdoutControlsForExport(contentEl, messageId, outputs);
+        if (isExportCodeMessage(messageData)) {
+            attachCodeControlsForExport(contentEl, messageId);
+            if (outputs && outputs.length) {
+                attachStdoutControlsForExport(contentEl, messageId, outputs);
+            }
         }
     });
     
@@ -3210,21 +3517,98 @@ async function createSelfContainedHTML() {
             };
             attachCopyButtons();
 
+            let codeApplyAllEnabled = false;
+            let codeVisibilityAllMode = null;
+            const syncCodeCheckboxes = () => {
+                document.querySelectorAll('[data-code-apply-all]').forEach(checkbox => {
+                    checkbox.checked = codeApplyAllEnabled;
+                });
+            };
+            const setCodeVisible = (targetId, showCode) => {
+                const button = document.querySelector('[data-code-target="' + targetId + '"]');
+                const message = button ? button.closest('.message') : null;
+                if (!message) return;
+                message.classList.toggle('code-collapsed', !showCode);
+                button.textContent = showCode ? 'Hide Code' : 'Show Code';
+                button.setAttribute('aria-expanded', String(showCode));
+            };
+            const applyCodeVisibleToAll = (showCode) => {
+                document.querySelectorAll('[data-code-target]').forEach(button => {
+                    const targetId = button.getAttribute('data-code-target');
+                    if (targetId) setCodeVisible(targetId, showCode);
+                });
+            };
+            document.querySelectorAll('[data-code-target]').forEach(button => {
+                button.addEventListener('click', function() {
+                    const targetId = button.getAttribute('data-code-target');
+                    if (!targetId) return;
+                    const message = button.closest('.message');
+                    const showCode = message ? message.classList.contains('code-collapsed') : true;
+                    if (codeApplyAllEnabled) {
+                        codeVisibilityAllMode = showCode;
+                        applyCodeVisibleToAll(showCode);
+                    } else {
+                        setCodeVisible(targetId, showCode);
+                    }
+                });
+            });
+            document.querySelectorAll('[data-code-apply-all]').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    codeApplyAllEnabled = checkbox.checked;
+                    codeVisibilityAllMode = codeApplyAllEnabled ? codeVisibilityAllMode : null;
+                    syncCodeCheckboxes();
+                });
+            });
+            let outputApplyAllEnabled = false;
+            let outputVisibilityAllMode = null;
+            const syncOutputCheckboxes = () => {
+                document.querySelectorAll('[data-output-apply-all]').forEach(checkbox => {
+                    checkbox.checked = outputApplyAllEnabled;
+                });
+            };
+            const setOutputVisible = (targetId, showOutput, shouldScroll) => {
+                const button = document.querySelector('[data-stdout-target="' + targetId + '"]');
+                const panel = targetId ? document.querySelector('.stdout-panel[data-stdout-target="' + targetId + '"]') : null;
+                if (!button || !panel) return;
+                panel.classList.toggle('open', showOutput);
+                panel.setAttribute('aria-hidden', showOutput ? 'false' : 'true');
+                button.textContent = showOutput ? 'Hide Output' : 'Show Output';
+                button.setAttribute('aria-expanded', String(showOutput));
+                if (showOutput && shouldScroll) {
+                    panel.scrollTop = panel.scrollHeight;
+                    panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                    attachCopyButtons(panel);
+                }
+            };
+            const applyOutputVisibleToAll = (showOutput) => {
+                document.querySelectorAll('[data-stdout-target]').forEach(button => {
+                    const targetId = button.getAttribute('data-stdout-target');
+                    if (targetId) setOutputVisible(targetId, showOutput, false);
+                });
+            };
+            document.querySelectorAll('[data-output-apply-all]').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    outputApplyAllEnabled = checkbox.checked;
+                    outputVisibilityAllMode = outputApplyAllEnabled ? outputVisibilityAllMode : null;
+                    syncOutputCheckboxes();
+                });
+            });
             document.querySelectorAll('.stdout-button').forEach(function(button) {
                 button.addEventListener('click', function() {
                     const targetId = button.getAttribute('data-stdout-target');
                     if (!targetId) return;
-                    const selector = '.stdout-panel[data-stdout-target="' + targetId + '"]';
-                    const panel = document.querySelector(selector);
+                    const panel = document.querySelector('.stdout-panel[data-stdout-target="' + targetId + '"]');
                     if (!panel) return;
-                    const isOpen = panel.classList.toggle('open');
-                    panel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
-                    button.textContent = isOpen ? 'Hide Output' : 'Show Output';
-                    button.setAttribute('aria-expanded', String(isOpen));
-                    if (isOpen) {
-                        panel.scrollTop = panel.scrollHeight;
-                        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                        attachCopyButtons(panel);
+                    const showOutput = !panel.classList.contains('open');
+                    if (outputApplyAllEnabled) {
+                        outputVisibilityAllMode = showOutput;
+                        applyOutputVisibleToAll(showOutput);
+                        if (showOutput) {
+                            panel.scrollTop = panel.scrollHeight;
+                            panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                        }
+                    } else {
+                        setOutputVisible(targetId, showOutput, showOutput);
                     }
                 });
             });

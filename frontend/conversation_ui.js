@@ -194,9 +194,22 @@ function updateLoadMoreState() {
     loadMoreButton.textContent = isLoading ? 'Loading...' : 'Load more';
 }
 
+function parseUtcDate(dateString) {
+    if (!dateString) return null;
+    const value = String(dateString);
+    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+    const date = new Date(hasTimezone ? value : `${value}Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatConversationHistoryDate(dateString) {
+    const date = parseUtcDate(dateString);
+    if (!date) return '';
+    return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+}
+
 function createConversationItem(conversation) {
-    const date = new Date(conversation.created_at).toLocaleDateString();
-    const time = new Date(conversation.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    const createdDate = formatConversationHistoryDate(conversation.created_at);
     const title = conversation.title || 'Untitled Conversation';
     const isCurrentConversation = conversation.id === conversationManager.getCurrentConversationId();
     
@@ -206,7 +219,7 @@ function createConversationItem(conversation) {
                 <div class="conversation-header">
                     <h4 class="conversation-title">${escapeHtml(title)}</h4>
                     <div class="conversation-meta">
-                        <span class="conversation-date">${date} ${time}</span>
+                        <span class="conversation-date">${createdDate}</span>
                         ${conversation.is_favorite ? '<span class="material-icons favorite-indicator">star</span>' : ''}
                         ${conversation.is_shared ? '<span class="material-icons shared-indicator">share</span>' : ''}
                     </div>
