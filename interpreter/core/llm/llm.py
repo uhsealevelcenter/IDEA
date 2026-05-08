@@ -69,6 +69,7 @@ class Llm:
 
         # Optional settings
         self.context_window = None
+        self.max_input_tokens = None
         self.max_tokens = None
         self.api_base = None
         self.api_key = None
@@ -331,7 +332,13 @@ class Llm:
 
         # 3) Run tokentrim on text-only messages.
         try:
-            if self.context_window and self.max_tokens:
+            if self.max_input_tokens:
+                trimmed_text = tt.trim(
+                    text_msgs,
+                    system_message=raw_system_message,
+                    max_tokens=self.max_input_tokens,
+                )
+            elif self.context_window and self.max_tokens:
                 trim_to = self.context_window - self.max_tokens - 25  # small buffer
                 trimmed_text = tt.trim(
                     text_msgs,

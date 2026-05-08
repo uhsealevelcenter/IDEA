@@ -98,8 +98,27 @@ from core.mcp_manager import mcp_manager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+LONG_CONTEXT_TOKEN_THRESHOLD = int(
+    os.getenv("IDEA_LONG_CONTEXT_TOKEN_THRESHOLD", "272000")
+)
 COMPACTION_INPUT_TOKEN_THRESHOLD = int(
-    os.getenv("IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD", "10000")
+    os.getenv(
+        "IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD",
+        str(int(LONG_CONTEXT_TOKEN_THRESHOLD * 0.5)),
+    )
+)
+# For compaction-flow testing, set IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD=10000.
+MAX_INPUT_TOKEN_THRESHOLD = int(
+    os.getenv(
+        "IDEA_MAX_INPUT_TOKEN_THRESHOLD",
+        str(int(LONG_CONTEXT_TOKEN_THRESHOLD * 0.9)),
+    )
+)
+MAX_COMPLETION_TOKENS = int(
+    os.getenv("IDEA_MAX_COMPLETION_TOKENS", "64000")
+)
+GPT55_CONTEXT_WINDOW = int(
+    os.getenv("IDEA_GPT55_CONTEXT_WINDOW", "1050000")
 )
 COMPACTION_IMAGE_TOKEN_ESTIMATE = int(
     os.getenv("IDEA_COMPACTION_IMAGE_TOKEN_ESTIMATE", "1200")
@@ -1415,8 +1434,9 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         #interpreter.llm.reasoning_effort = "low" # GPT-5.1 "none" | "low" | "medium" | "high"
         #interpreter.llm.reasoning_effort = "minimal" # GPT-5 "minimal" | "low" | "medium" | "high"
         interpreter.llm.temperature = 0.2 # Temperature not used by reasoning models, set to default (e.g., GPT-5)
-        interpreter.llm.context_window = 400000 # GPT-5 (max context window)
-        interpreter.llm.max_completion_tokens = 64000 # GPT-5 (128K, previously max_tokens, max tokens generated per request (prompt + max_completion_tokens can not exceed context_window)
+        interpreter.llm.context_window = GPT55_CONTEXT_WINDOW # GPT-5.5 max context window
+        interpreter.llm.max_input_tokens = MAX_INPUT_TOKEN_THRESHOLD # Keep request input below long-context pricing guardrail
+        interpreter.llm.max_tokens = MAX_COMPLETION_TOKENS # Responses max_output_tokens
 
         # # Intelligence models (e.g., GPT4.1)
         # interpreter.llm.temperature = 0.2 # Temperature (0-2, float) --> fairly deterministic
