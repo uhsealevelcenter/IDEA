@@ -4,6 +4,7 @@
  */
 
 let isShowingFavorites = false;
+let conversationUIInitialized = false;
 // conversationManager is declared in assistant.js
 
 // Initialize conversation UI when DOM is loaded
@@ -12,15 +13,24 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initializeConversationUI() {
-    // Initialize conversation manager
-    conversationManager = new ConversationManager();
+    if (conversationUIInitialized) {
+        return true;
+    }
+
+    if (!conversationManager) {
+        return false;
+    }
     
     // Set up event listeners for conversation UI
     setupConversationEventListeners();
     
     // Set up conversation manager listeners
     setupConversationManagerListeners();
+    conversationUIInitialized = true;
+    return true;
 }
+
+window.initializeConversationUI = initializeConversationUI;
 
 function setupConversationEventListeners() {
     // Open conversations modal

@@ -2693,6 +2693,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Initialize conversation manager
     resetStdoutState();
     conversationManager = new ConversationManager();
+    if (typeof window.initializeConversationUI === 'function') {
+        window.initializeConversationUI();
+    }
 
     await loadCurrentUserProfile();
     if (currentUserProfile?.is_guest) {
