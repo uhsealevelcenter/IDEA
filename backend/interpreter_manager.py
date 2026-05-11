@@ -49,7 +49,8 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         interpreter.llm.supports_vision = True
 
         ## OpenAI Models
-        interpreter.llm.model = "gpt-5.5-2026-04-23" # "Reasoning" model
+        interpreter.llm.model = "gpt-5.4-nano" # "Reasoning" model
+        #interpreter.llm.model = "gpt-5.5-2026-04-23" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.2-2025-12-11" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.1-2025-11-13" # "Reasoning" model

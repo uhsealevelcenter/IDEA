@@ -42,7 +42,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \
     pip install --no-cache-dir wheel setuptools cython numpy && \
     pip install --no-cache-dir rasterio==1.4.3 && \
-    python -m pip install -r requirements.txt
+    python -m pip install -r requirements.txt && \
+    pip install --no-cache-dir --upgrade "litellm==1.83.7"
 
 # Final stage
 FROM python:3.11-slim
