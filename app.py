@@ -131,6 +131,14 @@ COMPACTION_DEVELOPER_MESSAGE = (
     "compaction item summarizes the earlier Responses thread. Continue seamlessly "
     "for the user; do not mention compaction unless directly relevant."
 )
+IDEA_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
+IDEA_GUEST_MODEL = "gpt-5.4-mini-2026-03-17"
+IDEA_GUEST_MODEL_DISCLOSURE = (
+    "\n\nIDEA guest sessions use the less expensive model "
+    f"{IDEA_GUEST_MODEL} with medium reasoning. If the user asks about model "
+    "selection, service limits, performance differences, or why behavior differs "
+    "from a regular IDEA account, disclose this plainly."
+)
 
 # # Inject reasoning_effort at the completions layer (affects both text + tool paths)
 # _orig_completions = llm_mod.fixed_litellm_completions
@@ -1425,20 +1433,24 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         # Get active system prompt from prompt manager
         active_prompt = ""
         user = None
+        is_guest = False
         if token and db is not None:
             user = get_current_user(token)
             if user:
                 active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
+                is_guest = _is_guest_user(user.id)
         if not active_prompt and (token and db and user):
             # Fallback to previous file-backed default behavior for safety
             active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
         interpreter.system_message = sys_prompt + active_prompt
+        if is_guest:
+            interpreter.system_message += IDEA_GUEST_MODEL_DISCLOSURE
 
         # Enable vision
         interpreter.llm.supports_vision = True
 
         ## OpenAI Models
-        interpreter.llm.model = "gpt-5.5-2026-04-23" # "Reasoning" model
+        interpreter.llm.model = IDEA_GUEST_MODEL if is_guest else IDEA_DEFAULT_MODEL # "Reasoning" model
         #interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.2-2025-12-11" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.1-2025-11-13" # "Reasoning" model
