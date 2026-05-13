@@ -27,6 +27,9 @@ from utils.custom_functions import custom_tool
 import redis
 from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter
+from interpreter.core.llm.utils.convert_to_openai_responses_messages import (
+    convert_to_openai_responses_messages,
+)
 from slowapi.errors import RateLimitExceeded
 import models
 from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, \
@@ -107,7 +110,7 @@ COMPACTION_INPUT_TOKEN_THRESHOLD = int(
         str(int(LONG_CONTEXT_TOKEN_THRESHOLD * 0.5)),
     )
 )
-# For compaction-flow testing, set IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD=10000.
+# For local compaction-flow testing, set IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD=10000.
 MAX_INPUT_TOKEN_THRESHOLD = int(
     os.getenv(
         "IDEA_MAX_INPUT_TOKEN_THRESHOLD",
@@ -1183,23 +1186,39 @@ def compact_interpreter_runtime(
     estimated_tokens: int,
 ) -> list[dict[str, Any]]:
     previous_response_id = getattr(interpreter.llm, "previous_response_id", None)
-    if not previous_response_id:
-        return []
+    compact_input: list[dict[str, Any]] = []
+    compact_kwargs: dict[str, Any] = {
+        "model": interpreter.llm.model,
+        "instructions": interpreter.system_message,
+    }
 
-    logger.info(
-        "Compacting interpreter runtime at approximately %d input tokens from response %s",
-        estimated_tokens,
-        previous_response_id,
-    )
+    if previous_response_id:
+        logger.info(
+            "Compacting live interpreter runtime at approximately %d input tokens from response %s",
+            estimated_tokens,
+            previous_response_id,
+        )
+        compact_kwargs["previous_response_id"] = previous_response_id
+        compact_kwargs["input"] = []
+    else:
+        compact_input = convert_to_openai_responses_messages(
+            interpreter.messages,
+            shrink_images=interpreter.shrink_images,
+            interpreter=None,
+        )
+        if not compact_input:
+            return []
+        logger.info(
+            "Compacting restored local interpreter history at approximately %d input tokens with %d input items",
+            estimated_tokens,
+            len(compact_input),
+        )
+        compact_kwargs["input"] = compact_input
+
     original_drop_params = litellm.drop_params
     try:
         litellm.drop_params = False
-        compacted = compact_responses(
-            model=interpreter.llm.model,
-            instructions=interpreter.system_message,
-            previous_response_id=previous_response_id,
-            input=[],
-        )
+        compacted = compact_responses(**compact_kwargs)
     finally:
         litellm.drop_params = original_drop_params
     compacted_output = _response_to_dict(compacted).get("output") or []
@@ -1723,16 +1742,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             interpreter,
             [*interpreter.messages, messages[-1]],
         )
-        should_compact_runtime = (
-            estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
-            and bool(getattr(interpreter.llm, "previous_response_id", None))
-        )
-        if estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD and not should_compact_runtime:
-            logger.info(
-                "Runtime is above compaction threshold (%d >= %d) but no previous_response_id is available.",
-                estimated_input_tokens,
-                COMPACTION_INPUT_TOKEN_THRESHOLD,
-            )
+        should_compact_runtime = estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
 
         # MCP tools are now available via mcp_tools.py (generated at startup and when connections change)
         # No need to regenerate on every chat request
