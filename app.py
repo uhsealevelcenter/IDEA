@@ -75,7 +75,7 @@ from auth import (
 from core.db import engine
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
-from utils.pqa_multi_tenant import ensure_user_pqa_settings
+from utils.pqa_multi_tenant import delete_user_pqa_state, ensure_user_pqa_settings
 from core.mcp_manager import mcp_manager
 
 #import interpreter.core.llm.llm as llm_mod
@@ -870,6 +870,10 @@ def expire_guest_user(user_id_value: str) -> None:
             db_session.commit()
 
     revoke_user_runtime_state(user_id)
+    try:
+        delete_user_pqa_state(user_id)
+    except Exception as error:
+        logger.error(f"Failed to delete expired guest PaperQA state for {user_id_value}: {error}")
     redis_client.zrem(GUEST_USER_EXPIRY_ZSET, user_id_value)
     logger.info(f"Expired guest user {user_id_value}")
 
