@@ -360,8 +360,51 @@ def respond(interpreter):
 
                 ## ↓ CODE IS RUN HERE
 
-                for line in interpreter.computer.run(language, code, stream=True):
-                    yield {"role": "computer", **line}
+                execution_timed_out = False
+                timeout_developer_notice = None
+                execution_timeout = getattr(interpreter, "code_execution_timeout", None)
+                execution_started_at = time.time()
+                yield {
+                    "role": "computer",
+                    "type": "message",
+                    "format": "execution_status",
+                    "content": "start",
+                }
+                try:
+                    for line in interpreter.computer.run(language, code, stream=True):
+                        if (
+                            execution_timeout
+                            and time.time() - execution_started_at > execution_timeout
+                        ):
+                            execution_timed_out = True
+                            try:
+                                interpreter.computer.stop()
+                            except Exception:
+                                pass
+                            yield {
+                                "role": "computer",
+                                "type": "console",
+                                "format": "output",
+                                "content": (
+                                    f"Execution timed out after {execution_timeout:g} seconds."
+                                ),
+                            }
+                            timeout_developer_notice = {
+                                "role": "developer",
+                                "type": "message",
+                                "content": (
+                                    "Inform the user that the prior code execution did not complete."
+                                ),
+                            }
+                            break
+                        yield {"role": "computer", **line}
+                finally:
+                    yield {
+                        "role": "computer",
+                        "type": "message",
+                        "format": "execution_status",
+                        "content": "timeout" if execution_timed_out else "end",
+                    }
 
                 ## ↑ CODE IS RUN HERE
 
@@ -399,6 +442,8 @@ def respond(interpreter):
                     "format": "active_line",
                     "content": None,
                 }
+                if timeout_developer_notice:
+                    interpreter.messages.append(timeout_developer_notice)
 
             except KeyboardInterrupt:
                 try:

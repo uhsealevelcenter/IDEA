@@ -41,6 +41,8 @@ let codeApplyAllEnabled = false;
 let codeVisibilityAllMode = null;
 let outputApplyAllEnabled = false;
 let outputVisibilityAllMode = null;
+let activeExecutionCodeId = null;
+let isExecutionRunning = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
 const THINKING_PAUSE_DELAY_MS = 1400;
@@ -1269,8 +1271,8 @@ function resetButtons() {
     stopButton.disabled = true;
     controller = null;
     isGenerating = false;
-    if (stopRequested || isActiveLineRunning) {
-        const codeId = stopRequestedCodeId || activeLineCodeId || lastExecutableCodeId || pendingConsoleParentId;
+    if (stopRequested || isActiveLineRunning || isExecutionRunning) {
+        const codeId = stopRequestedCodeId || activeExecutionCodeId || activeLineCodeId || lastExecutableCodeId || pendingConsoleParentId;
         if (codeId && !hasInterruptionNotice(codeId)) {
             const codeMessage = getMessageById(codeId);
             if (isShellCodeMessage(codeMessage) || stopRequested || isActiveLineRunning) {
@@ -1281,6 +1283,8 @@ function resetButtons() {
     stopRequested = false;
     stopRequestedCodeId = null;
     isActiveLineRunning = false;
+    isExecutionRunning = false;
+    activeExecutionCodeId = null;
     removeActiveLineSpinner();
     activeLineCodeId = null;
 }
@@ -1367,6 +1371,11 @@ function processChunk(chunk) {
     chunk = normalizeIncomingChunk(chunk);
     return new Promise((resolve) => {
         removeWorkingIndicator();
+        if (chunk.format === 'execution_status') {
+            handleExecutionStatusChunk(chunk.content);
+            resolve({ scheduleThinking: false });
+            return;
+        }
         if (chunk.type === 'console' && chunk.format === 'active_line') {
             //console.log(chunk); // Debug log for active line chunks
             handleActiveLineChunk(chunk.content);
@@ -1598,15 +1607,44 @@ function appendExternalMessage({ role = 'assistant', content = '', type = 'messa
 window.appendExternalMessage = appendExternalMessage;
 
 // Modify updateMessageContent with better error handling
+function handleExecutionStatusChunk(content) {
+    const status = typeof content === 'string' ? content.toLowerCase() : '';
+    if (status === 'start') {
+        const codeId = lastExecutableCodeId || pendingConsoleParentId || activeLineCodeId || null;
+        if (!codeId) return;
+        activeExecutionCodeId = codeId;
+        activeLineCodeId = codeId;
+        isExecutionRunning = true;
+        isActiveLineRunning = true;
+        renderActiveLineSpinner();
+        return;
+    }
+
+    if (status === 'end' || status === 'timeout') {
+        const codeId = activeExecutionCodeId || activeLineCodeId;
+        isExecutionRunning = false;
+        isActiveLineRunning = false;
+        if (codeId) {
+            activeLineCodeId = codeId;
+            removeActiveLineSpinner();
+        }
+        activeExecutionCodeId = null;
+        activeLineCodeId = null;
+    }
+}
+
 function handleActiveLineChunk(content) {
     if (!activeLineCodeId) {
-        activeLineCodeId = lastExecutableCodeId || pendingConsoleParentId || null;
+        activeLineCodeId = activeExecutionCodeId || lastExecutableCodeId || pendingConsoleParentId || null;
     }
     if (!activeLineCodeId) return;
     if (content) {
         isActiveLineRunning = true;
         renderActiveLineSpinner();
     } else {
+        if (isExecutionRunning) {
+            return;
+        }
         isActiveLineRunning = false;
         removeActiveLineSpinner();
         activeLineCodeId = null;
@@ -2228,13 +2266,15 @@ function ensureCodeBlockCopyButton(pre, codeBlock) {
 }
 
 function resetStdoutState() {
+    removeActiveLineSpinner();
     codeConsoleMap.clear();
     lastExecutableCodeId = null;
     pendingConsoleParentId = null;
     activeMessageIds.clear();
     activeLineCodeId = null;
     isActiveLineRunning = false;
-    removeActiveLineSpinner();
+    activeExecutionCodeId = null;
+    isExecutionRunning = false;
 }
 window.resetStdoutState = resetStdoutState;
 

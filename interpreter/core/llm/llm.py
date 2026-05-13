@@ -313,7 +313,34 @@ class Llm:
             conversation_messages = messages[1:]
             if self.previous_response_message_count <= len(conversation_messages):
                 recent_messages = conversation_messages[self.previous_response_message_count :]
-                messages = [system_msg] + recent_messages
+                latest_message = conversation_messages[-1] if conversation_messages else None
+                latest_user_text = None
+                if (
+                    isinstance(latest_message, dict)
+                    and latest_message.get("role") == "user"
+                    and latest_message.get("type", "message") == "message"
+                ):
+                    latest_user_text = latest_message.get("content", "")
+                    if not isinstance(latest_user_text, str):
+                        latest_user_text = str(latest_user_text)
+
+                if latest_user_text and not any(
+                    isinstance(m, dict)
+                    and m.get("role") == "user"
+                    and m.get("type", "message") == "message"
+                    and str(m.get("content", "")) == latest_user_text
+                    for m in recent_messages
+                ):
+                    logger.warning(
+                        "Responses continuation would omit latest user message; replaying local history. "
+                        "previous_response_id=%s previous_response_message_count=%s local_message_count=%s",
+                        self.previous_response_id,
+                        self.previous_response_message_count,
+                        len(conversation_messages),
+                    )
+                    self.reset_response_continuation()
+                else:
+                    messages = [system_msg] + recent_messages
             else:
                 # Local history no longer matches the provider-side thread.
                 # Replay local history without previous_response_id instead of
@@ -440,6 +467,25 @@ class Llm:
         if self.previous_response_id and self.pending_tool_call_id:
             output_ids = _function_call_output_ids(messages)
             if self.pending_tool_call_id not in output_ids:
+                latest_local = self.interpreter.messages[-1] if self.interpreter.messages else None
+                if (
+                    isinstance(latest_local, dict)
+                    and latest_local.get("role") == "user"
+                    and latest_local.get("type", "message") == "message"
+                    and not any(item.get("role") == "user" for item in messages if isinstance(item, dict))
+                ):
+                    logger.warning(
+                        "Responses continuation had only missing tool output before latest user turn; "
+                        "resetting continuation and replaying local history. previous_response_id=%s "
+                        "pending_tool_call_id=%s",
+                        self.previous_response_id,
+                        self.pending_tool_call_id,
+                    )
+                    self.reset_response_continuation()
+                    return (yield from self.run(
+                        [{"role": "system", "type": "message", "content": raw_system_message}]
+                        + self.interpreter.messages
+                    ))
                 logger.warning(
                     "Responses continuation missing function_call_output; appending fallback. "
                     "previous_response_id=%s pending_tool_call_id=%s output_ids=%s recent_messages=%s",

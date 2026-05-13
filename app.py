@@ -796,8 +796,17 @@ async def check_session_upload_limit(user_id: str, session_id: str) -> bool:
 
 redis_client = redis.Redis(host="redis", port=6379, db=0)
 # Global dictionary to store interpreter instances
-# Not thread safe, but should be ok for proof of concept
 interpreter_instances: Dict[str, OpenInterpreter] = {}
+interpreter_locks: Dict[str, threading.Lock] = {}
+
+
+def get_interpreter_lock(session_key: str) -> threading.Lock:
+    """Serialize stream mutations for a user's interpreter session."""
+    lock = interpreter_locks.get(session_key)
+    if lock is None:
+        lock = threading.Lock()
+        interpreter_locks[session_key] = lock
+    return lock
 
 
 def generate_guest_email(session: Session) -> str:
@@ -1448,6 +1457,7 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         ## General settings for computer interpreter
         #interpreter.max_output = 16383 # Max number of characters (not tokens) for code outputs (SEA web, GPT4.1)
         interpreter.max_output = 64000 # Max number of characters (not tokens) for code outputs (SEA local, GPT5)
+        interpreter.code_execution_timeout = float(os.getenv("IDEA_CODE_EXECUTION_TIMEOUT_SECONDS", "600"))
         interpreter.computer.import_computer_api = False
         interpreter.computer.run("python", custom_tool)
         interpreter.auto_run = True
@@ -1508,6 +1518,7 @@ def clear_session(session_key: str):
             interpreter.reset()
             # Remove from instances dict
             del interpreter_instances[session_key]
+        interpreter_locks.pop(session_key, None)
 
         # Clear Redis keys
         redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_key}")
@@ -1544,6 +1555,7 @@ def clear_all_interpreter_instances():
                 logger.error(f"Error resetting interpreter for session {session_key}: {str(e)}")
 
         interpreter_instances.clear()
+        interpreter_locks.clear()
         logger.info("Cleared all interpreter instances due to system prompt change")
     except Exception as e:
         logger.error(f"Error clearing all interpreter instances: {str(e)}")
@@ -1627,6 +1639,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
 @app.post("/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
 async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    session_lock = None
+    lock_acquired = False
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -1642,6 +1656,10 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         session_key = make_session_key(user.id, session_id)
+
+        session_lock = get_interpreter_lock(session_key)
+        await asyncio.to_thread(session_lock.acquire)
+        lock_acquired = True
 
         logger.info(f"Received messages for session {session_key}")
         interpreter = get_or_create_interpreter(session_key, token, db)
@@ -1830,15 +1848,21 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                 error_message = {"error": str(e)}
                 yield f"data: {json.dumps(error_message)}\n\n"
             finally:
-                if hasattr(interpreter, "stop_event"):
-                    interpreter.stop_event.clear()
-                redis_client.set(
-                    f"messages:{session_key}", json.dumps(interpreter.messages)
-                )
+                try:
+                    if hasattr(interpreter, "stop_event"):
+                        interpreter.stop_event.clear()
+                    redis_client.set(
+                        f"messages:{session_key}", json.dumps(interpreter.messages)
+                    )
+                finally:
+                    if lock_acquired and session_lock:
+                        session_lock.release()
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     except Exception as e:
+        if lock_acquired and session_lock:
+            session_lock.release()
         logger.error(f"Unexpected error in chat_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -1931,6 +1955,8 @@ async def interrupt_endpoint(request: Request, token: str = Depends(get_auth_tok
 @app.post("/load-conversation")
 async def load_conversation_endpoint(request: Request, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Load a conversation's messages into the interpreter context"""
+    session_lock = None
+    lock_acquired = False
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -1945,6 +1971,9 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
         messages = body.get("messages", [])
         
         session_key = make_session_key(user.id, session_id)
+        session_lock = get_interpreter_lock(session_key)
+        await asyncio.to_thread(session_lock.acquire)
+        lock_acquired = True
         
         # Convert frontend message format to interpreter format
         max_console_output_chars = 6000
@@ -2058,6 +2087,9 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
     except Exception as e:
         logger.error(f"Error loading conversation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to load conversation: {str(e)}")
+    finally:
+        if lock_acquired and session_lock:
+            session_lock.release()
 
 
 async def has_executable_header(file_path: Path) -> bool:

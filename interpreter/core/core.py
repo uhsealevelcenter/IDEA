@@ -313,6 +313,8 @@ class OpenInterpreter:
             """
             if "format" in chunk and chunk["format"] == "active_line":
                 return True
+            if "format" in chunk and chunk["format"] == "execution_status":
+                return True
             if chunk["type"] == "review":
                 return True
             return False
