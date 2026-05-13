@@ -1456,7 +1456,6 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         ## OpenAI Models
         interpreter.llm.model = IDEA_GUEST_MODEL if is_guest else IDEA_DEFAULT_MODEL # "Reasoning" model
         #interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
-        #interpreter.llm.model = "gpt-5.2-2025-12-11" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.1-2025-11-13" # "Reasoning" model
         #interpreter.llm.model = "gpt-5-2025-08-07" # "Reasoning" model
         #interpreter.llm.model = "gpt-4.1-2025-04-14" # "Intelligence" model
