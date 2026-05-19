@@ -820,6 +820,73 @@ def get_interpreter_lock(session_key: str) -> threading.Lock:
     return lock
 
 
+def repair_interrupted_tool_state(
+    interpreter: OpenInterpreter,
+    reason: str = "Execution stopped before completion.",
+) -> bool:
+    """
+    Ensure an interrupted execute() call has a local tool output before the next turn.
+
+    OpenAI Responses continuations require a function_call_output for every prior
+    function call. If a stream disconnects while code is running, local history can
+    be left with a call_id but no computer output. In that recovery case, append a
+    synthetic output and reset Responses continuation so the next request replays
+    local history instead of continuing a suspect provider-side thread.
+    """
+    call_id = getattr(getattr(interpreter, "llm", None), "pending_tool_call_id", None)
+    for message in reversed(getattr(interpreter, "messages", []) or []):
+        if not isinstance(message, dict):
+            continue
+        if not call_id and message.get("type") == "code" and message.get("call_id"):
+            call_id = message["call_id"]
+            break
+        if call_id:
+            break
+
+    if not call_id:
+        return False
+
+    has_output = any(
+        isinstance(message, dict)
+        and message.get("call_id") == call_id
+        and message.get("role") in ("computer", "tool", "function")
+        and (
+            message.get("type") in ("image", "file")
+            or (
+                message.get("type") == "console"
+                and message.get("format") == "output"
+            )
+        )
+        for message in getattr(interpreter, "messages", []) or []
+    )
+    if has_output:
+        return False
+
+    if hasattr(interpreter, "append_tool_output_for_call_id"):
+        interpreter.append_tool_output_for_call_id(
+            call_id,
+            reason,
+            allow_existing_output=True,
+        )
+    else:
+        interpreter.messages.append(
+            {
+                "role": "computer",
+                "type": "console",
+                "format": "output",
+                "content": reason,
+                "call_id": call_id,
+            }
+        )
+
+    if getattr(interpreter, "llm", None):
+        interpreter.llm.pending_tool_call_id = None
+        if hasattr(interpreter.llm, "reset_response_continuation"):
+            interpreter.llm.reset_response_continuation()
+
+    return True
+
+
 def generate_guest_email(session: Session) -> str:
     """Create a unique temporary guest email address."""
     for _ in range(20):
@@ -1862,10 +1929,22 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
             except GeneratorExit:
-                if hasattr(interpreter, "append_tool_output_for_pending_call"):
-                    interpreter.append_tool_output_for_pending_call(
-                        "Execution stopped before completion.",
-                        allow_existing_output=True,
+                try:
+                    interpreter.interrupt(timeout=1.5)
+                except Exception as exc:
+                    logger.warning(
+                        "Interpreter interrupt after stream disconnect failed for session %s: %s",
+                        session_key,
+                        exc,
+                    )
+                repaired = repair_interrupted_tool_state(
+                    interpreter,
+                    "Execution stopped before completion.",
+                )
+                if repaired:
+                    logger.warning(
+                        "Repaired interrupted tool state after stream disconnect for session %s",
+                        session_key,
                     )
                 raise
             except Exception as e:
@@ -1876,6 +1955,10 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                 try:
                     if hasattr(interpreter, "stop_event"):
                         interpreter.stop_event.clear()
+                    repair_interrupted_tool_state(
+                        interpreter,
+                        "Execution stopped before completion.",
+                    )
                     redis_client.set(
                         f"messages:{session_key}", json.dumps(interpreter.messages)
                     )
@@ -1959,11 +2042,7 @@ async def interrupt_endpoint(request: Request, token: str = Depends(get_auth_tok
         except Exception as exc:
             logger.warning("Interpreter interrupt failed for session %s: %s", session_key, exc)
 
-        if hasattr(interpreter, "append_tool_output_for_pending_call"):
-            interpreter.append_tool_output_for_pending_call(
-                reason,
-                allow_existing_output=True,
-            )
+        repair_interrupted_tool_state(interpreter, reason)
         redis_client.set(f"messages:{session_key}", json.dumps(interpreter.messages))
         redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
         return {"status": "interrupted"}

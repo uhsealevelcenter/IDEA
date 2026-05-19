@@ -467,41 +467,20 @@ class Llm:
         if self.previous_response_id and self.pending_tool_call_id:
             output_ids = _function_call_output_ids(messages)
             if self.pending_tool_call_id not in output_ids:
-                latest_local = self.interpreter.messages[-1] if self.interpreter.messages else None
-                if (
-                    isinstance(latest_local, dict)
-                    and latest_local.get("role") == "user"
-                    and latest_local.get("type", "message") == "message"
-                    and not any(item.get("role") == "user" for item in messages if isinstance(item, dict))
-                ):
-                    logger.warning(
-                        "Responses continuation had only missing tool output before latest user turn; "
-                        "resetting continuation and replaying local history. previous_response_id=%s "
-                        "pending_tool_call_id=%s",
-                        self.previous_response_id,
-                        self.pending_tool_call_id,
-                    )
-                    self.reset_response_continuation()
-                    return (yield from self.run(
-                        [{"role": "system", "type": "message", "content": raw_system_message}]
-                        + self.interpreter.messages
-                    ))
                 logger.warning(
-                    "Responses continuation missing function_call_output; appending fallback. "
+                    "Responses continuation missing function_call_output; "
+                    "resetting continuation and replaying local history. "
                     "previous_response_id=%s pending_tool_call_id=%s output_ids=%s recent_messages=%s",
                     self.previous_response_id,
                     self.pending_tool_call_id,
                     sorted(output_ids),
                     _recent_message_summary(),
                 )
-                messages.insert(
-                    0,
-                    {
-                        "type": "function_call_output",
-                        "call_id": self.pending_tool_call_id,
-                        "output": "The execute tool did not return a captured output for this call.",
-                    }
-                )
+                self.reset_response_continuation()
+                return (yield from self.run(
+                    [{"role": "system", "type": "message", "content": raw_system_message}]
+                    + self.interpreter.messages
+                ))
             else:
                 logger.debug(
                     "Responses continuation includes function_call_output. previous_response_id=%s "
