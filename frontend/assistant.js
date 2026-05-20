@@ -1107,6 +1107,127 @@ async function requestExecutionStop(reason = 'Execution stopped before completio
     }
 }
 
+function getChatRunsEndpoint() {
+    const endpoints = config.getEndpoints();
+    if (endpoints.chatRuns) {
+        return endpoints.chatRuns.replace(/\/$/, '');
+    }
+    return endpoints.chat.replace(/\/chat\/?$/, '/chat-runs').replace(/\/$/, '');
+}
+
+function delay(ms, signal = null) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+        }
+        const timeoutId = setTimeout(resolve, ms);
+        if (signal) {
+            signal.addEventListener('abort', () => {
+                clearTimeout(timeoutId);
+                reject(new DOMException('Aborted', 'AbortError'));
+            }, { once: true });
+        }
+    });
+}
+
+async function startChatRun(params, signal) {
+    const response = await fetch(getChatRunsEndpoint(), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Session-Id": sessionId,
+            ...getAuthHeaders()
+        },
+        body: JSON.stringify(params),
+        signal,
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || response.statusText || "Unable to start chat run.");
+    }
+
+    return response.json();
+}
+
+async function pollChatRun(runId, signal) {
+    let after = 0;
+    let emptyPollsAfterTerminal = 0;
+    let consecutiveErrors = 0;
+    const terminalStatuses = new Set(['completed', 'failed', 'interrupted']);
+
+    while (isGenerating) {
+        const eventsUrl = new URL(`${getChatRunsEndpoint()}/${encodeURIComponent(runId)}/events`);
+        eventsUrl.searchParams.set('after', String(after));
+
+        let payload;
+        try {
+            const response = await fetch(eventsUrl.toString(), {
+                method: "GET",
+                headers: {
+                    "X-Session-Id": sessionId,
+                    ...getAuthHeaders()
+                },
+                signal,
+            });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.detail || response.statusText || `Run polling failed with status ${response.status}`);
+            }
+            payload = await response.json();
+            consecutiveErrors = 0;
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            consecutiveErrors += 1;
+            if (consecutiveErrors >= 5) {
+                throw error;
+            }
+            await delay(Math.min(2000, 250 * consecutiveErrors), signal);
+            continue;
+        }
+
+        const events = Array.isArray(payload.events) ? payload.events : [];
+        for (const event of events) {
+            if (typeof event.seq === 'number') {
+                after = Math.max(after, event.seq);
+            }
+            const chunk = event.chunk;
+            if (!chunk) {
+                continue;
+            }
+            const result = await processChunk(chunk);
+            if (result?.scheduleThinking) {
+                scheduleWorkingIndicator();
+            } else {
+                clearWorkingIndicatorTimer();
+            }
+        }
+
+        if (Number.isFinite(payload.next_after)) {
+            after = Math.max(after, payload.next_after);
+        }
+
+        if (terminalStatuses.has(payload.status)) {
+            if (payload.status === 'failed' && events.length === 0 && payload.error) {
+                appendSystemMessage(payload.error, { persist: true });
+            }
+            if (events.length === 0) {
+                emptyPollsAfterTerminal += 1;
+            }
+            if (emptyPollsAfterTerminal >= 1) {
+                break;
+            }
+        } else {
+            emptyPollsAfterTerminal = 0;
+        }
+
+        await delay(events.length ? 50 : 500, signal);
+    }
+}
+
 function serializeMessagesForRequest(messageList = []) {
     return messageList.map(msg => {
         const { llmContent, attachments, userText, storageContent, ...rest } = msg;
@@ -1185,72 +1306,10 @@ async function sendRequest(msgOverride=null) {
         // Initialize AbortController to handle cancellation
         controller = new AbortController();
         const { signal } = controller;
-
-        // Send the POST request to the Python server endpoint with session ID header
-        const interpreterCall = await fetch(config.getEndpoints().chat, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Session-Id": sessionId,
-                ...getAuthHeaders()
-            },
-            body: JSON.stringify(params),
-            signal,
-        });
-
-        // Throw an error if the request was not successful
-        if (!interpreterCall.ok) {
-            console.error("Interpreter didn't respond with 200 OK");
-            if (interpreterCall.statusText) {
-                appendSystemMessage(interpreterCall.statusText);
-            } else {
-                appendSystemMessage("Error: Unable to communicate with the server.");
-            }
-            resetButtons();
-            return;
-        }
-
-        // Initialize a reader for the response body
-        const reader = interpreterCall.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-
         isGenerating = true;
 
-        let partialData = ''; // Buffer for partial data
-
-        while (isGenerating) {
-            const { value, done } = await reader.read();
-
-            if (done) break;
-
-            const text = decoder.decode(value, { stream: true });
-            partialData += text;
-
-            // Split the received text by newlines
-            const lines = partialData.split("\n");
-
-            // Keep the last line (it might be incomplete)
-            partialData = lines.pop();
-
-            for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                    // console.log("Received line:", line);
-                    const data = line.replace("data: ", "").trim();
-                    // console.log("Received data:", data);
-                    try {
-                        const chunk = JSON.parse(data);
-                        const result = await processChunk(chunk);
-                        if (result?.scheduleThinking) {
-                            scheduleWorkingIndicator();
-                        } else {
-                            clearWorkingIndicatorTimer();
-                        }
-                    } catch (e) {
-                        console.error("Failed to parse chunk:", e);
-                    }
-                }
-            }
-        }
+        const run = await startChatRun(params, signal);
+        await pollChatRun(run.run_id, signal);
 
         resetButtons();
     } catch (error) {

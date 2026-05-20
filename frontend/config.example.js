@@ -5,6 +5,7 @@ const config = {
     endpoints: {
         local: {
             chat: 'http://localhost/api/chat',
+            chatRuns: 'http://localhost/api/chat-runs',
             history: 'http://localhost/api/history',
             clear: 'http://localhost/api/clear',
             interrupt: 'http://localhost/api/interrupt',
@@ -30,6 +31,7 @@ const config = {
         },
         production: {
             chat: 'https://<your-domain>/chat',
+            chatRuns: 'https://<your-domain>/idea-api/chat-runs',
             history: 'https://<your-domain>/history',
             clear: 'https://<your-domain>/clear',
             interrupt: 'https://<your-domain>/interrupt',

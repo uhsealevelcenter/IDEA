@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, List
 import hashlib
 import secrets
+import uuid
 from uuid import UUID
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -809,6 +810,12 @@ redis_client = redis.Redis(host="redis", port=6379, db=0)
 # Global dictionary to store interpreter instances
 interpreter_instances: Dict[str, OpenInterpreter] = {}
 interpreter_locks: Dict[str, threading.Lock] = {}
+chat_run_threads: Dict[str, threading.Thread] = {}
+CHAT_RUN_TTL_SECONDS = int(os.getenv("IDEA_CHAT_RUN_TTL_SECONDS", "86400"))
+CHAT_RUN_MAX_POLL_EVENTS = int(os.getenv("IDEA_CHAT_RUN_MAX_POLL_EVENTS", "200"))
+CHAT_RUN_PREFIX = "chat_run:"
+CHAT_RUN_EVENTS_PREFIX = "chat_run_events:"
+CHAT_RUN_SEQ_PREFIX = "chat_run_seq:"
 
 
 def get_interpreter_lock(session_key: str) -> threading.Lock:
@@ -885,6 +892,152 @@ def repair_interrupted_tool_state(
             interpreter.llm.reset_response_continuation()
 
     return True
+
+
+def _chat_run_key(run_id: str) -> str:
+    return f"{CHAT_RUN_PREFIX}{run_id}"
+
+
+def _chat_run_events_key(run_id: str) -> str:
+    return f"{CHAT_RUN_EVENTS_PREFIX}{run_id}"
+
+
+def _chat_run_seq_key(run_id: str) -> str:
+    return f"{CHAT_RUN_SEQ_PREFIX}{run_id}"
+
+
+def _set_chat_run_status(run_id: str, status: dict[str, Any]) -> None:
+    redis_client.set(
+        _chat_run_key(run_id),
+        json.dumps(status, default=str),
+        ex=CHAT_RUN_TTL_SECONDS,
+    )
+
+
+def _get_chat_run_status(run_id: str) -> dict[str, Any] | None:
+    raw_status = redis_client.get(_chat_run_key(run_id))
+    if not raw_status:
+        return None
+    try:
+        return json.loads(raw_status)
+    except Exception:
+        return None
+
+
+def _update_chat_run_status(run_id: str, **updates: Any) -> dict[str, Any]:
+    status = _get_chat_run_status(run_id) or {"run_id": run_id}
+    status.update(updates)
+    status.setdefault("updated_at", datetime.utcnow().isoformat())
+    _set_chat_run_status(run_id, status)
+    return status
+
+
+def _append_chat_run_event(run_id: str, chunk: dict[str, Any] | str) -> dict[str, Any]:
+    seq = int(redis_client.incr(_chat_run_seq_key(run_id)))
+    event = {
+        "seq": seq,
+        "created_at": datetime.utcnow().isoformat(),
+        "chunk": chunk,
+    }
+    events_key = _chat_run_events_key(run_id)
+    redis_client.rpush(events_key, json.dumps(event, default=str))
+    redis_client.expire(events_key, CHAT_RUN_TTL_SECONDS)
+    redis_client.expire(_chat_run_seq_key(run_id), CHAT_RUN_TTL_SECONDS)
+    return event
+
+
+def _list_chat_run_events(run_id: str, after: int = 0) -> list[dict[str, Any]]:
+    raw_events = redis_client.lrange(_chat_run_events_key(run_id), 0, -1)
+    events: list[dict[str, Any]] = []
+    for raw_event in raw_events:
+        try:
+            event = json.loads(raw_event)
+        except Exception:
+            continue
+        try:
+            seq = int(event.get("seq", 0))
+        except Exception:
+            seq = 0
+        if seq > after:
+            events.append(event)
+        if len(events) >= CHAT_RUN_MAX_POLL_EVENTS:
+            break
+    return events
+
+
+def _is_persistable_interpreter_chunk(chunk: Any) -> bool:
+    if not isinstance(chunk, dict):
+        return False
+    if chunk.get("start") or chunk.get("end") or chunk.get("error"):
+        return False
+    if chunk.get("format") in {"active_line", "execution_status", "tool_status", "compaction_status"}:
+        return False
+    return bool(chunk.get("content") or chunk.get("type") in {"image", "file"})
+
+
+def _persist_interpreter_messages(session_key: str, interpreter: OpenInterpreter) -> None:
+    redis_client.set(f"messages:{session_key}", json.dumps(interpreter.messages))
+    redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+
+
+def _ensure_all_tool_calls_have_outputs(
+    interpreter: OpenInterpreter,
+    fallback_reason: str = "Tool execution completed without captured output.",
+) -> bool:
+    """Ensure every locally recorded execute() call has a matching tool output."""
+    repaired = False
+    messages = getattr(interpreter, "messages", []) or []
+    call_ids = [
+        message.get("call_id")
+        for message in messages
+        if isinstance(message, dict) and message.get("type") == "code" and message.get("call_id")
+    ]
+    for call_id in call_ids:
+        has_output = any(
+            isinstance(message, dict)
+            and message.get("call_id") == call_id
+            and message.get("role") in ("computer", "tool", "function")
+            and (
+                message.get("type") in ("image", "file")
+                or (
+                    message.get("type") == "console"
+                    and message.get("format") == "output"
+                )
+            )
+            for message in messages
+        )
+        if has_output:
+            continue
+        if hasattr(interpreter, "append_tool_output_for_call_id"):
+            interpreter.append_tool_output_for_call_id(call_id, fallback_reason)
+        else:
+            interpreter.messages.append(
+                {
+                    "role": "computer",
+                    "type": "console",
+                    "format": "output",
+                    "content": fallback_reason,
+                    "call_id": call_id,
+                }
+            )
+        repaired = True
+
+    if repaired and getattr(interpreter, "llm", None):
+        interpreter.llm.pending_tool_call_id = None
+        if hasattr(interpreter.llm, "reset_response_continuation"):
+            interpreter.llm.reset_response_continuation()
+    return repaired
+
+
+def _load_run_for_user(run_id: str, user_id: UUID, session_id: str | None = None) -> dict[str, Any]:
+    status = _get_chat_run_status(run_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Chat run not found")
+    if str(status.get("user_id")) != str(user_id):
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    if session_id and status.get("session_id") != session_id:
+        raise HTTPException(status_code=403, detail="Run does not belong to this session")
+    return status
 
 
 def generate_guest_email(session: Session) -> str:
@@ -1737,6 +1890,320 @@ async def transcribe_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Transcription failed")
 
 
+async def _run_chat_job_async(
+    *,
+    run_id: str,
+    session_id: str,
+    token: str,
+    user_id: UUID,
+    messages: list[dict[str, Any]],
+) -> None:
+    session_key = make_session_key(user_id, session_id)
+    session_lock = get_interpreter_lock(session_key)
+    lock_acquired = False
+    db_session = Session(engine)
+    try:
+        _update_chat_run_status(
+            run_id,
+            status="running",
+            started_at=datetime.utcnow().isoformat(),
+            updated_at=datetime.utcnow().isoformat(),
+        )
+        await asyncio.to_thread(session_lock.acquire)
+        lock_acquired = True
+
+        interpreter = get_or_create_interpreter(session_key, token, db_session)
+        if not hasattr(interpreter, "stop_event"):
+            interpreter.stop_event = threading.Event()
+        interpreter.stop_event.clear()
+
+        ensure_user_pqa_settings(user_id)
+
+        tool_defs = []
+        tool_lookup = {}
+        mcp_tool_descriptions = []
+        try:
+            tool_defs, tool_lookup = await gather_available_mcp_tools(db_session)
+            if tool_defs:
+                for tool_def in tool_defs:
+                    func_spec = tool_def.get("function", {})
+                    tool_id = func_spec.get("name")
+                    if tool_id and tool_id in tool_lookup:
+                        connection, tool = tool_lookup[tool_id]
+                        desc = func_spec.get("description", "No description")
+                        params = func_spec.get("parameters", {}).get("properties", {})
+                        param_list = ", ".join([f"{k} ({v.get('type', 'any')})" for k, v in params.items()])
+                        mcp_tool_descriptions.append(
+                            f"- {tool_id}({param_list}): {desc}"
+                        )
+        except Exception as exc:
+            logger.warning("Failed to gather MCP tools for chat run %s: %s", run_id, exc)
+
+        interpreter.custom_instructions = get_custom_instructions(
+            host=host,
+            user_id=str(user_id),
+            session_id=session_id,
+            static_dir=STATIC_DIR,
+            upload_dir=UPLOAD_DIR,
+            user_first_name=_get_user_first_name(get_current_user(token)),
+            mcp_tools=mcp_tool_descriptions,
+        )
+
+        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+
+        stored_messages = redis_client.get(f"messages:{session_key}")
+        if stored_messages:
+            try:
+                restored_messages = json.loads(stored_messages)
+                if interpreter.messages != restored_messages and hasattr(interpreter.llm, "reset_response_continuation"):
+                    interpreter.llm.reset_response_continuation()
+                interpreter.messages = restored_messages
+            except Exception as exc:
+                logger.warning("Failed to restore messages from Redis for chat run %s: %s", run_id, exc)
+
+        repaired_before_turn = _ensure_all_tool_calls_have_outputs(
+            interpreter,
+            "Tool execution completed without captured output.",
+        )
+        if repaired_before_turn:
+            _persist_interpreter_messages(session_key, interpreter)
+            logger.warning("Repaired missing tool output before chat run %s", run_id)
+
+        estimated_input_tokens = estimate_conversation_input_tokens(
+            interpreter,
+            [*interpreter.messages, messages[-1]],
+        )
+        should_compact_runtime = estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
+
+        tool_runs = []
+        try:
+            last_user_message = ""
+            for m in reversed(messages):
+                if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
+                    last_user_message = m["content"]
+                    break
+            if last_user_message:
+                tool_runs = await plan_and_run_mcp_tools(
+                    interpreter=interpreter,
+                    user_message=last_user_message,
+                    db=db_session,
+                )
+        except Exception as exc:
+            logger.warning("MCP planning/execution skipped for chat run %s: %s", run_id, exc)
+
+        if should_compact_runtime:
+            start_chunk = {
+                "start": True,
+                "role": "assistant",
+                "type": "message",
+                "format": "compaction_status",
+                "content": "",
+            }
+            _append_chat_run_event(run_id, start_chunk)
+            status_chunk = {
+                "role": "assistant",
+                "type": "message",
+                "format": "compaction_status",
+                "content": "Compacting conversation",
+            }
+            _append_chat_run_event(run_id, status_chunk)
+            compact_interpreter_runtime(interpreter, estimated_input_tokens)
+            _persist_interpreter_messages(session_key, interpreter)
+            end_chunk = {
+                "end": True,
+                "role": "assistant",
+                "type": "message",
+                "format": "compaction_status",
+                "content": "",
+            }
+            _append_chat_run_event(run_id, end_chunk)
+
+        if tool_runs:
+            streamed_keys: set[str] = set()
+            repos_summary = None
+            for run in tool_runs:
+                connection = run["connection"]
+                tool = run["tool"]
+                arguments = run["arguments"]
+                key = json.dumps(
+                    {"cid": str(connection.id), "tool": tool.get("name"), "args": arguments},
+                    sort_keys=True,
+                )
+                if key in streamed_keys:
+                    continue
+                streamed_keys.add(key)
+                _append_chat_run_event(
+                    run_id,
+                    {
+                        "start": True,
+                        "role": "computer",
+                        "type": "message",
+                        "format": "tool_status",
+                        "content": f"🔧 Using {connection.name} • {tool.get('name')}",
+                    },
+                )
+                if tool.get("name") == "search_repositories":
+                    try:
+                        repos_summary = _render_repo_table(run["result"])
+                    except Exception:
+                        repos_summary = None
+                _append_chat_run_event(
+                    run_id,
+                    {
+                        "end": True,
+                        "role": "computer",
+                        "type": "message",
+                        "format": "tool_status",
+                        "content": "",
+                    },
+                )
+            if repos_summary:
+                _append_chat_run_event(
+                    run_id,
+                    {
+                        "start": True,
+                        "end": True,
+                        "role": "computer",
+                        "type": "message",
+                        "content": repos_summary,
+                    },
+                )
+
+        for result in interpreter.chat(messages[-1], stream=True):
+            chunk = result if isinstance(result, dict) else {"role": "assistant", "type": "message", "content": str(result)}
+            if _is_persistable_interpreter_chunk(chunk):
+                _persist_interpreter_messages(session_key, interpreter)
+            _append_chat_run_event(run_id, chunk)
+
+        _ensure_all_tool_calls_have_outputs(
+            interpreter,
+            "Tool execution completed without captured output.",
+        )
+        _persist_interpreter_messages(session_key, interpreter)
+        _update_chat_run_status(
+            run_id,
+            status="completed",
+            completed_at=datetime.utcnow().isoformat(),
+            updated_at=datetime.utcnow().isoformat(),
+        )
+    except Exception as exc:
+        logger.error("Error in chat run %s: %s", run_id, exc)
+        _append_chat_run_event(run_id, {"error": str(exc)})
+        try:
+            interpreter = interpreter_instances.get(session_key)
+            if interpreter is not None:
+                repair_interrupted_tool_state(
+                    interpreter,
+                    "Execution stopped before completion.",
+                )
+                _ensure_all_tool_calls_have_outputs(
+                    interpreter,
+                    "Tool execution completed without captured output.",
+                )
+                _persist_interpreter_messages(session_key, interpreter)
+        except Exception as repair_exc:
+            logger.warning("Failed to repair chat run %s after error: %s", run_id, repair_exc)
+        _update_chat_run_status(
+            run_id,
+            status="failed",
+            error=str(exc),
+            completed_at=datetime.utcnow().isoformat(),
+            updated_at=datetime.utcnow().isoformat(),
+        )
+    finally:
+        try:
+            interpreter = interpreter_instances.get(session_key)
+            if interpreter is not None and hasattr(interpreter, "stop_event"):
+                interpreter.stop_event.clear()
+        finally:
+            if lock_acquired:
+                session_lock.release()
+            db_session.close()
+
+
+def _run_chat_job_thread(**kwargs: Any) -> None:
+    asyncio.run(_run_chat_job_async(**kwargs))
+
+
+@app.post("/chat-runs")
+@limiter.limit(CHAT_RATE_LIMIT)
+async def start_chat_run_endpoint(request: Request, token: str = Depends(get_auth_token)):
+    session_id = request.headers.get("x-session-id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="x-session-id header is required")
+
+    body = await request.json()
+    messages = body.get("messages", [])
+    if not messages:
+        raise HTTPException(status_code=400, detail="No messages provided")
+
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    run_id = uuid.uuid4().hex
+    status = {
+        "run_id": run_id,
+        "session_id": session_id,
+        "user_id": str(user.id),
+        "status": "queued",
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    _set_chat_run_status(run_id, status)
+    redis_client.delete(_chat_run_events_key(run_id))
+    redis_client.delete(_chat_run_seq_key(run_id))
+
+    thread = threading.Thread(
+        target=_run_chat_job_thread,
+        kwargs={
+            "run_id": run_id,
+            "session_id": session_id,
+            "token": token,
+            "user_id": user.id,
+            "messages": messages,
+        },
+        daemon=True,
+    )
+    chat_run_threads[run_id] = thread
+    thread.start()
+    return {"run_id": run_id, "status": "queued"}
+
+
+@app.get("/chat-runs/{run_id}")
+def get_chat_run_endpoint(run_id: str, request: Request, token: str = Depends(get_auth_token)):
+    session_id = request.headers.get("x-session-id")
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return _load_run_for_user(run_id, user.id, session_id)
+
+
+@app.get("/chat-runs/{run_id}/events")
+def get_chat_run_events_endpoint(
+    run_id: str,
+    request: Request,
+    after: int = 0,
+    token: str = Depends(get_auth_token),
+):
+    session_id = request.headers.get("x-session-id")
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    status = _load_run_for_user(run_id, user.id, session_id)
+    events = _list_chat_run_events(run_id, after=after)
+    latest_seq = after
+    if events:
+        latest_seq = max(int(event.get("seq", after)) for event in events)
+    return {
+        "run_id": run_id,
+        "status": status.get("status"),
+        "events": events,
+        "next_after": latest_seq,
+        "error": status.get("error"),
+    }
+
+
 @app.post("/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
 async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
@@ -1819,6 +2286,13 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                 logger.info(f"Restored {len(interpreter.messages)} messages from Redis for session {session_key}")
             except Exception as e:
                 logger.warning(f"Failed to restore messages from Redis: {str(e)}")
+
+        if _ensure_all_tool_calls_have_outputs(
+            interpreter,
+            "Tool execution completed without captured output.",
+        ):
+            _persist_interpreter_messages(session_key, interpreter)
+            logger.warning("Repaired missing tool output before chat request for session %s", session_key)
 
         estimated_input_tokens = estimate_conversation_input_tokens(
             interpreter,
@@ -1958,6 +2432,10 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                     repair_interrupted_tool_state(
                         interpreter,
                         "Execution stopped before completion.",
+                    )
+                    _ensure_all_tool_calls_have_outputs(
+                        interpreter,
+                        "Tool execution completed without captured output.",
                     )
                     redis_client.set(
                         f"messages:{session_key}", json.dumps(interpreter.messages)
