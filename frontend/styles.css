@@ -2046,7 +2046,8 @@ body.theme-light .thinking-label {
     font-weight: 500;
 }
 
-.form-group input[type="text"], 
+.form-group input[type="text"],
+.form-group input[type="email"],
 .form-group input[type="password"] {
     width: 100%;
     padding: 0.75rem;
@@ -2059,7 +2060,8 @@ body.theme-light .thinking-label {
     box-sizing: border-box;
 }
 
-.form-group input[type="text"]:focus, 
+.form-group input[type="text"]:focus,
+.form-group input[type="email"]:focus,
 .form-group input[type="password"]:focus {
     outline: none;
     border-color: var(--input-focus);
@@ -2113,6 +2115,21 @@ body.theme-light .thinking-label {
     opacity: 0.7;
     cursor: not-allowed;
     transform: none;
+}
+
+.login-secondary-action {
+    margin-top: 1rem;
+    text-align: center;
+    font-size: 0.95rem;
+}
+
+.login-secondary-action a {
+    color: #667eea;
+    text-decoration: none;
+}
+
+.login-secondary-action a:hover {
+    text-decoration: underline;
 }
 
 .error-message {
