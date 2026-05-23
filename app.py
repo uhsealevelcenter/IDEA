@@ -13,6 +13,7 @@ import hashlib
 import secrets
 import uuid
 from uuid import UUID
+from urllib.parse import quote
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -34,9 +35,9 @@ from interpreter.core.llm.utils.convert_to_openai_responses_messages import (
 from slowapi.errors import RateLimitExceeded
 import models
 from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, \
-    PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate, UserCreate, UserPublic, GenericMessage, User
+    PasswordResetConfirm, PasswordResetRequest, PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate, UserCreate, UserPublic, GenericMessage, User
 import crud
-from core.security import verify_password as verify_password_hash
+from core.security import generate_password_reset_token, hash_password_reset_token, verify_password as verify_password_hash
 from sqlalchemy.exc import IntegrityError
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
@@ -77,6 +78,7 @@ from core.db import engine
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
 from utils.pqa_multi_tenant import delete_user_pqa_state, ensure_user_pqa_settings
+from utils.email import send_password_reset_email
 from core.mcp_manager import mcp_manager
 
 #import interpreter.core.llm.llm as llm_mod
@@ -645,6 +647,10 @@ MAX_UPLOADS_PER_SESSION = 100  # Maximum files per session
 CLAMD_HOST = "localhost"  # Docker service name
 CLAMD_PORT = 3310
 CHAT_RATE_LIMIT = "10/minute"
+PASSWORD_RESET_REQUEST_RATE_LIMIT = "3/hour"
+PASSWORD_RESET_CONFIRM_RATE_LIMIT = "10/minute"
+PASSWORD_RESET_TOKEN_TTL_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
+PASSWORD_RESET_PUBLIC_MESSAGE = "If an account exists for that email, a password reset link has been sent."
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -1165,6 +1171,91 @@ async def guest_login(session: Session = Depends(get_db)):
         guest_expires_at=expiry_time.isoformat(),
         show_guest_notice=True,
     )
+
+
+def _build_password_reset_url(request: Request, token: str) -> str:
+    frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost").rstrip("/")
+    root_path = (request.scope.get("root_path", "") or "").rstrip("/")
+    reset_path = f"{root_path}/reset-password.html" if root_path else "/reset-password.html"
+    return f"{frontend_base_url}{reset_path}?token={quote(token)}"
+
+
+@app.get("/reset-password.html")
+async def reset_password_page():
+    """Serve the password reset page through the API proxy when needed."""
+    frontend_dir = Path(__file__).parent / "frontend"
+    reset_html_path = frontend_dir / "reset-password.html"
+
+    if not reset_html_path.exists():
+        raise HTTPException(status_code=404, detail="Reset password page not found")
+
+    return FileResponse(reset_html_path, media_type="text/html")
+
+
+@app.post("/password-reset/request", response_model=GenericMessage)
+@limiter.limit(PASSWORD_RESET_REQUEST_RATE_LIMIT)
+async def request_password_reset(
+    request: Request,
+    payload: PasswordResetRequest,
+    db: Session = Depends(get_db),
+):
+    """Request a password reset email without revealing whether the account exists."""
+    public_response = GenericMessage(message=PASSWORD_RESET_PUBLIC_MESSAGE)
+    email = str(payload.email).strip().lower()
+
+    try:
+        user = crud.get_user_by_email(session=db, email=email)
+        if user is None or not user.is_active or _is_guest_user(user.id):
+            return public_response
+
+        raw_token = generate_password_reset_token()
+        token_hash = hash_password_reset_token(raw_token)
+        expires_at = datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
+        reset_token = crud.create_password_reset_token(
+            session=db,
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+
+        try:
+            send_password_reset_email(
+                to_email=user.email,
+                reset_url=_build_password_reset_url(request, raw_token),
+                expires_minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES,
+            )
+        except Exception as exc:
+            crud.consume_password_reset_token(session=db, reset_token=reset_token)
+            logger.error("Failed to send password reset email for user %s: %s", user.id, exc)
+
+        return public_response
+    except Exception as exc:
+        logger.error("Password reset request failed: %s", exc)
+        return public_response
+
+
+@app.post("/password-reset/confirm", response_model=GenericMessage)
+@limiter.limit(PASSWORD_RESET_CONFIRM_RATE_LIMIT)
+async def confirm_password_reset(
+    request: Request,
+    payload: PasswordResetConfirm,
+    db: Session = Depends(get_db),
+):
+    """Reset a password with a valid one-time token."""
+    token_hash = hash_password_reset_token(payload.token)
+    reset_token = crud.get_valid_password_reset_token(session=db, token_hash=token_hash)
+    if reset_token is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired password reset token")
+
+    user = crud.get_user_by_id(session=db, user_id=reset_token.user_id)
+    if user is None or not user.is_active or _is_guest_user(user.id):
+        crud.consume_password_reset_token(session=db, reset_token=reset_token)
+        raise HTTPException(status_code=400, detail="Invalid or expired password reset token")
+
+    crud.update_user(session=db, db_user=user, user_in=UserUpdate(password=payload.new_password))
+    crud.consume_password_reset_token(session=db, reset_token=reset_token)
+    remove_auth_sessions_for_user(user.id)
+    return GenericMessage(message="Password updated successfully")
 
 
 @app.post("/logout")

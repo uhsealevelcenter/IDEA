@@ -1,6 +1,6 @@
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from passlib.context import CryptContext
@@ -25,13 +25,16 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def generate_password_reset_token(email: str) -> str:
+def generate_password_reset_token() -> str:
     """Generate password reset token"""
     return secrets.token_urlsafe(32)
 
 
-def verify_password_reset_token(token: str) -> str | None:
-    """Verify password reset token (simplified implementation)"""
-    # This is a simplified implementation
-    # In production, you'd want to store tokens with expiration in DB
-    return None
+def hash_password_reset_token(token: str) -> str:
+    """Hash password reset tokens before storing them."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def verify_password_reset_token(token: str, token_hash: str) -> bool:
+    """Verify a password reset token against its stored hash."""
+    return secrets.compare_digest(hash_password_reset_token(token), token_hash)
