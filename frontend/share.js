@@ -44,6 +44,18 @@ function restoreMath(html, store) {
     return store.reduce((acc, original, index) => acc.replace(`@@MATH${index}@@`, original), html);
 }
 
+function wrapMarkdownTables(root) {
+    if (!root) return;
+    root.querySelectorAll('table').forEach((table) => {
+        if (table.closest('.markdown-table-scroll')) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'markdown-table-scroll';
+        table.parentNode.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+    });
+}
+
 function countUnescapedSequence(text, sequence) {
     if (!text || !sequence) return 0;
     let count = 0;
@@ -671,6 +683,7 @@ function displayMessageInChat(message) {
         } else {
             const parsedMarkdown = marked ? marked.parse(shielded) : shielded;
             contentElement.innerHTML = restoreMath(parsedMarkdown, store);
+            wrapMarkdownTables(contentElement);
         }
     } else if (message.message_type === 'image') {
         if (message.message_format === 'base64.png') {

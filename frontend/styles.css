@@ -918,6 +918,28 @@ body.theme-dark .toggle-slider {
     line-height: 1.4;
 }
 
+.message.assistant .markdown-table-scroll,
+.message.computer .markdown-table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.message.assistant .markdown-table-scroll table,
+.message.computer .markdown-table-scroll table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.message.assistant .markdown-table-scroll th,
+.message.assistant .markdown-table-scroll td,
+.message.computer .markdown-table-scroll th,
+.message.computer .markdown-table-scroll td {
+    padding: 0.35rem 0.5rem;
+    vertical-align: top;
+    overflow-wrap: break-word;
+}
+
 .message.system .content {
     background: var(--system-bg);
     border-color: var(--system-border);
