@@ -621,6 +621,25 @@ function restoreMath(html, store) {
   return store.reduce((acc, m, i) => acc.replace(`@@MATH${i}@@`, m), html);
 }
 
+function wrapMarkdownTables(root) {
+  if (!root) return;
+  root.querySelectorAll('table').forEach((table) => {
+    if (table.closest('.markdown-table-scroll')) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'markdown-table-scroll';
+    table.parentNode.insertBefore(wrapper, table);
+    wrapper.appendChild(table);
+  });
+}
+
+function wrapMarkdownTablesInHtml(html) {
+  const template = document.createElement('template');
+  template.innerHTML = html || '';
+  wrapMarkdownTables(template.content);
+  return template.innerHTML;
+}
+
 // Returns true if display/inline math is closed (so it's safe to typeset)
 function countUnescapedSequence(text, sequence) {
   if (!text || !sequence) return 0;
@@ -1797,6 +1816,7 @@ function updateMessageContent(id, content) {
             const parsedMarkdown = marked.parse(shielded);
             const htmlWithMath = restoreMath(parsedMarkdown, store);
             contentDiv.innerHTML = htmlWithMath;
+            wrapMarkdownTables(contentDiv);
 
             // 5) Highlight code blocks using Prism
             prismHighlightUnder(contentDiv);
@@ -3175,6 +3195,7 @@ function renderMessageContentForExport(message) {
         } else {
             const parsedMarkdown = marked ? marked.parse(shielded) : shielded;
             rendered = restoreMath(parsedMarkdown, store);
+            rendered = wrapMarkdownTablesInHtml(rendered);
         }
         if (Array.isArray(message.attachments) && message.attachments.length > 0) {
             const alreadyPresent = /<strong>(?:file|files):<\/strong>/i.test(rendered);
