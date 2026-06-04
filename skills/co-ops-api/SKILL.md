@@ -1,11 +1,13 @@
 ---
 name: co-ops-api
-description: Use NOAA CO-OPS APIs for tide gauge stations outside the UHSLC network, or when the user explicitly requests NOAA CO-OPS API data. Do not use CO-OPS as the default source for UHSLC-network tide gauge data.
+description: Use NOAA CO-OPS APIs for tide gauge stations outside the UHSLC network, or when the user explicitly requests NOAA CO-OPS API data. Cross-listed with co-ops-tadc for Tidal Analysis Datum Calculator inputs and official datum comparisons. Do not use CO-OPS as the default source for UHSLC-network tide gauge data.
 ---
 
 # CO-OPS API
 
 Use this skill only for NOAA CO-OPS data requests, or for tide gauge stations that are not in the UHSLC network. For UHSLC-network stations, prefer IDEA's UHSLC data tools unless the user specifically asks for NOAA CO-OPS.
+
+Cross-listed skill: use `co-ops-tadc` when NOAA CO-OPS data are being prepared for the Tidal Analysis Datum Calculator, datum computation, or comparison against calculator-derived tidal datums.
 
 ## APIs
 

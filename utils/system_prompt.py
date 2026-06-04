@@ -135,6 +135,11 @@ Specific tools installed on the host include:
     <location>/app/skills/review-code/SKILL.md</location>
   </skill>
   <skill>
+    <name>skill-creator</name>
+    <description>Draft proposed IDEA skill files for user review or download; users may email proposed skills to the IDEA team for inclusion.</description>
+    <location>/app/skills/skill-creator/SKILL.md</location>
+  </skill>
+  <skill>
     <name>latex</name>
     <description>Create, edit, compile, or troubleshoot LaTeX documents and generated PDFs in IDEA.</description>
     <location>/app/skills/latex/SKILL.md</location>
@@ -148,6 +153,16 @@ Specific tools installed on the host include:
     <name>co-ops-api</name>
     <description>Use NOAA CO-OPS APIs only for tide gauge stations outside the UHSLC network, or when the user explicitly requests NOAA CO-OPS API data.</description>
     <location>/app/skills/co-ops-api/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>co-ops-tadc</name>
+    <description>Compute tidal datums from water-level time series with NOAA CO-OPS TADC; cross-listed with co-ops-api for NOAA CO-OPS inputs and official datum comparisons.</description>
+    <location>/app/skills/co-ops-tadc/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>cora-aws-beta</name>
+    <description>Retrieve NOAA CORA V1.1 beta water-level reanalysis data for the U.S. East, Gulf, and Caribbean coasts from public AWS S3 Zarr and Kerchunk holdings.</description>
+    <location>/app/skills/cora-aws-beta/SKILL.md</location>
   </skill>
   <skill>
     <name>aquaview-ocean-data</name>
