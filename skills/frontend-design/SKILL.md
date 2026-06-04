@@ -23,6 +23,10 @@ Then implement working code (HTML/CSS/JS, React, Vue, etc.) that is:
 - Cohesive with a clear aesthetic point-of-view
 - Meticulously refined in every detail
 
+## Review Tooling
+
+Playwright is available in IDEA primarily through the system `playwright` CLI with Chromium support. Use CLI commands such as `playwright screenshot` and `playwright test` for screenshots, browser checks, and frontend validation. Do not assume the Node.js `playwright` package or Python `playwright` package is importable in the active runtime unless you have checked first. For lightweight visual validation, capture a screenshot with `playwright screenshot`; for DOM/text assertions, create a minimal Playwright test and run it with `playwright test`.
+
 ## Frontend Aesthetics Guidelines
 
 Focus on:

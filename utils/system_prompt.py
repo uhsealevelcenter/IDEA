@@ -134,6 +134,26 @@ Specific tools installed on the host include:
     <description>Review and explore GitHub code repositories using Codex.</description>
     <location>/app/skills/review-code/SKILL.md</location>
   </skill>
+  <skill>
+    <name>latex</name>
+    <description>Create, edit, compile, or troubleshoot LaTeX documents and generated PDFs in IDEA.</description>
+    <location>/app/skills/latex/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>poster-design</name>
+    <description>Design polished, print-ready scientific posters using Python and/or frontend web tools.</description>
+    <location>/app/skills/poster-design/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>co-ops-api</name>
+    <description>Use NOAA CO-OPS APIs only for tide gauge stations outside the UHSLC network, or when the user explicitly requests NOAA CO-OPS API data.</description>
+    <location>/app/skills/co-ops-api/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>aquaview-ocean-data</name>
+    <description>Discover oceanographic, atmospheric, and marine datasets through AquaView as a fallback after IDEA's preferred data sources, but before general web search.</description>
+    <location>/app/skills/aquaview-ocean-data/SKILL.md</location>
+  </skill>
 </available_skills>
 
 ## Mapping & Visualization
