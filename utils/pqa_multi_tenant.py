@@ -63,6 +63,29 @@ def get_user_settings_name(user_id: Any) -> str:
     return f"user_{user_id}"
 
 
+def delete_user_pqa_state(user_id: Any) -> None:
+    """Delete all per-user PaperQA files for a user.
+
+    This is intended for temporary guest accounts only. Regular user library
+    retention is controlled by callers.
+    """
+    user_lock = _get_user_lock(user_id)
+    with user_lock:
+        for directory in (get_user_papers_dir(user_id), get_user_index_dir(user_id)):
+            if directory.exists():
+                shutil.rmtree(directory, ignore_errors=True)
+
+        settings_path = get_user_settings_path(user_id)
+        try:
+            settings_path.unlink(missing_ok=True)
+        except TypeError:
+            if settings_path.exists():
+                settings_path.unlink()
+
+    with _locks_lock:
+        _user_index_locks.pop(str(user_id), None)
+
+
 # ---------------------------------------------------------------------------
 # Index status helpers (observability for background index builds)
 # ---------------------------------------------------------------------------

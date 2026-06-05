@@ -12,6 +12,7 @@ from models import (
     MCPConnectionPublic,
     MCPConnectionSummary,
     MCPConnectionUpdate,
+    PasswordResetToken,
     User,
     UserCreate,
     UserUpdate,
@@ -53,6 +54,8 @@ def authenticate(*, session: Session, email: str, password: str) -> User | None:
     db_user = get_user_by_email(session=session, email=email)
     if not db_user:
         return None
+    if not db_user.is_active:
+        return None
     if not verify_password(password, db_user.hashed_password):
         return None
     return db_user
@@ -69,6 +72,59 @@ def list_users(*, session: Session) -> List[User]:
 def delete_user(*, session: Session, db_user: User) -> None:
     session.delete(db_user)
     session.commit()
+
+
+def create_password_reset_token(
+    *,
+    session: Session,
+    user_id: UUID,
+    token_hash: str,
+    expires_at: datetime,
+) -> PasswordResetToken:
+    now = datetime.utcnow()
+    pending_tokens = session.exec(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.used_at.is_(None),
+        )
+    ).all()
+    for token in pending_tokens:
+        token.used_at = now
+        session.add(token)
+
+    db_obj = PasswordResetToken(
+        user_id=user_id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        created_at=now,
+    )
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def get_valid_password_reset_token(
+    *,
+    session: Session,
+    token_hash: str,
+    now: datetime | None = None,
+) -> PasswordResetToken | None:
+    now = now or datetime.utcnow()
+    statement = select(PasswordResetToken).where(
+        PasswordResetToken.token_hash == token_hash,
+        PasswordResetToken.used_at.is_(None),
+        PasswordResetToken.expires_at > now,
+    )
+    return session.exec(statement).first()
+
+
+def consume_password_reset_token(*, session: Session, reset_token: PasswordResetToken) -> PasswordResetToken:
+    reset_token.used_at = datetime.utcnow()
+    session.add(reset_token)
+    session.commit()
+    session.refresh(reset_token)
+    return reset_token
 
 
 # SystemPrompt helpers (optional service layer)

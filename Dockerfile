@@ -50,8 +50,8 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install runtime dependencies including GDAL
-RUN apt-get update && apt-get install -y \
+# Install runtime dependencies including GDAL and LaTeX
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     wget \
     libexpat1-dev \
     curl \
@@ -60,14 +60,29 @@ RUN apt-get update && apt-get install -y \
     libproj-dev \
     libgeos-dev \
     libspatialite-dev \
+    texlive-latex-base \
+    texlive-latex-recommended \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
+    texlive-science \
+    texlive-bibtex-extra \
+    biber \
+    latexmk \
+    ghostscript \
+    poppler-utils \
+    chktex \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js and Codex CLI
+# Install Node.js, Codex CLI, and Playwright for frontend review
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get update && apt-get install -y nodejs git && \
-    npm install -g @openai/codex@0.93.0 && \
+    npm install -g @openai/codex@0.93.0 @playwright/test@1.60.0 && \
+    npx playwright install chromium && \
+    npx playwright install-deps chromium && \
     npm cache clean --force && \
     rm -rf /var/lib/apt/lists/*
+
+ENV NODE_PATH=/usr/lib/node_modules
 
 # Set GDAL environment variables for runtime
 ENV GDAL_CONFIG /usr/bin/gdal-config

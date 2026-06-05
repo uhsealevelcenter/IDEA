@@ -7,6 +7,20 @@ const sharedStdoutMap = new Map();
 const sharedMessageCache = new Map();
 let lastSharedCodeId = null;
 const SHARED_STD_STREAM_RECIPIENTS = ['stdout', 'stderr'];
+const SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE = 1.25;
+const SHARED_IMAGE_LIGHTBOX_MIN_SCALE = 0.5;
+const SHARED_IMAGE_LIGHTBOX_MAX_SCALE = 4;
+const SHARED_IMAGE_LIGHTBOX_SCALE_STEP = 0.25;
+const SHARED_COMPACTION_MARKER_PREFIX = '[IDEA conversation compacted at ';
+const SHARED_COMPACTION_MARKER_SUFFIX = ']';
+let sharedImageLightboxState = {
+    scale: SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE,
+    fitScale: SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE
+};
+let sharedCodeApplyAllEnabled = false;
+let sharedCodeVisibilityAllMode = null;
+let sharedOutputApplyAllEnabled = false;
+let sharedOutputVisibilityAllMode = null;
 
 //// Math formatting helpers for shared/downloaded views
 function protectMath(text) {
@@ -28,6 +42,18 @@ function protectMath(text) {
 
 function restoreMath(html, store) {
     return store.reduce((acc, original, index) => acc.replace(`@@MATH${index}@@`, original), html);
+}
+
+function wrapMarkdownTables(root) {
+    if (!root) return;
+    root.querySelectorAll('table').forEach((table) => {
+        if (table.closest('.markdown-table-scroll')) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'markdown-table-scroll';
+        table.parentNode.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+    });
 }
 
 function countUnescapedSequence(text, sequence) {
@@ -80,6 +106,190 @@ function addCopyButtonsShared(root) {
                 setTimeout(() => button.innerText = 'Copy', 2000);
             });
         });
+    });
+}
+
+function parseSharedCompactionMarker(content) {
+    if (typeof content !== 'string') return null;
+    const trimmed = content.trim();
+    if (!trimmed.startsWith(SHARED_COMPACTION_MARKER_PREFIX) || !trimmed.endsWith(SHARED_COMPACTION_MARKER_SUFFIX)) {
+        return null;
+    }
+    const timestamp = trimmed.slice(SHARED_COMPACTION_MARKER_PREFIX.length, -SHARED_COMPACTION_MARKER_SUFFIX.length);
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return null;
+    return { timestamp, date };
+}
+
+function isSharedCompactionMarker(message) {
+    return Boolean(message && message.message_type === 'message' && parseSharedCompactionMarker(message.content));
+}
+
+function formatSharedCompactionTime(date) {
+    return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short'
+    });
+}
+
+function renderSharedCompactionMarker(message) {
+    const marker = parseSharedCompactionMarker(message?.content) || { date: new Date(message?.created_at || Date.now()) };
+    return `
+        <div class="compaction-marker" role="status">
+            <span class="material-icons compaction-marker-icon" aria-hidden="true">compress</span>
+            <span>Conversation compacted ${escapeHtml(formatSharedCompactionTime(marker.date))}</span>
+        </div>
+    `;
+}
+
+function getSharedImageLightboxElements() {
+    return {
+        modal: document.getElementById('sharedImageLightboxModal'),
+        preview: document.getElementById('sharedImageLightboxPreview'),
+        stage: document.getElementById('sharedImageLightboxStage'),
+        viewport: document.getElementById('sharedImageLightboxViewport'),
+        close: document.getElementById('closeSharedImageLightboxModal'),
+        zoomIn: document.getElementById('sharedImageZoomInButton'),
+        zoomOut: document.getElementById('sharedImageZoomOutButton'),
+        zoomReset: document.getElementById('sharedImageZoomResetButton')
+    };
+}
+
+function clampSharedImageZoom(scale) {
+    return Math.min(
+        SHARED_IMAGE_LIGHTBOX_MAX_SCALE,
+        Math.max(sharedImageLightboxState.fitScale || SHARED_IMAGE_LIGHTBOX_MIN_SCALE, scale)
+    );
+}
+
+function getSharedImageLightboxFitScale(preview, viewport, stage) {
+    const naturalWidth = preview.naturalWidth || preview.width;
+    const naturalHeight = preview.naturalHeight || preview.height;
+    if (!naturalWidth || !naturalHeight) return SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+
+    const stageStyles = window.getComputedStyle(stage);
+    const paddingX = (parseFloat(stageStyles.paddingLeft) || 0) + (parseFloat(stageStyles.paddingRight) || 0);
+    const paddingY = (parseFloat(stageStyles.paddingTop) || 0) + (parseFloat(stageStyles.paddingBottom) || 0);
+    const availableWidth = Math.max(viewport.clientWidth - paddingX, 1);
+    const availableHeight = Math.max(viewport.clientHeight - paddingY, 1);
+
+    return Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight);
+}
+
+function applySharedImageLightboxZoom() {
+    const { preview, stage, viewport } = getSharedImageLightboxElements();
+    if (!preview || !stage || !viewport) return;
+    const naturalWidth = preview.naturalWidth || preview.width;
+    const naturalHeight = preview.naturalHeight || preview.height;
+    if (!naturalWidth || !naturalHeight) return;
+
+    const scaledWidth = naturalWidth * sharedImageLightboxState.scale;
+    const scaledHeight = naturalHeight * sharedImageLightboxState.scale;
+    const stageWidth = Math.max(scaledWidth, viewport.clientWidth);
+    const stageHeight = Math.max(scaledHeight, viewport.clientHeight);
+
+    stage.style.width = `${stageWidth}px`;
+    stage.style.height = `${stageHeight}px`;
+    preview.style.width = `${scaledWidth}px`;
+    preview.style.height = `${scaledHeight}px`;
+}
+
+function openSharedImageLightbox(src, alt = 'Expanded shared image') {
+    const { modal, preview, viewport, stage } = getSharedImageLightboxElements();
+    if (!modal || !preview || !viewport || !stage) return;
+    preview.src = src;
+    preview.alt = alt;
+    preview.draggable = false;
+    preview.onload = () => {
+        sharedImageLightboxState.fitScale = getSharedImageLightboxFitScale(preview, viewport, stage);
+        sharedImageLightboxState.scale = sharedImageLightboxState.fitScale;
+        applySharedImageLightboxZoom();
+        viewport.scrollTop = 0;
+        viewport.scrollLeft = 0;
+    };
+    modal.style.display = 'block';
+}
+
+function closeSharedImageLightbox() {
+    const { modal, preview, stage } = getSharedImageLightboxElements();
+    if (!modal || !preview || !stage) return;
+    modal.style.display = 'none';
+    preview.removeAttribute('src');
+    preview.style.width = '';
+    preview.style.height = '';
+    stage.style.width = '';
+    stage.style.height = '';
+    sharedImageLightboxState.scale = SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+    sharedImageLightboxState.fitScale = SHARED_IMAGE_LIGHTBOX_INITIAL_SCALE;
+}
+
+function updateSharedImageLightboxZoom(delta) {
+    sharedImageLightboxState.scale = clampSharedImageZoom(sharedImageLightboxState.scale + delta);
+    applySharedImageLightboxZoom();
+}
+
+function resetSharedImageLightboxZoom() {
+    sharedImageLightboxState.scale = sharedImageLightboxState.fitScale;
+    applySharedImageLightboxZoom();
+}
+
+function initializeSharedImageLightbox() {
+    const { modal, close, zoomIn, zoomOut, zoomReset, viewport } = getSharedImageLightboxElements();
+    if (!modal || !close || !zoomIn || !zoomOut || !zoomReset || !viewport) {
+        return;
+    }
+
+    close.addEventListener('click', closeSharedImageLightbox);
+    zoomIn.addEventListener('click', () => updateSharedImageLightboxZoom(SHARED_IMAGE_LIGHTBOX_SCALE_STEP));
+    zoomOut.addEventListener('click', () => updateSharedImageLightboxZoom(-SHARED_IMAGE_LIGHTBOX_SCALE_STEP));
+    zoomReset.addEventListener('click', resetSharedImageLightboxZoom);
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            closeSharedImageLightbox();
+        }
+    });
+
+    viewport.addEventListener('wheel', (event) => {
+        if (modal.style.display !== 'block') return;
+        event.preventDefault();
+        const delta = event.deltaY < 0 ? SHARED_IMAGE_LIGHTBOX_SCALE_STEP : -SHARED_IMAGE_LIGHTBOX_SCALE_STEP;
+        updateSharedImageLightboxZoom(delta);
+    }, { passive: false });
+
+    viewport.addEventListener('dragstart', (event) => {
+        if (event.target instanceof HTMLImageElement) {
+            event.preventDefault();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (modal.style.display !== 'block') return;
+        if (event.key === 'Escape') {
+            closeSharedImageLightbox();
+        } else if (event.key === '+' || event.key === '=') {
+            updateSharedImageLightboxZoom(SHARED_IMAGE_LIGHTBOX_SCALE_STEP);
+        } else if (event.key === '-') {
+            updateSharedImageLightboxZoom(-SHARED_IMAGE_LIGHTBOX_SCALE_STEP);
+        } else if (event.key === '0') {
+            resetSharedImageLightboxZoom();
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        if (modal.style.display === 'block') {
+            applySharedImageLightboxZoom();
+        }
+    });
+
+    document.addEventListener('click', (event) => {
+        const image = event.target.closest('#chatDisplay .chat-image-preview');
+        if (!image) return;
+        openSharedImageLightbox(image.currentSrc || image.src, image.alt || 'Expanded shared image');
     });
 }
 
@@ -198,7 +408,25 @@ function ensureSharedStdoutElements(codeId) {
         button.setAttribute('aria-expanded', 'false');
         button.disabled = true;
         button.addEventListener('click', () => toggleSharedStdoutPanel(codeId));
+        const applyAllLabel = document.createElement('label');
+        applyAllLabel.className = 'output-apply-all';
+        const applyAllCheckbox = document.createElement('input');
+        applyAllCheckbox.type = 'checkbox';
+        applyAllCheckbox.checked = sharedOutputApplyAllEnabled;
+        applyAllCheckbox.addEventListener('change', () => {
+            sharedOutputApplyAllEnabled = applyAllCheckbox.checked;
+            if (!sharedOutputApplyAllEnabled) {
+                sharedOutputVisibilityAllMode = null;
+            } else {
+                const currentPanel = messageElement.querySelector('.stdout-panel');
+                sharedOutputVisibilityAllMode = Boolean(currentPanel?.classList.contains('open'));
+            }
+            syncSharedOutputApplyAllCheckboxes();
+        });
+        applyAllLabel.appendChild(applyAllCheckbox);
+        applyAllLabel.appendChild(document.createTextNode(' all'));
         controls.appendChild(button);
+        controls.appendChild(applyAllLabel);
         contentElement.appendChild(controls);
     }
 
@@ -211,7 +439,44 @@ function ensureSharedStdoutElements(codeId) {
         contentElement.appendChild(panel);
     }
 
+    syncSharedOutputApplyAllCheckboxes();
     return { messageElement, contentElement, controls, button, panel };
+}
+
+function getSharedOutputMessageElements() {
+    return Array.from(document.querySelectorAll('.message')).filter(element => {
+        const codeId = element.getAttribute('data-id');
+        return (sharedStdoutMap.get(codeId) || []).length > 0;
+    });
+}
+
+function syncSharedOutputApplyAllCheckboxes() {
+    document.querySelectorAll('.output-apply-all input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = sharedOutputApplyAllEnabled;
+    });
+}
+
+function setSharedStdoutVisibility(codeId, showOutput, { autoScroll = false } = {}) {
+    const { button, panel } = ensureSharedStdoutElements(codeId);
+    if (!button || !panel || button.disabled) return;
+    panel.classList.toggle('open', showOutput);
+    panel.setAttribute('aria-hidden', showOutput ? 'false' : 'true');
+    button.textContent = showOutput ? 'Hide Output' : 'Show Output';
+    button.setAttribute('aria-expanded', String(showOutput));
+    if (showOutput) {
+        renderSharedStdoutPanel(codeId);
+        if (autoScroll) {
+            panel.scrollTop = panel.scrollHeight;
+            panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }
+}
+
+function applySharedStdoutVisibilityToAll(showOutput) {
+    getSharedOutputMessageElements().forEach(element => {
+        const codeId = element.getAttribute('data-id');
+        setSharedStdoutVisibility(codeId, showOutput);
+    });
 }
 
 function updateSharedStdoutAvailability(codeId) {
@@ -219,14 +484,15 @@ function updateSharedStdoutAvailability(codeId) {
     if (!controls || !button) return;
     const hasOutput = (sharedStdoutMap.get(codeId) || []).length > 0;
     controls.classList.toggle('stdout-hidden', !hasOutput);
-    button.disabled = !hasOutput;
     if (!hasOutput) {
-        button.textContent = 'Show Output';
-        button.setAttribute('aria-expanded', 'false');
-        if (panel) {
-            panel.classList.remove('open');
-            panel.setAttribute('aria-hidden', 'true');
-        }
+        button.disabled = false;
+        setSharedStdoutVisibility(codeId, false);
+        button.disabled = true;
+    } else if (sharedOutputVisibilityAllMode !== null) {
+        button.disabled = false;
+        setSharedStdoutVisibility(codeId, sharedOutputVisibilityAllMode);
+    } else {
+        button.disabled = false;
     }
 }
 
@@ -281,18 +547,105 @@ function renderSharedStdoutPanel(codeId) {
 function toggleSharedStdoutPanel(codeId) {
     const { button, panel } = ensureSharedStdoutElements(codeId);
     if (!button || !panel || button.disabled) return;
-    const isOpen = panel.classList.toggle('open');
-    if (isOpen) {
-        panel.setAttribute('aria-hidden', 'false');
-        button.textContent = 'Hide Output';
-        renderSharedStdoutPanel(codeId);
-        panel.scrollTop = panel.scrollHeight;
-        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const showOutput = !panel.classList.contains('open');
+    if (sharedOutputApplyAllEnabled) {
+        sharedOutputVisibilityAllMode = showOutput;
+        applySharedStdoutVisibilityToAll(showOutput);
+        if (showOutput) {
+            panel.scrollTop = panel.scrollHeight;
+            panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
     } else {
-        panel.setAttribute('aria-hidden', 'true');
-        button.textContent = 'Show Output';
+        setSharedStdoutVisibility(codeId, showOutput, { autoScroll: showOutput });
     }
-    button.setAttribute('aria-expanded', String(isOpen));
+}
+
+function getSharedCodeMessageElements() {
+    return Array.from(document.querySelectorAll('.message')).filter(element => {
+        const id = element.getAttribute('data-id');
+        return shouldTrackSharedCode(sharedMessageCache.get(id));
+    });
+}
+
+function setSharedCodeVisibility(codeId, showCode) {
+    const messageElement = document.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return;
+    messageElement.classList.toggle('code-collapsed', !showCode);
+    const button = messageElement.querySelector('.code-toggle-button');
+    if (button) {
+        button.textContent = showCode ? 'Hide Code' : 'Show Code';
+        button.setAttribute('aria-expanded', String(showCode));
+    }
+}
+
+function applySharedCodeVisibilityToAll(showCode) {
+    getSharedCodeMessageElements().forEach(element => {
+        setSharedCodeVisibility(element.getAttribute('data-id'), showCode);
+    });
+}
+
+function syncSharedCodeApplyAllCheckboxes() {
+    document.querySelectorAll('.code-apply-all input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = sharedCodeApplyAllEnabled;
+    });
+}
+
+function ensureSharedCodeControls(codeId) {
+    const messageElement = document.querySelector(`.message[data-id="${codeId}"]`);
+    if (!messageElement) return;
+    const contentElement = messageElement.querySelector('.content');
+    const pre = contentElement?.querySelector(':scope > pre');
+    const codeBlock = pre?.querySelector('code');
+    if (!contentElement || !pre || !codeBlock || contentElement.querySelector(':scope > .code-controls')) return;
+
+    const controls = document.createElement('div');
+    controls.className = 'code-controls';
+
+    const left = document.createElement('div');
+    left.className = 'code-controls-left';
+
+    const toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.className = 'code-toggle-button';
+    toggleButton.setAttribute('aria-expanded', 'true');
+    toggleButton.textContent = 'Hide Code';
+    toggleButton.addEventListener('click', () => {
+        const showCode = messageElement.classList.contains('code-collapsed');
+        if (sharedCodeApplyAllEnabled) {
+            sharedCodeVisibilityAllMode = showCode;
+            applySharedCodeVisibilityToAll(showCode);
+        } else {
+            setSharedCodeVisibility(codeId, showCode);
+        }
+    });
+
+    const applyAllLabel = document.createElement('label');
+    applyAllLabel.className = 'code-apply-all';
+    const applyAllCheckbox = document.createElement('input');
+    applyAllCheckbox.type = 'checkbox';
+    applyAllCheckbox.checked = sharedCodeApplyAllEnabled;
+    applyAllCheckbox.addEventListener('change', () => {
+        sharedCodeApplyAllEnabled = applyAllCheckbox.checked;
+        if (!sharedCodeApplyAllEnabled) {
+            sharedCodeVisibilityAllMode = null;
+        } else {
+            sharedCodeVisibilityAllMode = !messageElement.classList.contains('code-collapsed');
+        }
+        syncSharedCodeApplyAllCheckboxes();
+    });
+    applyAllLabel.appendChild(applyAllCheckbox);
+    applyAllLabel.appendChild(document.createTextNode(' all'));
+
+    left.appendChild(toggleButton);
+    left.appendChild(applyAllLabel);
+    controls.appendChild(left);
+    contentElement.insertBefore(controls, pre);
+    addCopyButtonsShared(pre);
+
+    if (sharedCodeVisibilityAllMode !== null) {
+        setSharedCodeVisibility(codeId, sharedCodeVisibilityAllMode);
+    }
+    syncSharedCodeApplyAllCheckboxes();
 }
 
 // Display message in chat (similar to conversation_ui.js but simplified for read-only)
@@ -318,7 +671,11 @@ function displayMessageInChat(message) {
     contentElement.setAttribute('data-type', message.message_type);
     
     // Handle different message types and formats similar to conversation_ui.js
-    if (message.message_type === 'message') {
+    if (isSharedCompactionMarker(message)) {
+        messageDiv.classList.add('compaction-marker-message');
+        contentElement.classList.add('compaction-marker-content');
+        contentElement.innerHTML = renderSharedCompactionMarker(message);
+    } else if (message.message_type === 'message') {
         const raw = message.content || '';
         const { text: shielded, store } = protectMath(raw);
         if (!hasBalancedMath(raw)) {
@@ -326,14 +683,15 @@ function displayMessageInChat(message) {
         } else {
             const parsedMarkdown = marked ? marked.parse(shielded) : shielded;
             contentElement.innerHTML = restoreMath(parsedMarkdown, store);
+            wrapMarkdownTables(contentElement);
         }
     } else if (message.message_type === 'image') {
         if (message.message_format === 'base64.png') {
-            contentElement.innerHTML = `<img src="data:image/png;base64,${message.content}" alt="Image">`;
+            contentElement.innerHTML = `<img src="data:image/png;base64,${message.content}" alt="Image" class="chat-image-preview">`;
         } else if (message.message_format === 'path') {
-            contentElement.innerHTML = `<img src="${message.content}" alt="Image">`;
+            contentElement.innerHTML = `<img src="${message.content}" alt="Image" class="chat-image-preview">`;
         } else {
-            contentElement.innerHTML = `<img src="${message.content}" alt="Image">`;
+            contentElement.innerHTML = `<img src="${message.content}" alt="Image" class="chat-image-preview">`;
         }
     } else if (message.message_type === 'code') {
         if (message.message_format === 'html') {
@@ -358,10 +716,13 @@ function displayMessageInChat(message) {
     
     messageDiv.appendChild(contentElement);
     chatDisplay.appendChild(messageDiv);
-    addCopyButtonsShared(contentElement);
+    if (!shouldTrackSharedCode(message)) {
+        addCopyButtonsShared(contentElement);
+    }
     
     if (shouldTrackSharedCode(message)) {
         lastSharedCodeId = messageId;
+        ensureSharedCodeControls(messageId);
         ensureSharedStdoutElements(messageId);
     } else if (isSharedConsoleMessage(message)) {
         messageDiv.classList.add('console-output-message');
@@ -400,10 +761,26 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Format date for display
+function parseUtcDate(dateString) {
+    if (!dateString) return null;
+    const value = String(dateString);
+    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+    const date = new Date(hasTimezone ? value : `${value}Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+// Format UTC timestamps for display in the viewer's browser timezone.
 function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    const date = parseUtcDate(dateString);
+    if (!date) return '';
+    return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short'
+    });
 }
 
 // Show error state
@@ -442,7 +819,7 @@ function updateConversationInfo(conversation) {
     const createdDate = formatDate(conversation.created_at);
     
     conversationInfo.innerHTML = `
-        <span><strong>Created:</strong> ${createdDate} UTC</span>
+        <span><strong>Created:</strong> ${createdDate}</span>
     `;
 }
 
@@ -510,5 +887,6 @@ async function loadSharedConversation() {
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
+    initializeSharedImageLightbox();
     loadSharedConversation();
 });

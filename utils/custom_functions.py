@@ -67,7 +67,7 @@ def extract_text_from_station_response(response_dict):
 def get_station_info(station_query):
     # LiteLLM 
     station_query_response = responses(
-        model="openai/gpt-5-mini-2025-08-07",
+        model="openai/gpt-5.4-mini-2026-03-17",
         reasoning={"effort": "low"},
         input=[
             {"role": "system", "content": station_list_appendix},
@@ -400,7 +400,7 @@ def extract_web_query_response(web_query_response):
 
 def web_search(web_query):
     web_query_response = responses(
-        model="openai/gpt-5-mini-2025-08-07",
+        model="openai/gpt-5.4-mini-2026-03-17",
         reasoning={"effort": "low"},
         input=[
             {"role": "system", "content": "You are a concise research assistant that only searches the web and only responds with search results."},

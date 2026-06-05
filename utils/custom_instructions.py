@@ -1,5 +1,5 @@
 # Custom instructions to LLM and OpenInterpreter (Generic Assistant)
-def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, mcp_tools=None):
+def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, user_first_name="User", mcp_tools=None):
     ##  Removed the following so that datetime is more dynamic "Today's date is {today}."
     ##  Removed station_id parameter
     CODEX_HOME="/app/.codex"
@@ -42,6 +42,7 @@ Important notes:
     return f"""
             The host is {host}.
             The user_id is {user_id}.
+            The user's first name is {user_first_name}.
             The session_id is {session_id}.
             The uploaded files are available in {static_dir}/{user_id}/{session_id}/{upload_dir} folder. Use the file path to access the files when asked to analyze uploaded files
 
@@ -77,7 +78,7 @@ Important notes:
                 - Work only within ${CODEX_SANDBOX}:
                     * Repositories: ${CODEX_SANDBOX}/repos
                     * Temporary files: ${CODEX_SANDBOX}/tmp
-                - Invoke Codex directly from the shell using codex exec ... by default. 
+                - Invoke Codex directly from the shell using codex exec ... by default.
                 - Do not wrap Codex in Python subprocess unless requested or if direct shell execution is unavailable.
                 - For repository tasks, prefer: codex exec -C /path/to/repo --full-auto "<instruction>"
                 - Configuration, Agent working agreements, Skills, and Authentication files are in ${CODEX_HOME}.
@@ -108,6 +109,8 @@ Important notes:
             This function is already defined and available for immediate use. You must use get_climate_index("<INDEX_NAME>") whenever a user requests climate index data.
             -- DO NOT attempt to reimplement, replace, or fetch climate indices through alternative methods such as web scraping or external libraries.
             -- DO NOT ask whether get_climate_index is available—it is always present in your environment.
+            -- When using get_climate_index, generate code that tracks elapsed time for the function call.
+            -- If loading a climate index takes longer than about 20 seconds, inform the user that the remote data source may be slow or temporarily unavailable.
             Example usage: 
                 oni_data = get_climate_index("RONI")
             Note:   
@@ -144,7 +147,6 @@ Important notes:
             plt.legend()
             plt.grid()
             plt.show()
-            {mcp_section}
 
             4. web_search(web_query)
             The function web_search is available in the environment for immediate use (do not import it).
@@ -156,23 +158,6 @@ Important notes:
                 results = web_search("climate news")
                 print(results)
             -- After web_search returns, summarize each unique item with title/topic, a brief summary, and a link.
-
-            CUSTOM FUNCTION USAGE NOTE (important):
-            -- The functions get_datetime, get_station_info, get_climate_index, web_search, query_knowledge_base, call_mcp_tool, and list_mcp_tools are already defined in the host environment (do not import them).
-            -- Call them directly as plain functions, e.g.:
-                now = get_datetime()
-                info = get_station_info("Honolulu, HI")
-                result = query_knowledge_base("What does Figure 3 show?", "{user_id}", "{session_id}")
-                print(result["answer"])  # Text response with citations
-                # Show only the relevant figure (select the page from the answer)
-                target_page = 3  # Set based on the answer text
-                for img in result["images"]:
-                    if img["page"] == target_page:
-                        from PIL import Image
-                        image = Image.open(img["path"])
-                        image.show()
-                        break
-                mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
 
             5.  query_knowledge_base ("<query>", "{user_id}", "{session_id}")
             You have access to a function that can fetch facts, figures, and understanding from documents that the user has uploaded to IDEA (via the "Knowledge" interface).
@@ -230,7 +215,24 @@ Important notes:
             - If the query_knowledge_base function returns no relevant information, you may attempt to review the actual document directly.
             - papers_dir = '/app/data/papers/{user_id}/'
 
-            END OF CUSTOM FUNCTION USAGE NOTE
+            {mcp_section}
+
+            CUSTOM FUNCTION USAGE NOTE (important):
+            -- The functions get_datetime, get_station_info, get_climate_index, web_search, and query_knowledge_base are already defined in the host environment (do not import them; Additional functions such as call_mcp_tool and list_mcp_tools are sometimes also available).
+            -- Call them directly as plain functions, e.g.:
+                now = get_datetime()
+                info = get_station_info("Honolulu, HI")
+                result = query_knowledge_base("What does Figure 3 show?", "{user_id}", "{session_id}")
+                print(result["answer"])  # Text response with citations
+                # Show only the relevant figure (select the page from the answer)
+                target_page = 3  # Set based on the answer text
+                for img in result["images"]:
+                    if img["page"] == target_page:
+                        from PIL import Image
+                        image = Image.open(img["path"])
+                        image.show()
+                        break
+                mcp_result = call_mcp_tool('mcp_xyz_tool_name', arg1='value1')
 
             CRITICAL:
             -- Always attempt to execute code, unless the user explicitly requested otherwise (e.g., "show me example code").

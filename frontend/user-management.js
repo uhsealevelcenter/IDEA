@@ -35,30 +35,15 @@
                 const desiredDisplay = el.dataset.adminDisplay || (el.classList.contains('nav-btn') ? 'inline-flex' : 'block');
                 el.style.display = desiredDisplay;
             } else {
-                el.style.display = '';
+                el.style.display = 'none';
             }
         });
     }
 
-    async function fetchCurrentUser() {
-        try {
-            const endpoints = getEndpoints();
-            const url = endpoints.userProfile || '/api/users/me';
-            const res = await fetch(url, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...getAuthHeaders(),
-                },
-            });
-            if (!res.ok) return;
-            const profile = await res.json();
-            state.currentUserId = profile.id || null;
-            state.isSuperuser = Boolean(profile.is_superuser);
-            toggleAdminControls(state.isSuperuser);
-        } catch (err) {
-            console.error('Unable to determine user privileges:', err);
-        }
+    function applyCurrentUser(profile) {
+        state.currentUserId = profile?.id || null;
+        state.isSuperuser = Boolean(profile?.is_superuser);
+        toggleAdminControls(state.isSuperuser);
     }
 
     async function loadUsers() {
@@ -438,6 +423,9 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         attachEvents();
-        fetchCurrentUser();
+        applyCurrentUser(window.getCurrentUserProfile?.() || window.currentUserProfile || null);
+        window.addEventListener('idea:user-profile-loaded', (event) => {
+            applyCurrentUser(event.detail?.profile || null);
+        });
     });
 })();

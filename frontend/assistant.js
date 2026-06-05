@@ -25,6 +25,7 @@ let controller = null;
 let promptIdeasVisible = false;
 const activeMessageIds = new Map();
 let workingIndicatorId = null;
+let workingIndicatorTimer = null;
 let pendingUploads = [];
 let lastExecutableCodeId = null;
 let pendingConsoleParentId = null;
@@ -36,9 +37,30 @@ let stopRequestedCodeId = null;
 let userProfilePromise = null;
 let welcomeRenderPromise = null;
 let welcomeRendered = false;
+let codeApplyAllEnabled = false;
+let codeVisibilityAllMode = null;
+let outputApplyAllEnabled = false;
+let outputVisibilityAllMode = null;
+let activeExecutionCodeId = null;
+let isExecutionRunning = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
-const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
+const THINKING_PAUSE_DELAY_MS = 1400;
+const COMPACTION_MARKER_PREFIX = '[IDEA conversation compacted at ';
+const COMPACTION_MARKER_SUFFIX = ']';
+const THEME_PREFERENCES = ['light', 'dark', 'coast'];
+const MOBILE_COMPOSER_BREAKPOINT = 520;
+const MOBILE_COMPOSER_MIN_HEIGHT = 72;
+const IMAGE_LIGHTBOX_INITIAL_SCALE = 1.25;
+const IMAGE_LIGHTBOX_MIN_SCALE = 0.5;
+const IMAGE_LIGHTBOX_MAX_SCALE = 4;
+const IMAGE_LIGHTBOX_SCALE_STEP = 0.25;
+const CHAT_IMAGE_DRAG_TYPE = 'application/x-idea-chat-image';
+let themeControlsInitialized = false;
+let imageLightboxState = {
+    scale: IMAGE_LIGHTBOX_INITIAL_SCALE,
+    fitScale: IMAGE_LIGHTBOX_INITIAL_SCALE
+};
 
 // Conversation manager instance
 let conversationManager;
@@ -46,6 +68,55 @@ let conversationManager;
 // Authentication state
 let authToken = localStorage.getItem('authToken');
 let currentUserFirstName = null;
+let currentUserProfile = null;
+let guestExpiryTimerId = null;
+let authPollingTimerId = null;
+const GUEST_NOTICE_STORAGE_KEY = 'idea-guest-notice';
+const LOGIN_MESSAGE_STORAGE_KEY = 'idea-login-message';
+const AUTH_POLL_INTERVAL_MS = 60 * 1000;
+
+function notifyUserProfileLoaded(profile) {
+    window.currentUserProfile = profile;
+    window.dispatchEvent(new CustomEvent('idea:user-profile-loaded', {
+        detail: { profile }
+    }));
+}
+
+function setLoginRedirectMessage(message, type = 'error') {
+    localStorage.setItem(LOGIN_MESSAGE_STORAGE_KEY, JSON.stringify({ message, type }));
+}
+
+function getSavedGuestNotice() {
+    const rawValue = localStorage.getItem(GUEST_NOTICE_STORAGE_KEY);
+    if (!rawValue) return null;
+    try {
+        return JSON.parse(rawValue);
+    } catch (error) {
+        console.warn('Unable to parse saved guest notice:', error);
+        localStorage.removeItem(GUEST_NOTICE_STORAGE_KEY);
+        return null;
+    }
+}
+
+function saveGuestNotice(data) {
+    const existingNotice = getSavedGuestNotice();
+    const isSameGuestSession = existingNotice?.expiresAt && existingNotice.expiresAt === data.expiresAt;
+    localStorage.setItem(GUEST_NOTICE_STORAGE_KEY, JSON.stringify({
+        ...data,
+        dismissed: isSameGuestSession ? Boolean(existingNotice.dismissed) : Boolean(data.dismissed)
+    }));
+}
+
+function clearGuestNotice() {
+    localStorage.removeItem(GUEST_NOTICE_STORAGE_KEY);
+}
+
+function getExpiredSessionMessage() {
+    if (currentUserProfile?.is_guest || getSavedGuestNotice()) {
+        return 'Your guest session has expired. Start a new guest session or sign in with a regular account.';
+    }
+    return 'Your session has expired. Please sign in again.';
+}
 
 // Authentication functions
 async function checkAuthentication() {
@@ -62,8 +133,11 @@ async function checkAuthentication() {
         });
 
         if (!response.ok) {
-            localStorage.removeItem('authToken');
-            redirectToLogin();
+            logout({
+                message: getExpiredSessionMessage(),
+                messageType: 'error',
+                preserveGuestNotice: false
+            });
             return false;
         }
 
@@ -84,9 +158,31 @@ function getAuthHeaders() {
     return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
 }
 
-function logout() {
+function logout(options = {}) {
+    const {
+        message = null,
+        messageType = 'error',
+        preserveGuestNotice = false
+    } = options;
+
+    if (authPollingTimerId) {
+        clearInterval(authPollingTimerId);
+        authPollingTimerId = null;
+    }
+    if (guestExpiryTimerId) {
+        clearTimeout(guestExpiryTimerId);
+        guestExpiryTimerId = null;
+    }
+    if (message) {
+        setLoginRedirectMessage(message, messageType);
+    }
     localStorage.removeItem('authToken');
+    if (!preserveGuestNotice) {
+        clearGuestNotice();
+    }
     authToken = null;
+    currentUserProfile = null;
+    window.currentUserProfile = null;
     redirectToLogin();
 }
 
@@ -119,13 +215,115 @@ async function loadCurrentUserProfile() {
                 throw new Error('Failed to load user profile');
             }
             const profile = await response.json();
+            currentUserProfile = profile;
+            notifyUserProfileLoaded(profile);
             currentUserFirstName = deriveFirstName(profile.full_name);
+            if (profile.is_guest && profile.guest_expires_at) {
+                saveGuestNotice({
+                    expiresAt: profile.guest_expires_at,
+                    expiresInMinutes: profile.guest_expires_in_minutes || null
+                });
+                scheduleGuestSessionExpiry(profile.guest_expires_at);
+                startAuthenticationPolling();
+            } else {
+                clearGuestNotice();
+            }
+            return profile;
         } catch (error) {
             console.warn('Unable to load user profile for greeting:', error);
+            currentUserProfile = null;
+            notifyUserProfileLoaded(null);
             currentUserFirstName = null;
+            return null;
         }
     })();
     return userProfilePromise;
+}
+
+window.getCurrentUserProfile = () => currentUserProfile;
+window.loadCurrentUserProfile = loadCurrentUserProfile;
+
+function startAuthenticationPolling() {
+    if (authPollingTimerId) return;
+    authPollingTimerId = setInterval(async () => {
+        if (!authToken) return;
+        await checkAuthentication();
+    }, AUTH_POLL_INTERVAL_MS);
+}
+
+function scheduleGuestSessionExpiry(expiresAt) {
+    if (guestExpiryTimerId) {
+        clearTimeout(guestExpiryTimerId);
+        guestExpiryTimerId = null;
+    }
+    if (!expiresAt) return;
+
+    const expiryTimeMs = new Date(expiresAt).getTime();
+    if (Number.isNaN(expiryTimeMs)) return;
+
+    const delayMs = expiryTimeMs - Date.now();
+    if (delayMs <= 0) {
+        logout({
+            message: getExpiredSessionMessage(),
+            messageType: 'error',
+            preserveGuestNotice: false
+        });
+        return;
+    }
+
+    guestExpiryTimerId = setTimeout(() => {
+        logout({
+            message: getExpiredSessionMessage(),
+            messageType: 'error',
+            preserveGuestNotice: false
+        });
+    }, delayMs);
+}
+
+function formatGuestWindow(minutes) {
+    const safeMinutes = Number(minutes) || 60;
+    return `${safeMinutes} minute${safeMinutes === 1 ? '' : 's'}`;
+}
+
+function showGuestNoticeModal() {
+    const notice = getSavedGuestNotice();
+    if (!notice || notice.dismissed) return;
+
+    const modal = document.getElementById('guestNoticeModal');
+    const message = document.getElementById('guestNoticeMessage');
+    if (!modal || !message) return;
+
+    message.textContent = `You are using a temporary guest account for evaluation. This session will expire automatically after ${formatGuestWindow(notice.expiresInMinutes)}. Any conversations, uploaded files, and data created during this session will no longer be available after the guest account expires.`;
+    modal.style.display = 'block';
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+}
+
+function dismissGuestNoticeModal() {
+    const modal = document.getElementById('guestNoticeModal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    const notice = getSavedGuestNotice();
+    if (notice) {
+        saveGuestNotice({ ...notice, dismissed: true });
+    }
+}
+
+function initializeGuestNoticeModal() {
+    const modal = document.getElementById('guestNoticeModal');
+    const dismissButton = document.getElementById('dismissGuestNotice');
+    const confirmButton = document.getElementById('guestNoticeConfirmButton');
+    if (!modal || !dismissButton || !confirmButton) return;
+
+    dismissButton.addEventListener('click', dismissGuestNoticeModal);
+    confirmButton.addEventListener('click', dismissGuestNoticeModal);
+    window.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            dismissGuestNoticeModal();
+        }
+    });
 }
 
 async function waitForNameOrTimeout(timeoutMs = 1000) {
@@ -167,18 +365,221 @@ async function renderWelcomeGreeting() {
     return welcomeRenderPromise;
 }
 
-function applyTheme() {
-    document.body.classList.remove('theme-light', 'theme-dark');
-    document.body.classList.add('theme-light');
+function getThemeControlButtons() {
+    return document.querySelectorAll('[data-theme-option]');
+}
 
-    themeToggleInputs.forEach((input) => {
-        input.checked = false;
+function normalizeThemePreference(value) {
+    if (THEME_PREFERENCES.includes(value)) {
+        return value;
+    }
+    if (value === 'system') {
+        return 'dark';
+    }
+    return 'dark';
+}
+
+function getStoredThemePreference() {
+    return normalizeThemePreference(localStorage.getItem(THEME_STORAGE_KEY));
+}
+
+function resolveTheme(preference = getStoredThemePreference()) {
+    return normalizeThemePreference(preference);
+}
+
+function syncThemeControls(preference) {
+    getThemeControlButtons().forEach((button) => {
+        const isActive = button.dataset.themeOption === preference;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', String(isActive));
     });
+}
+
+function applyTheme(preference = getStoredThemePreference()) {
+    const resolvedTheme = resolveTheme(preference);
+    document.body.classList.remove('theme-light', 'theme-dark', 'theme-coast');
+    document.body.classList.add(`theme-${resolvedTheme}`);
+    document.body.dataset.themePreference = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme === 'coast' ? 'dark' : resolvedTheme;
+    syncThemeControls(resolvedTheme);
+}
+
+function getImageLightboxElements() {
+    return {
+        modal: document.getElementById('imageLightboxModal'),
+        preview: document.getElementById('imageLightboxPreview'),
+        stage: document.getElementById('imageLightboxStage'),
+        viewport: document.getElementById('imageLightboxViewport'),
+        close: document.getElementById('closeImageLightboxModal'),
+        zoomIn: document.getElementById('imageZoomInButton'),
+        zoomOut: document.getElementById('imageZoomOutButton'),
+        zoomReset: document.getElementById('imageZoomResetButton')
+    };
+}
+
+function clampImageZoom(scale) {
+    return Math.min(
+        IMAGE_LIGHTBOX_MAX_SCALE,
+        Math.max(imageLightboxState.fitScale || IMAGE_LIGHTBOX_MIN_SCALE, scale)
+    );
+}
+
+function getImageLightboxFitScale(preview, viewport, stage) {
+    const naturalWidth = preview.naturalWidth || preview.width;
+    const naturalHeight = preview.naturalHeight || preview.height;
+    if (!naturalWidth || !naturalHeight) return IMAGE_LIGHTBOX_INITIAL_SCALE;
+
+    const stageStyles = window.getComputedStyle(stage);
+    const paddingX = (parseFloat(stageStyles.paddingLeft) || 0) + (parseFloat(stageStyles.paddingRight) || 0);
+    const paddingY = (parseFloat(stageStyles.paddingTop) || 0) + (parseFloat(stageStyles.paddingBottom) || 0);
+    const availableWidth = Math.max(viewport.clientWidth - paddingX, 1);
+    const availableHeight = Math.max(viewport.clientHeight - paddingY, 1);
+
+    return Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight);
+}
+
+function sanitizeDraggedImageFilename(name, fallbackExtension = 'png') {
+    const cleaned = (name || '')
+        .trim()
+        .replace(/[<>:"/\\|?*\x00-\x1F]+/g, '-')
+        .replace(/\s+/g, ' ');
+    if (!cleaned) {
+        return `chat-image-${Date.now()}.${fallbackExtension}`;
+    }
+    if (/\.[a-z0-9]+$/i.test(cleaned)) {
+        return cleaned;
+    }
+    return `${cleaned}.${fallbackExtension}`;
+}
+
+function extensionFromMimeType(mimeType = '') {
+    const normalized = mimeType.toLowerCase();
+    if (normalized === 'image/jpeg') return 'jpg';
+    if (normalized === 'image/svg+xml') return 'svg';
+    if (normalized.startsWith('image/')) return normalized.split('/')[1] || 'png';
+    return 'png';
+}
+
+function deriveDraggedImageName(src, alt = '', mimeType = '') {
+    const genericAlt = /^(image|uploaded image|expanded chat image)$/i;
+    const extension = extensionFromMimeType(mimeType);
+    if (alt && !genericAlt.test(alt.trim())) {
+        return sanitizeDraggedImageFilename(alt, extension);
+    }
+    try {
+        const url = new URL(src, window.location.href);
+        const basename = url.pathname.split('/').pop();
+        if (basename) {
+            return sanitizeDraggedImageFilename(decodeURIComponent(basename), extension);
+        }
+    } catch (error) {
+        // Ignore malformed or data URLs and fall back below.
+    }
+    return `chat-image-${Date.now()}.${extension}`;
+}
+
+async function createFileFromDraggedChatImage(payload) {
+    if (!payload?.src) {
+        throw new Error('Missing image source');
+    }
+    const response = await fetch(payload.src);
+    if (!response.ok) {
+        throw new Error('Unable to read chat image');
+    }
+    const blob = await response.blob();
+    const mimeType = blob.type || 'image/png';
+    const fileName = deriveDraggedImageName(payload.src, payload.alt || '', mimeType);
+    return new File([blob], fileName, { type: mimeType });
+}
+
+function applyImageLightboxZoom() {
+    const { preview, stage, viewport } = getImageLightboxElements();
+    if (!preview || !stage || !viewport) return;
+    const naturalWidth = preview.naturalWidth || preview.width;
+    const naturalHeight = preview.naturalHeight || preview.height;
+    if (!naturalWidth || !naturalHeight) return;
+
+    const scaledWidth = naturalWidth * imageLightboxState.scale;
+    const scaledHeight = naturalHeight * imageLightboxState.scale;
+    const stageWidth = Math.max(scaledWidth, viewport.clientWidth);
+    const stageHeight = Math.max(scaledHeight, viewport.clientHeight);
+
+    stage.style.width = `${stageWidth}px`;
+    stage.style.height = `${stageHeight}px`;
+    preview.style.width = `${scaledWidth}px`;
+    preview.style.height = `${scaledHeight}px`;
+}
+
+function openImageLightbox(src, alt = 'Expanded chat image') {
+    const { modal, preview, viewport, stage } = getImageLightboxElements();
+    if (!modal || !preview || !viewport || !stage) return;
+    preview.src = src;
+    preview.alt = alt;
+    preview.draggable = false;
+    preview.onload = () => {
+        imageLightboxState.fitScale = getImageLightboxFitScale(preview, viewport, stage);
+        imageLightboxState.scale = imageLightboxState.fitScale;
+        applyImageLightboxZoom();
+        viewport.scrollTop = 0;
+        viewport.scrollLeft = 0;
+    };
+    modal.style.display = 'block';
+    document.body.classList.add('modal-open');
+}
+
+function closeImageLightbox() {
+    const { modal, preview, stage } = getImageLightboxElements();
+    if (!modal || !preview || !stage) return;
+    modal.style.display = 'none';
+    preview.removeAttribute('src');
+    preview.style.width = '';
+    preview.style.height = '';
+    stage.style.width = '';
+    stage.style.height = '';
+    imageLightboxState.scale = IMAGE_LIGHTBOX_INITIAL_SCALE;
+    imageLightboxState.fitScale = IMAGE_LIGHTBOX_INITIAL_SCALE;
+    document.body.classList.remove('modal-open');
+}
+
+function updateImageLightboxZoom(delta) {
+    imageLightboxState.scale = clampImageZoom(imageLightboxState.scale + delta);
+    applyImageLightboxZoom();
+}
+
+function resetImageLightboxZoom() {
+    imageLightboxState.scale = imageLightboxState.fitScale;
+    applyImageLightboxZoom();
+}
+
+function handleThemeSelection(preference) {
+    if (!THEME_PREFERENCES.includes(preference)) {
+        return;
+    }
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, preference);
+    } catch (error) {
+        console.warn('Failed to persist theme preference:', error);
+    }
+    applyTheme(preference);
+}
+
+function bindThemeControls() {
+    if (themeControlsInitialized) {
+        return;
+    }
+    getThemeControlButtons().forEach((button) => {
+        button.addEventListener('click', () => {
+            handleThemeSelection(button.dataset.themeOption);
+        });
+    });
+    themeControlsInitialized = true;
 }
 
 function initializeTheme() {
     try {
-        localStorage.setItem(THEME_STORAGE_KEY, 'light');
+        bindThemeControls();
+        const normalized = getStoredThemePreference();
+        localStorage.setItem(THEME_STORAGE_KEY, normalized);
         applyTheme();
     } catch (error) {
         console.error('Failed to initialize theme:', error);
@@ -218,6 +619,25 @@ function protectMath(text) {
 
 function restoreMath(html, store) {
   return store.reduce((acc, m, i) => acc.replace(`@@MATH${i}@@`, m), html);
+}
+
+function wrapMarkdownTables(root) {
+  if (!root) return;
+  root.querySelectorAll('table').forEach((table) => {
+    if (table.closest('.markdown-table-scroll')) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'markdown-table-scroll';
+    table.parentNode.insertBefore(wrapper, table);
+    wrapper.appendChild(table);
+  });
+}
+
+function wrapMarkdownTablesInHtml(html) {
+  const template = document.createElement('template');
+  template.innerHTML = html || '';
+  wrapMarkdownTables(template.content);
+  return template.innerHTML;
 }
 
 // Returns true if display/inline math is closed (so it's safe to typeset)
@@ -546,7 +966,14 @@ showPromptIdeas();
 
 function resetTextareaHeight() {
     const messageInput = document.getElementById('messageInput');
-    messageInput.style.height = '38px'; // Reset to initial height
+    if (!messageInput) return;
+    messageInput.style.height = 'auto';
+    const measuredHeight = Math.min(messageInput.scrollHeight, 200);
+    if (window.innerWidth <= MOBILE_COMPOSER_BREAKPOINT) {
+        messageInput.style.height = `${Math.max(measuredHeight, MOBILE_COMPOSER_MIN_HEIGHT)}px`;
+        return;
+    }
+    messageInput.style.height = `${measuredHeight}px`;
 }
 
 // Event listeners
@@ -571,6 +998,7 @@ stopButton.addEventListener('click', () => {
     if (isGenerating && controller) {
         stopRequested = true;
         stopRequestedCodeId = activeLineCodeId || lastExecutableCodeId || pendingConsoleParentId;
+        requestExecutionStop();
         isGenerating = false;
         controller.abort();
         appendSystemMessage("Generation stopped by user.");
@@ -674,8 +1102,149 @@ function appendPrematureStopNotice(codeId, reason = 'Execution stopped before co
     };
     messages.push(noticeMessage);
     appendMessage(noticeMessage);
+    saveCompletedAssistantMessage(noticeMessage);
     addConsoleMapping(codeId, messageId);
     refreshStdoutPanel(codeId, { autoScroll: true });
+}
+
+async function requestExecutionStop(reason = 'Execution stopped before completion.') {
+    try {
+        const response = await fetch(config.getEndpoints().interrupt, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Session-Id": sessionId,
+                ...getAuthHeaders()
+            },
+            body: JSON.stringify({ reason })
+        });
+        if (!response.ok) {
+            console.warn(`Interpreter interrupt request failed with status ${response.status}`);
+        }
+    } catch (error) {
+        console.warn('Interpreter interrupt request failed:', error);
+    }
+}
+
+function getChatRunsEndpoint() {
+    const endpoints = config.getEndpoints();
+    if (endpoints.chatRuns) {
+        return endpoints.chatRuns.replace(/\/$/, '');
+    }
+    return endpoints.chat.replace(/\/chat\/?$/, '/chat-runs').replace(/\/$/, '');
+}
+
+function delay(ms, signal = null) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+        }
+        const timeoutId = setTimeout(resolve, ms);
+        if (signal) {
+            signal.addEventListener('abort', () => {
+                clearTimeout(timeoutId);
+                reject(new DOMException('Aborted', 'AbortError'));
+            }, { once: true });
+        }
+    });
+}
+
+async function startChatRun(params, signal) {
+    const response = await fetch(getChatRunsEndpoint(), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Session-Id": sessionId,
+            ...getAuthHeaders()
+        },
+        body: JSON.stringify(params),
+        signal,
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || response.statusText || "Unable to start chat run.");
+    }
+
+    return response.json();
+}
+
+async function pollChatRun(runId, signal) {
+    let after = 0;
+    let emptyPollsAfterTerminal = 0;
+    let consecutiveErrors = 0;
+    const terminalStatuses = new Set(['completed', 'failed', 'interrupted']);
+
+    while (isGenerating) {
+        const eventsUrl = new URL(`${getChatRunsEndpoint()}/${encodeURIComponent(runId)}/events`);
+        eventsUrl.searchParams.set('after', String(after));
+
+        let payload;
+        try {
+            const response = await fetch(eventsUrl.toString(), {
+                method: "GET",
+                headers: {
+                    "X-Session-Id": sessionId,
+                    ...getAuthHeaders()
+                },
+                signal,
+            });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.detail || response.statusText || `Run polling failed with status ${response.status}`);
+            }
+            payload = await response.json();
+            consecutiveErrors = 0;
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            consecutiveErrors += 1;
+            if (consecutiveErrors >= 5) {
+                throw error;
+            }
+            await delay(Math.min(2000, 250 * consecutiveErrors), signal);
+            continue;
+        }
+
+        const events = Array.isArray(payload.events) ? payload.events : [];
+        for (const event of events) {
+            if (typeof event.seq === 'number') {
+                after = Math.max(after, event.seq);
+            }
+            const chunk = event.chunk;
+            if (!chunk) {
+                continue;
+            }
+            const result = await processChunk(chunk);
+            if (result?.scheduleThinking) {
+                scheduleWorkingIndicator();
+            } else {
+                clearWorkingIndicatorTimer();
+            }
+        }
+
+        if (Number.isFinite(payload.next_after)) {
+            after = Math.max(after, payload.next_after);
+        }
+
+        if (terminalStatuses.has(payload.status)) {
+            if (payload.status === 'failed' && events.length === 0 && payload.error) {
+                appendSystemMessage(payload.error, { persist: true });
+            }
+            if (events.length === 0) {
+                emptyPollsAfterTerminal += 1;
+            }
+            if (emptyPollsAfterTerminal >= 1) {
+                break;
+            }
+        } else {
+            emptyPollsAfterTerminal = 0;
+        }
+
+        await delay(events.length ? 50 : 500, signal);
+    }
 }
 
 function serializeMessagesForRequest(messageList = []) {
@@ -756,67 +1325,10 @@ async function sendRequest(msgOverride=null) {
         // Initialize AbortController to handle cancellation
         controller = new AbortController();
         const { signal } = controller;
-
-        // Send the POST request to the Python server endpoint with session ID header
-        const interpreterCall = await fetch(config.getEndpoints().chat, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Session-Id": sessionId,
-                ...getAuthHeaders()
-            },
-            body: JSON.stringify(params),
-            signal,
-        });
-
-        // Throw an error if the request was not successful
-        if (!interpreterCall.ok) {
-            console.error("Interpreter didn't respond with 200 OK");
-            if (interpreterCall.statusText) {
-                appendSystemMessage(interpreterCall.statusText);
-            } else {
-                appendSystemMessage("Error: Unable to communicate with the server.");
-            }
-            resetButtons();
-            return;
-        }
-
-        // Initialize a reader for the response body
-        const reader = interpreterCall.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-
         isGenerating = true;
 
-        let partialData = ''; // Buffer for partial data
-
-        while (isGenerating) {
-            const { value, done } = await reader.read();
-
-            if (done) break;
-
-            const text = decoder.decode(value, { stream: true });
-            partialData += text;
-
-            // Split the received text by newlines
-            const lines = partialData.split("\n");
-
-            // Keep the last line (it might be incomplete)
-            partialData = lines.pop();
-
-            for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                    // console.log("Received line:", line);
-                    const data = line.replace("data: ", "").trim();
-                    // console.log("Received data:", data);
-                    try {
-                        const chunk = JSON.parse(data);
-                        await processChunk(chunk);
-                    } catch (e) {
-                        console.error("Failed to parse chunk:", e);
-                    }
-                }
-            }
-        }
+        const run = await startChatRun(params, signal);
+        await pollChatRun(run.run_id, signal);
 
         resetButtons();
     } catch (error) {
@@ -837,8 +1349,8 @@ function resetButtons() {
     stopButton.disabled = true;
     controller = null;
     isGenerating = false;
-    if (stopRequested || isActiveLineRunning) {
-        const codeId = stopRequestedCodeId || activeLineCodeId || lastExecutableCodeId || pendingConsoleParentId;
+    if (stopRequested || isActiveLineRunning || isExecutionRunning) {
+        const codeId = stopRequestedCodeId || activeExecutionCodeId || activeLineCodeId || lastExecutableCodeId || pendingConsoleParentId;
         if (codeId && !hasInterruptionNotice(codeId)) {
             const codeMessage = getMessageById(codeId);
             if (isShellCodeMessage(codeMessage) || stopRequested || isActiveLineRunning) {
@@ -849,6 +1361,8 @@ function resetButtons() {
     stopRequested = false;
     stopRequestedCodeId = null;
     isActiveLineRunning = false;
+    isExecutionRunning = false;
+    activeExecutionCodeId = null;
     removeActiveLineSpinner();
     activeLineCodeId = null;
 }
@@ -884,7 +1398,22 @@ function saveCompletedAssistantMessage(message) {
         }
         message.format = message.format || 'output';
     }
-    // Do not persist transient tool-status lines
+    if (message.format === 'compaction_status') {
+        const markerContent = parseCompactionMarker(message.content)
+            ? message.content
+            : buildCompactionMarkerContent(message.created_at || new Date().toISOString());
+        conversationManager.addMessage(
+            'assistant',
+            markerContent,
+            'message',
+            null,
+            null
+        ).catch(error => {
+            console.error('Failed to save compaction marker to conversation:', error);
+        });
+        return;
+    }
+    // Do not persist transient status lines
     if (message.format === 'tool_status') {
         return;
     }
@@ -920,10 +1449,15 @@ function processChunk(chunk) {
     chunk = normalizeIncomingChunk(chunk);
     return new Promise((resolve) => {
         removeWorkingIndicator();
+        if (chunk.format === 'execution_status') {
+            handleExecutionStatusChunk(chunk.content);
+            resolve({ scheduleThinking: false });
+            return;
+        }
         if (chunk.type === 'console' && chunk.format === 'active_line') {
             //console.log(chunk); // Debug log for active line chunks
             handleActiveLineChunk(chunk.content);
-            resolve();
+            resolve({ scheduleThinking: false });
             return;
         }
 
@@ -946,7 +1480,8 @@ function processChunk(chunk) {
             message = newMessage;
         } else if (chunk.error) {
             const errorMessage = chunk.error.message || chunk.error;
-            appendSystemMessage(errorMessage);
+            appendSystemMessage(errorMessage, { persist: true });
+            resolve({ scheduleThinking: false });
             return;
         }
 
@@ -973,6 +1508,9 @@ function processChunk(chunk) {
             if (chunk.end) {
                 chunk.format = chunk.format || message.format || chunk.recipient || 'output';
                 message.isComplete = true;
+                if (message.format === 'compaction_status') {
+                    message.content = buildCompactionMarkerContent(message.created_at || new Date().toISOString());
+                }
                 saveCompletedAssistantMessage(message);
                 clearActiveMessageId(chunk);
             }
@@ -984,8 +1522,16 @@ function processChunk(chunk) {
             updateMessageContent(message.id, message.content);
         }
 
-        resolve();
+        resolve({ scheduleThinking: shouldScheduleThinkingAfterChunk(chunk) });
     });
+}
+
+function shouldScheduleThinkingAfterChunk(chunk) {
+    if (!chunk || chunk.end || chunk.error) return false;
+    if (chunk.format === 'tool_status' || chunk.format === 'compaction_status') return false;
+    if (chunk.type === 'code' || chunk.type === 'console' || chunk.type === 'confirmation') return false;
+    if (chunk.role === 'computer') return false;
+    return chunk.role === 'assistant' && (chunk.type === 'message' || chunk.type === 'text');
 }
 
 // Function to append a message to the chat display, gets called on chunk start
@@ -1005,7 +1551,11 @@ function appendMessage(message, options = {}) {
     const contentElement = document.createElement('div');
     contentElement.classList.add('content');
     contentElement.setAttribute('data-type', message.type);
-    if (message.role === 'user' && message.type === 'message') {
+    if (isCompactionMarkerMessage(message)) {
+        messageElement.classList.add('compaction-marker-message');
+        contentElement.classList.add('compaction-marker-content');
+        contentElement.innerHTML = renderCompactionMarkerHtml(message);
+    } else if (message.role === 'user' && message.type === 'message') {
         const userContentWrapper = document.createElement('div');
         userContentWrapper.classList.add('user-message-wrapper');
 
@@ -1048,7 +1598,7 @@ function appendMessage(message, options = {}) {
     } else if (message.type === 'image' && message.format === 'path') {
         const imageSrc = escapeHtml(message.content || '');
         const imageAlt = escapeHtml(message.filename || 'Uploaded image');
-        contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview">`;
+        contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview chat-image-preview">`;
     } else if (message.type === 'file') {
         const displayName = escapeHtml(message.filename || message.name || message.content || 'Attachment');
         const filePath = escapeHtml(message.content || '');
@@ -1068,10 +1618,13 @@ function appendMessage(message, options = {}) {
         contentElement.innerHTML = message.content; 
     }
 
-    // Tool-status messages: add compact UI classes
-    if (message.format === 'tool_status') {
+    // Status messages: add compact UI classes
+    if (message.format === 'tool_status' || message.format === 'compaction_status') {
         messageElement.classList.add('tool-status-message');
         contentElement.classList.add('tool-status-content');
+        if (message.format === 'compaction_status') {
+            messageElement.classList.add('compaction-status-message');
+        }
     }
 
     messageElement.appendChild(contentElement);
@@ -1132,15 +1685,44 @@ function appendExternalMessage({ role = 'assistant', content = '', type = 'messa
 window.appendExternalMessage = appendExternalMessage;
 
 // Modify updateMessageContent with better error handling
+function handleExecutionStatusChunk(content) {
+    const status = typeof content === 'string' ? content.toLowerCase() : '';
+    if (status === 'start') {
+        const codeId = lastExecutableCodeId || pendingConsoleParentId || activeLineCodeId || null;
+        if (!codeId) return;
+        activeExecutionCodeId = codeId;
+        activeLineCodeId = codeId;
+        isExecutionRunning = true;
+        isActiveLineRunning = true;
+        renderActiveLineSpinner();
+        return;
+    }
+
+    if (status === 'end' || status === 'timeout') {
+        const codeId = activeExecutionCodeId || activeLineCodeId;
+        isExecutionRunning = false;
+        isActiveLineRunning = false;
+        if (codeId) {
+            activeLineCodeId = codeId;
+            removeActiveLineSpinner();
+        }
+        activeExecutionCodeId = null;
+        activeLineCodeId = null;
+    }
+}
+
 function handleActiveLineChunk(content) {
     if (!activeLineCodeId) {
-        activeLineCodeId = lastExecutableCodeId || pendingConsoleParentId || null;
+        activeLineCodeId = activeExecutionCodeId || lastExecutableCodeId || pendingConsoleParentId || null;
     }
     if (!activeLineCodeId) return;
     if (content) {
         isActiveLineRunning = true;
         renderActiveLineSpinner();
     } else {
+        if (isExecutionRunning) {
+            return;
+        }
         isActiveLineRunning = false;
         removeActiveLineSpinner();
         activeLineCodeId = null;
@@ -1188,10 +1770,23 @@ function updateMessageContent(id, content) {
         }
         
         // Handle different message types (more robust Math rendering)
-        if (message.format === 'tool_status') {
+        if (isCompactionMarkerMessage(message) && message.isComplete) {
+            messageElement.classList.add('compaction-marker-message');
+            messageElement.classList.remove('tool-status-message');
+            messageElement.classList.remove('compaction-status-message');
+            contentDiv.classList.add('compaction-marker-content');
+            contentDiv.classList.remove('tool-status-content');
+            contentDiv.innerHTML = renderCompactionMarkerHtml(message);
+            return;
+        }
+
+        if (message.format === 'tool_status' || message.format === 'compaction_status') {
             messageElement.classList.add('tool-status-message');
             contentDiv.classList.add('tool-status-content');
-            // Render a compact tool-status line with spinner/check
+            if (message.format === 'compaction_status') {
+                messageElement.classList.add('compaction-status-message');
+            }
+            // Render a compact status line with spinner/check
             const isDone = !!message.isComplete;
             const text = (content && content.trim()) ? content : message.content || '';
             const statusHtml = `
@@ -1221,6 +1816,7 @@ function updateMessageContent(id, content) {
             const parsedMarkdown = marked.parse(shielded);
             const htmlWithMath = restoreMath(parsedMarkdown, store);
             contentDiv.innerHTML = htmlWithMath;
+            wrapMarkdownTables(contentDiv);
 
             // 5) Highlight code blocks using Prism
             prismHighlightUnder(contentDiv);
@@ -1239,14 +1835,14 @@ function updateMessageContent(id, content) {
                 const mime = message.format.replace('base64.', 'image/');
                 if (message.isComplete) {
                     contentDiv.innerHTML =
-                        `<img src="data:${mime};base64,${content}" alt="Image">`;
+                        `<img src="data:${mime};base64,${content}" alt="Image" class="chat-image-preview">`;
                 } else {
                     // still streaming, don't try to render partial base64
                     contentDiv.innerHTML = `<div class="image-placeholder"> Generating image… </div>`;
                 }
             } else if (message.format === 'path') {
                 // path-based images are usually already usable
-                contentDiv.innerHTML = `<img src="${content}" alt="Image">`;
+                contentDiv.innerHTML = `<img src="${content}" alt="Image" class="chat-image-preview">`;
             }
         } else if (message.type === 'code') {
             const preservedStdoutState = captureStdoutPanelState(message.id);
@@ -1271,7 +1867,7 @@ function updateMessageContent(id, content) {
                     codeBlock.textContent = content;
                     Prism.highlightElement(codeBlock);
                 }
-                addCopyButtons();
+                ensureCodeControls(message.id);
                 ensureStdoutElements(message.id);
                 updateStdoutAvailability(message.id);
                 restoreStdoutPanelState(message.id, preservedStdoutState);
@@ -1288,7 +1884,8 @@ function updateMessageContent(id, content) {
 }
 
 // Function to append system messages (like errors or notifications)
-function appendSystemMessage(message) {
+function appendSystemMessage(message, options = {}) {
+    const { persist = false } = options;
     const id = generateId('msg');
     const systemMessage = {
         id: id,
@@ -1314,6 +1911,18 @@ function appendSystemMessage(message) {
     messageElement.appendChild(content);
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+
+    if (persist && conversationManager && message) {
+        conversationManager.addMessage(
+            'assistant',
+            message,
+            'message',
+            null,
+            null
+        ).catch(error => {
+            console.error('Failed to persist system message:', error);
+        });
+    }
 }
 
 // Function to append confirmation chunks
@@ -1330,6 +1939,7 @@ function appendConfirmationChunk(chunk) {
         } else {
             // User canceled, abort the generation
             isGenerating = false;
+            requestExecutionStop('Code execution canceled by user.');
             if (controller) {
                 controller.abort();
             }
@@ -1408,6 +2018,54 @@ function escapeHtml(text) {
     return text.replace(/[&<>"']/g, function(m) { return map[m]; });
 }
 
+function buildCompactionMarkerContent(timestamp = new Date().toISOString()) {
+    return `${COMPACTION_MARKER_PREFIX}${timestamp}${COMPACTION_MARKER_SUFFIX}`;
+}
+
+function parseCompactionMarker(content) {
+    if (typeof content !== 'string') return null;
+    const trimmed = content.trim();
+    if (!trimmed.startsWith(COMPACTION_MARKER_PREFIX) || !trimmed.endsWith(COMPACTION_MARKER_SUFFIX)) {
+        return null;
+    }
+    const timestamp = trimmed.slice(COMPACTION_MARKER_PREFIX.length, -COMPACTION_MARKER_SUFFIX.length);
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+    return { timestamp, date };
+}
+
+function isCompactionMarkerMessage(message) {
+    if (!message) return false;
+    const msgType = message.type || message.message_type || 'message';
+    return msgType === 'message' && Boolean(parseCompactionMarker(message.content));
+}
+
+function formatCompactionTime(date) {
+    return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short'
+    });
+}
+
+function renderCompactionMarkerHtml(message, { includeIcon = true } = {}) {
+    const marker = parseCompactionMarker(message?.content) || { date: new Date(message?.created_at || Date.now()) };
+    const iconHtml = includeIcon
+        ? '<span class="material-icons compaction-marker-icon" aria-hidden="true">compress</span>'
+        : '';
+    return `
+        <div class="compaction-marker" role="status">
+            ${iconHtml}
+            <span>Conversation compacted ${escapeHtml(formatCompactionTime(marker.date))}</span>
+        </div>
+    `;
+}
+
 function formatAttachmentLabel(count) {
     return count === 1 ? 'File' : 'Files';
 }
@@ -1465,7 +2123,28 @@ function showWorkingIndicator() {
     return workingIndicatorId;
 }
 
+function clearWorkingIndicatorTimer() {
+    if (workingIndicatorTimer) {
+        clearTimeout(workingIndicatorTimer);
+        workingIndicatorTimer = null;
+    }
+}
+
+function scheduleWorkingIndicator() {
+    clearWorkingIndicatorTimer();
+    if (!isGenerating) {
+        return;
+    }
+    workingIndicatorTimer = setTimeout(() => {
+        workingIndicatorTimer = null;
+        if (isGenerating) {
+            showWorkingIndicator();
+        }
+    }, THINKING_PAUSE_DELAY_MS);
+}
+
 function removeWorkingIndicator() {
+    clearWorkingIndicatorTimer();
     if (!workingIndicatorId) return;
 
     const indicator = chatDisplay.querySelector(`.message[data-id="${workingIndicatorId}"]`);
@@ -1510,14 +2189,171 @@ function addCopyButtons(root) {
     });
 }
 
+function getCodeMessageElements() {
+    return Array.from(chatDisplay.querySelectorAll('.message')).filter(element => {
+        const id = element.getAttribute('data-id');
+        const message = messages.find(msg => msg.id === id);
+        return shouldTrackCodeMessage(message);
+    });
+}
+
+function setCodeVisibility(codeId, showCode) {
+    const messageElement = getCodeMessageElement(codeId);
+    if (!messageElement) return;
+    messageElement.classList.toggle('code-collapsed', !showCode);
+    const button = messageElement.querySelector('.code-toggle-button');
+    if (button) {
+        button.textContent = showCode ? 'Hide Code' : 'Show Code';
+        button.setAttribute('aria-expanded', String(showCode));
+    }
+}
+
+function applyCodeVisibilityToAll(showCode) {
+    getCodeMessageElements().forEach(element => {
+        const codeId = element.getAttribute('data-id');
+        setCodeVisibility(codeId, showCode);
+    });
+}
+
+function syncCodeApplyAllCheckboxes() {
+    chatDisplay.querySelectorAll('.code-apply-all input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = codeApplyAllEnabled;
+    });
+}
+
+function getOutputMessageElements() {
+    return Array.from(chatDisplay.querySelectorAll('.message')).filter(element => {
+        const codeId = element.getAttribute('data-id');
+        return (codeConsoleMap.get(codeId) || []).length > 0;
+    });
+}
+
+function syncOutputApplyAllCheckboxes() {
+    chatDisplay.querySelectorAll('.output-apply-all input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = outputApplyAllEnabled;
+    });
+}
+
+function setStdoutVisibility(codeId, showOutput, { autoScroll = false } = {}) {
+    const { button, panel } = ensureStdoutElements(codeId);
+    if (!button || !panel || button.disabled) return;
+    panel.classList.toggle('open', showOutput);
+    panel.setAttribute('aria-hidden', showOutput ? 'false' : 'true');
+    button.textContent = showOutput ? 'Hide Output' : 'Show Output';
+    button.setAttribute('aria-expanded', String(showOutput));
+    if (showOutput) {
+        renderStdoutPanel(codeId);
+        if (autoScroll) {
+            autoScrollStdoutPanel(panel);
+        }
+    }
+}
+
+function applyStdoutVisibilityToAll(showOutput) {
+    getOutputMessageElements().forEach(element => {
+        const codeId = element.getAttribute('data-id');
+        setStdoutVisibility(codeId, showOutput);
+    });
+}
+
+function ensureCodeControls(codeId) {
+    const messageElement = getCodeMessageElement(codeId);
+    if (!messageElement) return {};
+    const contentElement = messageElement.querySelector('.content');
+    const pre = contentElement?.querySelector(':scope > pre');
+    const codeBlock = pre?.querySelector('code');
+    if (!contentElement || !pre || !codeBlock) return {};
+
+    let controls = contentElement.querySelector(':scope > .code-controls');
+    if (!controls) {
+        controls = document.createElement('div');
+        controls.className = 'code-controls';
+
+        const left = document.createElement('div');
+        left.className = 'code-controls-left';
+
+        const toggleButton = document.createElement('button');
+        toggleButton.type = 'button';
+        toggleButton.className = 'code-toggle-button';
+        toggleButton.setAttribute('aria-expanded', 'true');
+        toggleButton.textContent = 'Hide Code';
+        toggleButton.addEventListener('click', () => {
+            const showCode = messageElement.classList.contains('code-collapsed');
+            if (codeApplyAllEnabled) {
+                codeVisibilityAllMode = showCode;
+                applyCodeVisibilityToAll(showCode);
+            } else {
+                setCodeVisibility(codeId, showCode);
+            }
+        });
+
+        const applyAllLabel = document.createElement('label');
+        applyAllLabel.className = 'code-apply-all';
+        const applyAllCheckbox = document.createElement('input');
+        applyAllCheckbox.type = 'checkbox';
+        applyAllCheckbox.checked = codeApplyAllEnabled;
+        applyAllCheckbox.addEventListener('change', () => {
+            codeApplyAllEnabled = applyAllCheckbox.checked;
+            if (!codeApplyAllEnabled) {
+                codeVisibilityAllMode = null;
+            } else {
+                codeVisibilityAllMode = !messageElement.classList.contains('code-collapsed');
+            }
+            syncCodeApplyAllCheckboxes();
+        });
+        applyAllLabel.appendChild(applyAllCheckbox);
+        applyAllLabel.appendChild(document.createTextNode(' all'));
+
+        left.appendChild(toggleButton);
+        left.appendChild(applyAllLabel);
+
+        controls.appendChild(left);
+        contentElement.insertBefore(controls, pre);
+    }
+    ensureCodeBlockCopyButton(pre, codeBlock);
+
+    if (codeVisibilityAllMode !== null) {
+        setCodeVisibility(codeId, codeVisibilityAllMode);
+    } else {
+        setCodeVisibility(codeId, !messageElement.classList.contains('code-collapsed'));
+    }
+    syncCodeApplyAllCheckboxes();
+    return { controls, pre, codeBlock };
+}
+
+function ensureCodeBlockCopyButton(pre, codeBlock) {
+    if (!pre || !codeBlock || pre.querySelector(':scope > .copy-button')) return;
+    const button = document.createElement('button');
+    button.className = 'copy-button';
+    button.type = 'button';
+    button.textContent = 'Copy';
+    pre.appendChild(button);
+    button.addEventListener('click', () => {
+        navigator.clipboard.writeText(codeBlock.innerText).then(() => {
+            button.textContent = 'Copied!';
+            setTimeout(() => {
+                button.textContent = 'Copy';
+            }, 2000);
+        }).catch((err) => {
+            console.error('Failed to copy code: ', err);
+            button.textContent = 'Error';
+            setTimeout(() => {
+                button.textContent = 'Copy';
+            }, 2000);
+        });
+    });
+}
+
 function resetStdoutState() {
+    removeActiveLineSpinner();
     codeConsoleMap.clear();
     lastExecutableCodeId = null;
     pendingConsoleParentId = null;
     activeMessageIds.clear();
     activeLineCodeId = null;
     isActiveLineRunning = false;
-    removeActiveLineSpinner();
+    activeExecutionCodeId = null;
+    isExecutionRunning = false;
 }
 window.resetStdoutState = resetStdoutState;
 
@@ -1613,13 +2449,20 @@ function renderActiveLineSpinner() {
     if (!activeLineCodeId || !isActiveLineRunning) return;
     const messageElement = getCodeMessageElement(activeLineCodeId);
     if (!messageElement) return;
-    const pre = messageElement.querySelector('pre');
-    if (!pre) return;
-    let spinner = pre.querySelector('.code-spinner');
-    if (!spinner) {
-        spinner = document.createElement('div');
-        spinner.className = 'code-spinner';
-        pre.appendChild(spinner);
+    const contentElement = messageElement.querySelector('.content');
+    const pre = contentElement?.querySelector(':scope > pre');
+    if (!contentElement || !pre) return;
+    let status = contentElement.querySelector(':scope > .code-execution-status');
+    if (!status) {
+        status = document.createElement('div');
+        status.className = 'code-execution-status';
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+        status.innerHTML = `
+            <span class="code-spinner" aria-hidden="true"></span>
+            <span>Analyzing</span>
+        `;
+        pre.insertAdjacentElement('afterend', status);
     }
 }
 
@@ -1627,9 +2470,9 @@ function removeActiveLineSpinner() {
     if (!activeLineCodeId) return;
     const messageElement = getCodeMessageElement(activeLineCodeId);
     if (!messageElement) return;
-    const spinner = messageElement.querySelector('pre .code-spinner');
-    if (spinner) {
-        spinner.remove();
+    const status = messageElement.querySelector('.code-execution-status');
+    if (status) {
+        status.remove();
     }
 }
 
@@ -1757,7 +2600,25 @@ function ensureStdoutElements(codeId) {
         button.setAttribute('aria-expanded', 'false');
         button.disabled = true;
         button.addEventListener('click', () => toggleStdoutPanel(codeId));
+        const applyAllLabel = document.createElement('label');
+        applyAllLabel.className = 'output-apply-all';
+        const applyAllCheckbox = document.createElement('input');
+        applyAllCheckbox.type = 'checkbox';
+        applyAllCheckbox.checked = outputApplyAllEnabled;
+        applyAllCheckbox.addEventListener('change', () => {
+            outputApplyAllEnabled = applyAllCheckbox.checked;
+            if (!outputApplyAllEnabled) {
+                outputVisibilityAllMode = null;
+            } else {
+                const currentPanel = messageElement.querySelector('.stdout-panel');
+                outputVisibilityAllMode = Boolean(currentPanel?.classList.contains('open'));
+            }
+            syncOutputApplyAllCheckboxes();
+        });
+        applyAllLabel.appendChild(applyAllCheckbox);
+        applyAllLabel.appendChild(document.createTextNode(' all'));
         controls.appendChild(button);
+        controls.appendChild(applyAllLabel);
         contentElement.appendChild(controls);
     }
 
@@ -1770,6 +2631,7 @@ function ensureStdoutElements(codeId) {
         contentElement.appendChild(panel);
     }
 
+    syncOutputApplyAllCheckboxes();
     return { messageElement, contentElement, controls, button, panel };
 }
 
@@ -1780,14 +2642,15 @@ function updateStdoutAvailability(codeId) {
     }
     const hasOutput = (codeConsoleMap.get(codeId) || []).length > 0;
     controls.classList.toggle('stdout-hidden', !hasOutput);
-    button.disabled = !hasOutput;
     if (!hasOutput) {
-        button.textContent = 'Show Output';
-        button.setAttribute('aria-expanded', 'false');
-        if (panel) {
-            panel.classList.remove('open');
-            panel.setAttribute('aria-hidden', 'true');
-        }
+        button.disabled = false;
+        setStdoutVisibility(codeId, false);
+        button.disabled = true;
+    } else if (outputVisibilityAllMode !== null) {
+        button.disabled = false;
+        setStdoutVisibility(codeId, outputVisibilityAllMode);
+    } else {
+        button.disabled = false;
     }
 }
 
@@ -1856,12 +2719,6 @@ function renderStdoutPanel(codeId) {
     if (outputs.length > 0) {
         addCopyButtons(panel);
     }
-    if (outputs.length === 0) {
-        const emptyState = document.createElement('div');
-        emptyState.className = 'stdout-empty';
-        emptyState.textContent = 'No console output captured.';
-        panel.appendChild(emptyState);
-    }
 }
 
 function autoScrollStdoutPanel(panel) {
@@ -1873,17 +2730,16 @@ function autoScrollStdoutPanel(panel) {
 function toggleStdoutPanel(codeId) {
     const { button, panel } = ensureStdoutElements(codeId);
     if (!button || !panel || button.disabled) return;
-    const isOpen = panel.classList.toggle('open');
-    if (isOpen) {
-        panel.setAttribute('aria-hidden', 'false');
-        button.textContent = 'Hide Output';
-        renderStdoutPanel(codeId);
-        autoScrollStdoutPanel(panel);
+    const showOutput = !panel.classList.contains('open');
+    if (outputApplyAllEnabled) {
+        outputVisibilityAllMode = showOutput;
+        applyStdoutVisibilityToAll(showOutput);
+        if (showOutput) {
+            autoScrollStdoutPanel(panel);
+        }
     } else {
-        panel.setAttribute('aria-hidden', 'true');
-        button.textContent = 'Show Output';
+        setStdoutVisibility(codeId, showOutput, { autoScroll: showOutput });
     }
-    button.setAttribute('aria-expanded', String(isOpen));
 }
 
 function refreshStdoutPanel(codeId, { autoScroll = false } = {}) {
@@ -1896,7 +2752,7 @@ function refreshStdoutPanel(codeId, { autoScroll = false } = {}) {
     }
 }
 
-function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
+function hydrateChatWithMessages(rawMessages, { persist = false, showExamplesWhenEmpty = true } = {}) {
     if (!Array.isArray(rawMessages)) {
         return;
     }
@@ -1906,9 +2762,17 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
     promptIdeasVisible = false;
     resetStdoutState();
     if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
-        showPromptIdeas();
+        if (showExamplesWhenEmpty) {
+            showPromptIdeas();
+        } else {
+            hidePromptIdeas();
+            renderWelcomeGreeting();
+            const welcomeSection = ensureWelcomeSection();
+            welcomeSection?.welcome?.classList.remove('hidden');
+        }
     } else {
         hideWelcomeSection();
+        hidePromptExamplesSection();
     }
 
     rawMessages.forEach(rawMessage => {
@@ -1942,6 +2806,8 @@ window.hydrateChatWithMessages = hydrateChatWithMessages;
 
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
+    initializeGuestNoticeModal();
+
     // Check authentication before doing anything else
     const isAuthenticated = await checkAuthentication();
     if (!isAuthenticated) {
@@ -1953,8 +2819,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Initialize conversation manager
     resetStdoutState();
     conversationManager = new ConversationManager();
+    if (typeof window.initializeConversationUI === 'function') {
+        window.initializeConversationUI();
+    }
 
-    loadCurrentUserProfile();
+    await loadCurrentUserProfile();
+    if (currentUserProfile?.is_guest) {
+        showGuestNoticeModal();
+    }
 
     try {
         const response = await fetch(config.getEndpoints().history, {
@@ -2155,6 +3027,86 @@ function initializeMobileNavigation() {
     });
 }
 
+function initializeImageLightbox() {
+    const { modal, close, zoomIn, zoomOut, zoomReset, viewport } = getImageLightboxElements();
+    if (!modal || !close || !zoomIn || !zoomOut || !zoomReset || !viewport) {
+        return;
+    }
+
+    close.addEventListener('click', closeImageLightbox);
+    zoomIn.addEventListener('click', () => updateImageLightboxZoom(IMAGE_LIGHTBOX_SCALE_STEP));
+    zoomOut.addEventListener('click', () => updateImageLightboxZoom(-IMAGE_LIGHTBOX_SCALE_STEP));
+    zoomReset.addEventListener('click', resetImageLightboxZoom);
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            closeImageLightbox();
+        }
+    });
+
+    viewport.addEventListener('wheel', (event) => {
+        if (modal.style.display !== 'block') return;
+        event.preventDefault();
+        const delta = event.deltaY < 0 ? IMAGE_LIGHTBOX_SCALE_STEP : -IMAGE_LIGHTBOX_SCALE_STEP;
+        updateImageLightboxZoom(delta);
+    }, { passive: false });
+
+    viewport.addEventListener('dragstart', (event) => {
+        if (event.target instanceof HTMLImageElement) {
+            event.preventDefault();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (modal.style.display !== 'block') return;
+        if (event.key === 'Escape') {
+            closeImageLightbox();
+        } else if (event.key === '+' || event.key === '=') {
+            updateImageLightboxZoom(IMAGE_LIGHTBOX_SCALE_STEP);
+        } else if (event.key === '-') {
+            updateImageLightboxZoom(-IMAGE_LIGHTBOX_SCALE_STEP);
+        } else if (event.key === '0') {
+            resetImageLightboxZoom();
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        if (modal.style.display === 'block') {
+            applyImageLightboxZoom();
+        }
+    });
+
+    chatDisplay.addEventListener('click', (event) => {
+        const image = event.target.closest('.chat-image-preview, .uploaded-image-preview');
+        if (!image) return;
+        openImageLightbox(image.currentSrc || image.src, image.alt || 'Expanded chat image');
+    });
+
+    chatDisplay.addEventListener('dragstart', (event) => {
+        if (!(event.target instanceof HTMLImageElement) || !event.target.closest('.chat-image-preview, .uploaded-image-preview')) {
+            return;
+        }
+        const payload = {
+            src: event.target.currentSrc || event.target.src,
+            alt: event.target.alt || ''
+        };
+        event.dataTransfer?.clearData();
+        event.dataTransfer?.setData(CHAT_IMAGE_DRAG_TYPE, JSON.stringify(payload));
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'copy';
+        }
+    });
+}
+
+function syncMessageInputLayout() {
+    const messageInputField = document.getElementById('messageInput');
+    if (!messageInputField) return;
+    const isMobileComposer = window.innerWidth <= MOBILE_COMPOSER_BREAKPOINT;
+    messageInputField.rows = isMobileComposer ? 3 : 1;
+    messageInputField.placeholder = 'Type your message, click mic to dictate, or attach/drop a file...';
+    requestAnimationFrame(() => resetTextareaHeight());
+}
+
 // File upload error handling improvements
 async function uploadFile(file, progressElement) {
     try {
@@ -2229,6 +3181,9 @@ function shouldIncludeMessageInExport(message) {
 }
 
 function renderMessageContentForExport(message) {
+    if (isCompactionMarkerMessage(message)) {
+        return renderCompactionMarkerHtml(message, { includeIcon: false });
+    }
     const msgType = message.type || message.message_type || 'message';
     const format = message.format || message.message_format || '';
     if (msgType === 'message') {
@@ -2240,6 +3195,7 @@ function renderMessageContentForExport(message) {
         } else {
             const parsedMarkdown = marked ? marked.parse(shielded) : shielded;
             rendered = restoreMath(parsedMarkdown, store);
+            rendered = wrapMarkdownTablesInHtml(rendered);
         }
         if (Array.isArray(message.attachments) && message.attachments.length > 0) {
             const alreadyPresent = /<strong>(?:file|files):<\/strong>/i.test(rendered);
@@ -2353,6 +3309,7 @@ function attachStdoutControlsForExport(contentElement, codeId, outputs) {
     button.setAttribute('data-stdout-target', codeId);
     button.setAttribute('aria-expanded', 'false');
     controls.appendChild(button);
+    controls.insertAdjacentHTML('beforeend', '<label class="output-apply-all"><input type="checkbox" data-output-apply-all> all</label>');
     contentElement.appendChild(controls);
 
     const panel = document.createElement('div');
@@ -2365,6 +3322,20 @@ function attachStdoutControlsForExport(contentElement, codeId, outputs) {
         </div>
     `).join('');
     contentElement.appendChild(panel);
+}
+
+function attachCodeControlsForExport(contentElement, codeId) {
+    const pre = contentElement?.querySelector(':scope > pre');
+    if (!contentElement || !pre) return;
+    const controls = document.createElement('div');
+    controls.className = 'code-controls';
+    controls.innerHTML = `
+        <div class="code-controls-left">
+            <button type="button" class="code-toggle-button" data-code-target="${codeId}" aria-expanded="true">Hide Code</button>
+            <label class="code-apply-all"><input type="checkbox" data-code-apply-all> all</label>
+        </div>
+    `;
+    contentElement.insertBefore(controls, pre);
 }
 
 function getMessageDataForExport(messageId) {
@@ -2411,14 +3382,23 @@ function prepareChatCloneForExport() {
         
         contentEl.setAttribute('data-type', messageData.type || messageData.message_type || 'message');
         contentEl.innerHTML = renderMessageContentForExport(messageData);
+
+        if (isCompactionMarkerMessage(messageData)) {
+            element.classList.add('compaction-marker-message');
+            contentEl.classList.add('compaction-marker-content');
+            return;
+        }
         
         if (isExportConsoleOutput(messageData)) {
             element.classList.add('console-output-message');
         }
 
         const outputs = stdoutAssociations.get(messageId);
-        if (outputs && outputs.length && isExportCodeMessage(messageData)) {
-            attachStdoutControlsForExport(contentEl, messageId, outputs);
+        if (isExportCodeMessage(messageData)) {
+            attachCodeControlsForExport(contentEl, messageId);
+            if (outputs && outputs.length) {
+                attachStdoutControlsForExport(contentEl, messageId, outputs);
+            }
         }
     });
     
@@ -2667,21 +3647,98 @@ async function createSelfContainedHTML() {
             };
             attachCopyButtons();
 
+            let codeApplyAllEnabled = false;
+            let codeVisibilityAllMode = null;
+            const syncCodeCheckboxes = () => {
+                document.querySelectorAll('[data-code-apply-all]').forEach(checkbox => {
+                    checkbox.checked = codeApplyAllEnabled;
+                });
+            };
+            const setCodeVisible = (targetId, showCode) => {
+                const button = document.querySelector('[data-code-target="' + targetId + '"]');
+                const message = button ? button.closest('.message') : null;
+                if (!message) return;
+                message.classList.toggle('code-collapsed', !showCode);
+                button.textContent = showCode ? 'Hide Code' : 'Show Code';
+                button.setAttribute('aria-expanded', String(showCode));
+            };
+            const applyCodeVisibleToAll = (showCode) => {
+                document.querySelectorAll('[data-code-target]').forEach(button => {
+                    const targetId = button.getAttribute('data-code-target');
+                    if (targetId) setCodeVisible(targetId, showCode);
+                });
+            };
+            document.querySelectorAll('[data-code-target]').forEach(button => {
+                button.addEventListener('click', function() {
+                    const targetId = button.getAttribute('data-code-target');
+                    if (!targetId) return;
+                    const message = button.closest('.message');
+                    const showCode = message ? message.classList.contains('code-collapsed') : true;
+                    if (codeApplyAllEnabled) {
+                        codeVisibilityAllMode = showCode;
+                        applyCodeVisibleToAll(showCode);
+                    } else {
+                        setCodeVisible(targetId, showCode);
+                    }
+                });
+            });
+            document.querySelectorAll('[data-code-apply-all]').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    codeApplyAllEnabled = checkbox.checked;
+                    codeVisibilityAllMode = codeApplyAllEnabled ? codeVisibilityAllMode : null;
+                    syncCodeCheckboxes();
+                });
+            });
+            let outputApplyAllEnabled = false;
+            let outputVisibilityAllMode = null;
+            const syncOutputCheckboxes = () => {
+                document.querySelectorAll('[data-output-apply-all]').forEach(checkbox => {
+                    checkbox.checked = outputApplyAllEnabled;
+                });
+            };
+            const setOutputVisible = (targetId, showOutput, shouldScroll) => {
+                const button = document.querySelector('[data-stdout-target="' + targetId + '"]');
+                const panel = targetId ? document.querySelector('.stdout-panel[data-stdout-target="' + targetId + '"]') : null;
+                if (!button || !panel) return;
+                panel.classList.toggle('open', showOutput);
+                panel.setAttribute('aria-hidden', showOutput ? 'false' : 'true');
+                button.textContent = showOutput ? 'Hide Output' : 'Show Output';
+                button.setAttribute('aria-expanded', String(showOutput));
+                if (showOutput && shouldScroll) {
+                    panel.scrollTop = panel.scrollHeight;
+                    panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                    attachCopyButtons(panel);
+                }
+            };
+            const applyOutputVisibleToAll = (showOutput) => {
+                document.querySelectorAll('[data-stdout-target]').forEach(button => {
+                    const targetId = button.getAttribute('data-stdout-target');
+                    if (targetId) setOutputVisible(targetId, showOutput, false);
+                });
+            };
+            document.querySelectorAll('[data-output-apply-all]').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    outputApplyAllEnabled = checkbox.checked;
+                    outputVisibilityAllMode = outputApplyAllEnabled ? outputVisibilityAllMode : null;
+                    syncOutputCheckboxes();
+                });
+            });
             document.querySelectorAll('.stdout-button').forEach(function(button) {
                 button.addEventListener('click', function() {
                     const targetId = button.getAttribute('data-stdout-target');
                     if (!targetId) return;
-                    const selector = '.stdout-panel[data-stdout-target="' + targetId + '"]';
-                    const panel = document.querySelector(selector);
+                    const panel = document.querySelector('.stdout-panel[data-stdout-target="' + targetId + '"]');
                     if (!panel) return;
-                    const isOpen = panel.classList.toggle('open');
-                    panel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
-                    button.textContent = isOpen ? 'Hide Output' : 'Show Output';
-                    button.setAttribute('aria-expanded', String(isOpen));
-                    if (isOpen) {
-                        panel.scrollTop = panel.scrollHeight;
-                        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                        attachCopyButtons(panel);
+                    const showOutput = !panel.classList.contains('open');
+                    if (outputApplyAllEnabled) {
+                        outputVisibilityAllMode = showOutput;
+                        applyOutputVisibleToAll(showOutput);
+                        if (showOutput) {
+                            panel.scrollTop = panel.scrollHeight;
+                            panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                        }
+                    } else {
+                        setOutputVisible(targetId, showOutput, showOutput);
                     }
                 });
             });
@@ -2788,6 +3845,18 @@ function convertImageToDataURL(img) {
 document.addEventListener('DOMContentLoaded', () => {
     initializeFileUpload();
     initializeMobileNavigation();
+    initializeImageLightbox();
+    syncMessageInputLayout();
+    resetTextareaHeight();
+    window.addEventListener('resize', syncMessageInputLayout);
+    window.addEventListener('load', syncMessageInputLayout);
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => {
+            syncMessageInputLayout();
+        }).catch(() => {
+            // Ignore font loading errors and keep the existing layout.
+        });
+    }
 
     // Microphone Dictation Button Logic
     const micButton = document.getElementById('micButton');
@@ -2876,6 +3945,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let dragTimer;
 
     document.addEventListener('dragover', (e) => {
+        if (e.dataTransfer?.types?.includes(CHAT_IMAGE_DRAG_TYPE)) {
+            e.preventDefault();
+            return;
+        }
         e.preventDefault();
         dropOverlay.classList.add('show');
         clearTimeout(dragTimer);
@@ -2889,6 +3962,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.addEventListener('drop', async (e) => {
+        if (e.dataTransfer?.types?.includes(CHAT_IMAGE_DRAG_TYPE)) {
+            e.preventDefault();
+            dropOverlay.classList.remove('show');
+            return;
+        }
         e.preventDefault();
         dropOverlay.classList.remove('show');
 
@@ -2916,8 +3994,29 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 messageInput.addEventListener('input', function() {
-    // Reset height to auto to get correct scrollHeight
-    this.style.height = 'auto';
-    // Set new height based on content
-    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+    resetTextareaHeight();
+});
+
+messageInput.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types?.includes(CHAT_IMAGE_DRAG_TYPE)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+});
+
+messageInput.addEventListener('drop', async (event) => {
+    if (!event.dataTransfer?.types?.includes(CHAT_IMAGE_DRAG_TYPE)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    document.getElementById('dropOverlay')?.classList.remove('show');
+
+    try {
+        const payload = JSON.parse(event.dataTransfer.getData(CHAT_IMAGE_DRAG_TYPE) || '{}');
+        const file = await createFileFromDraggedChatImage(payload);
+        await handleFiles([file]);
+        messageInput.focus();
+    } catch (error) {
+        console.error('Error attaching dragged chat image:', error);
+        appendSystemMessage(`Error attaching dragged image: ${error.message}`);
+    }
 });
