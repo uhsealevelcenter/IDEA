@@ -16,6 +16,10 @@ class LoginResponse(BaseModel):
     success: bool
     token: Optional[str] = None
     message: Optional[str] = None
+    is_guest: bool = False
+    guest_expires_in_minutes: Optional[int] = None
+    guest_expires_at: Optional[str] = None
+    show_guest_notice: bool = False
 
 # Pydantic models for prompt management
 class PromptCreateRequest(BaseModel):
@@ -80,11 +84,31 @@ class UpdatePassword(SQLModel):
     new_password: str = Field(min_length=8, max_length=40)
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8, max_length=40)
+
+
 # Database model, database table inferred from class name
 class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PasswordResetToken(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id", index=True)
+    token_hash: str = Field(index=True, unique=True, max_length=64)
+    expires_at: datetime = Field(index=True)
+    used_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    user: Optional["User"] = Relationship()
 
 
 # Properties to return via API, id is always required

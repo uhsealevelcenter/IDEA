@@ -5,11 +5,37 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IDEA</title>
+    <link rel="icon" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"%3E%3Crect width="64" height="64" rx="14" fill="%23041f26"/%3E%3Cpath d="M16 20h32v6H16zm0 9h20v6H16zm0 9h32v6H16z" fill="%2329d6d0"/%3E%3C/svg%3E'>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
     <link href="prism.css" rel="stylesheet" />  <!-- Prism for code syntax highlighting -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"> <!-- Mic icon -->
 </head>
-<body class="main-app theme-light">
+<body class="main-app live-app-shell theme-light">
+    <script>
+        (function () {
+            const THEME_STORAGE_KEY = 'idea-theme';
+            const normalizeThemePreference = (value) => {
+                if (value === 'light' || value === 'dark' || value === 'coast') {
+                    return value;
+                }
+                if (value === 'system') {
+                    return 'dark';
+                }
+                return 'dark';
+            };
+            const stored = normalizeThemePreference(localStorage.getItem(THEME_STORAGE_KEY));
+            document.body.classList.remove('theme-light', 'theme-dark', 'theme-coast');
+            document.body.classList.add(`theme-${stored}`);
+            document.body.dataset.themePreference = stored;
+            document.documentElement.style.colorScheme = stored === 'coast' ? 'dark' : stored;
+            if (localStorage.getItem(THEME_STORAGE_KEY) !== stored) {
+                localStorage.setItem(THEME_STORAGE_KEY, stored);
+            }
+        })();
+    </script>
     <div class="app">
         <div class="chat-container">
             <header class="chat-header">
@@ -22,11 +48,11 @@
                         <div class="navbar-menu" id="headerMenu">
                             <button id="systemPromptButton" class="nav-btn">
                                 <span class="material-icons">settings</span>
-                                Instructions
+                                Assistants
                             </button>
                             <button id="knowledgeBaseButton" class="nav-btn">
                                 <span class="material-icons">psychology</span>
-                                Knowledge
+                                Literature
                             </button>
                             <!-- <button id="mcpToolsButton" class="nav-btn">
                                 <span class="material-icons">hub</span>
@@ -56,6 +82,23 @@
                                 <span class="material-icons">manage_accounts</span>
                                 Account
                             </button>
+                            <div class="theme-panel" aria-label="Appearance mode">
+                                <span class="theme-panel-label">Appearance</span>
+                                <div class="theme-selector" role="group" aria-label="Theme mode">
+                                    <button type="button" class="theme-option" data-theme-option="light" aria-pressed="false">
+                                        <span class="material-icons theme-option-icon" aria-hidden="true">light_mode</span>
+                                        <span>Light</span>
+                                    </button>
+                                    <button type="button" class="theme-option" data-theme-option="dark" aria-pressed="false">
+                                        <span class="material-icons theme-option-icon" aria-hidden="true">dark_mode</span>
+                                        <span>Dark</span>
+                                    </button>
+                                    <button type="button" class="theme-option theme-option-coast" data-theme-option="coast" aria-pressed="false">
+                                        <span class="material-icons theme-option-icon" aria-hidden="true">waves</span>
+                                        <span>Coast</span>
+                                    </button>
+                                </div>
+                            </div>
                             <button id="logoutButton" class="nav-btn logout-btn">
                                 <span class="material-icons">logout</span>
                                 Logout
@@ -73,11 +116,11 @@
             <div class="navbar-mobile-menu" id="navbarMobileMenu">
                 <button id="systemPromptButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">settings</span>
-                    Instructions
+                    Assistants
                 </button>
                 <button id="knowledgeBaseButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">psychology</span>
-                    Knowledge
+                    Literature
                 </button>
                 <!-- <button id="mcpToolsButtonMobile" class="nav-btn-mobile">
                     <span class="material-icons">hub</span>
@@ -107,6 +150,23 @@
                     <span class="material-icons">manage_accounts</span>
                     Account
                 </button>
+                <div class="theme-panel theme-panel-mobile" aria-label="Appearance mode">
+                    <span class="theme-panel-label">Appearance</span>
+                    <div class="theme-selector" role="group" aria-label="Theme mode">
+                        <button type="button" class="theme-option" data-theme-option="light" aria-pressed="false">
+                            <span class="material-icons theme-option-icon" aria-hidden="true">light_mode</span>
+                            <span>Light</span>
+                        </button>
+                        <button type="button" class="theme-option" data-theme-option="dark" aria-pressed="false">
+                            <span class="material-icons theme-option-icon" aria-hidden="true">dark_mode</span>
+                            <span>Dark</span>
+                        </button>
+                        <button type="button" class="theme-option theme-option-coast" data-theme-option="coast" aria-pressed="false">
+                            <span class="material-icons theme-option-icon" aria-hidden="true">waves</span>
+                            <span>Coast</span>
+                        </button>
+                    </div>
+                </div>
                 <button id="logoutButtonMobile" class="nav-btn-mobile logout-btn">
                     <span class="material-icons">logout</span>
                     Logout
@@ -121,11 +181,11 @@
                 </div>
             </div>
             <div id="promptExamplesSection" class="prompt-examples-section hidden">
-                <p class="prompt-examples-title">Here are some examples.</p>
+                <p class="prompt-examples-title">Here are some examples</p>
                 <div id="promptIdeasContainer"></div>
             </div>
             <footer class="chat-footer">
-                <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.pdf,.md,.mat,.tif,.png,.jpg" style="display: none">
+                <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.pdf,.md,.mat,.tif,.png,.jpg,.svg,.py" style="display: none">
                 <div class="prompt-row">
                     <div class="input-container">
                         <div class="input-header">
@@ -135,7 +195,7 @@
                             </div>
                         </div>
                         <div class="input-main">
-                            <button id="uploadButton">
+                            <button id="uploadButton" data-upload-hint="Allowed: csv, txt, json, nc, xls, xlsx, doc, docx, ppt, pptx, pdf, md, mat, tif, png, jpg, svg, py. Max 50MB.">
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M21.44 11.05l-9.19 9.19a6.003 6.003 0 01-8.49-8.49l9.19-9.19a4.002 4.002 0 015.66 5.66l-9.2 9.19a2.001 2.001 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                 </svg>
@@ -154,8 +214,21 @@
                         </div>
                     </div>
                     <div class="prompt-actions">
-                        <button id="sendButton">Send</button>
-                        <button id="stopButton" disabled>Stop</button>
+                        <button id="sendButton" aria-label="Send">
+                            <span class="button-text">Send</span>
+                            <span class="button-icon send-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 17V7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                                    <path d="M7.5 11.5L12 7l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </span>
+                        </button>
+                        <button id="stopButton" disabled aria-label="Stop">
+                            <span class="button-text">Stop</span>
+                            <span class="button-icon stop-icon" aria-hidden="true">
+                                <span class="stop-shape"></span>
+                            </span>
+                        </button>
                     </div>
                 </div>
             </footer>
@@ -166,11 +239,11 @@
         </div>
     </div>
 
-    <!-- Knowledge Base Management Modal -->
+    <!-- Literature Management Modal -->
     <div id="knowledgeBaseModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Knowledge Base Management</h2>
+                <h2>Manage Library</h2>
                 <span class="close" id="closeKnowledgeBaseModal">&times;</span>
             </div>
             <div class="modal-body">
@@ -178,7 +251,7 @@
                     <!-- Upload Section -->
                     <div class="upload-section">
                         <div class="section-header">
-                            <h3>Upload New Papers</h3>
+                            <h3>Upload Documents</h3>
                             <div class="upload-info">
                                 <span>Supported formats: PDF, TXT, DOC, DOCX, MD</span>
                                 <span>Max size: 50MB</span>
@@ -200,7 +273,7 @@
                     <!-- Papers List Section -->
                     <div class="papers-list-section">
                         <div class="section-header">
-                            <h3>Current Papers</h3>
+                            <h3>Current Library</h3>
                             <div class="knowledge-base-stats" id="knowledgeBaseStats">
                                 <span id="totalFiles">0 files</span>
                                 <span id="totalSize">0 MB</span>
@@ -215,11 +288,11 @@
         </div>
     </div>
 
-    <!-- System Prompt Management Modal -->
+    <!-- Assistant Management Modal -->
     <div id="promptManagementModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>System Prompt Management</h2>
+                <h2>Manage Assistants</h2>
                 <span class="close" id="closePromptModal">&times;</span>
             </div>
             <div class="modal-body">
@@ -227,7 +300,7 @@
                     <!-- Prompt List Section -->
                     <div class="prompt-list-section">
                         <div class="section-header">
-                            <h3>Available Prompts</h3>
+                            <h3>Available Assistants</h3>
                             <button id="createNewPromptBtn" class="btn btn-primary">
                                 <span class="material-icons">add</span>
                                 Create New
@@ -241,7 +314,7 @@
                     <!-- Prompt Editor Section -->
                     <div class="prompt-editor-section">
                         <div id="promptEditor" class="prompt-editor" style="display: none;">
-                            <h3 id="editorTitle">Edit Prompt</h3>
+                            <h3 id="editorTitle">Modify Assistant</h3>
                             <form id="promptForm">
                                 <div class="form-group">
                                     <label for="promptName">Name:</label>
@@ -252,7 +325,7 @@
                                     <input type="text" id="promptDescription" name="description">
                                 </div>
                                 <div class="form-group">
-                                    <label for="promptContent">Content:</label>
+                                    <label for="promptContent">Instructions:</label>
                                     <textarea id="promptContent" name="content" required rows="20"></textarea>
                                 </div>
                                 <div class="form-actions">
@@ -605,6 +678,24 @@
         </div>
     </div>
 
+    <div id="imageLightboxModal" class="modal image-lightbox-modal">
+        <div class="modal-content image-lightbox-content">
+            <div class="modal-body image-lightbox-body">
+                <div class="image-lightbox-controls" role="toolbar" aria-label="Image zoom controls">
+                    <button type="button" id="imageZoomOutButton" class="image-zoom-btn" aria-label="Zoom out">-</button>
+                    <button type="button" id="imageZoomResetButton" class="image-zoom-btn image-zoom-reset-btn" aria-label="Reset zoom">Reset</button>
+                    <button type="button" id="imageZoomInButton" class="image-zoom-btn" aria-label="Zoom in">+</button>
+                    <button type="button" id="closeImageLightboxModal" class="image-zoom-btn image-lightbox-close-btn" aria-label="Close image preview">&times;</button>
+                </div>
+                <div id="imageLightboxViewport" class="image-lightbox-viewport">
+                    <div id="imageLightboxStage" class="image-lightbox-stage">
+                        <img id="imageLightboxPreview" class="image-lightbox-preview" alt="Expanded chat image">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <!-- DOMPurify for sanitizing HTML -->
@@ -633,8 +724,8 @@
     <script src="account-settings.js"></script>
     <script src="prompt-manager.js"></script>
     <script src="knowledge-base.js"></script>
-    <script src="mcp-manager.js"></script>
-    <script src="mcp-tools.js"></script>
+    <!-- <script src="mcp-manager.js"></script> -->
+    <!-- <script src="mcp-tools.js"></script> -->
     <script src="user-management.js"></script>
     <script src="conversation_ui.js"></script>
 </body>

@@ -5,6 +5,7 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shared Conversation - IDEA</title>
+    <link rel="icon" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"%3E%3Crect width="64" height="64" rx="14" fill="%23041f26"/%3E%3Cpath d="M16 20h32v6H16zm0 9h20v6H16zm0 9h32v6H16z" fill="%2329d6d0"/%3E%3C/svg%3E'>
     <link rel="stylesheet" href="../assets/styles.css">
     <link href="../assets/prism.css" rel="stylesheet" />  <!-- Prism for code syntax highlighting -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -292,6 +293,24 @@
                 IDEA can make mistakes — check important results.
                 <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noreferrer noopener">[More info on GitHub]</a>
             </p>
+        </div>
+    </div>
+
+    <div id="sharedImageLightboxModal" class="modal image-lightbox-modal">
+        <div class="modal-content image-lightbox-content">
+            <div class="modal-body image-lightbox-body">
+                <div class="image-lightbox-controls" role="toolbar" aria-label="Image zoom controls">
+                    <button type="button" id="sharedImageZoomOutButton" class="image-zoom-btn" aria-label="Zoom out">-</button>
+                    <button type="button" id="sharedImageZoomResetButton" class="image-zoom-btn image-zoom-reset-btn" aria-label="Reset zoom">Reset</button>
+                    <button type="button" id="sharedImageZoomInButton" class="image-zoom-btn" aria-label="Zoom in">+</button>
+                    <button type="button" id="closeSharedImageLightboxModal" class="image-zoom-btn image-lightbox-close-btn" aria-label="Close image preview">&times;</button>
+                </div>
+                <div id="sharedImageLightboxViewport" class="image-lightbox-viewport">
+                    <div id="sharedImageLightboxStage" class="image-lightbox-stage">
+                        <img id="sharedImageLightboxPreview" class="image-lightbox-preview" alt="Expanded shared image">
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

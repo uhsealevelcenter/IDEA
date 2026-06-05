@@ -2,6 +2,8 @@ import asyncio
 import json
 from math import ceil
 import os
+import shutil
+import threading
 from datetime import date, datetime, timedelta
 from time import time
 import logging
@@ -9,7 +11,9 @@ from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, List
 import hashlib
 import secrets
+import uuid
 from uuid import UUID
+from urllib.parse import quote
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -25,12 +29,15 @@ from utils.custom_functions import custom_tool
 import redis
 from starlette.middleware.base import BaseHTTPMiddleware
 from interpreter.core.core import OpenInterpreter
+from interpreter.core.llm.utils.convert_to_openai_responses_messages import (
+    convert_to_openai_responses_messages,
+)
 from slowapi.errors import RateLimitExceeded
 import models
 from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdateRequest, PromptResponse, \
-    PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate, UserCreate, UserPublic, GenericMessage, User
+    PasswordResetConfirm, PasswordResetRequest, PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate, UserCreate, UserPublic, GenericMessage, User
 import crud
-from core.security import verify_password as verify_password_hash
+from core.security import generate_password_reset_token, hash_password_reset_token, verify_password as verify_password_hash
 from sqlalchemy.exc import IntegrityError
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
@@ -39,13 +46,20 @@ from sqlalchemy.exc import IntegrityError
 # from openai import OpenAI # Uncomment if using OpenAI Whisper API instead of LiteLLM
 from litellm import transcription, completion  # LiteLLM for audio transcription & tool planning
 import litellm
+from litellm.responses.main import compact_responses
+
+try:
+    import tiktoken
+except Exception:
+    tiktoken = None
 
 # Set longer timeout for LiteLLM to handle long-running MCP tool calls
 litellm.request_timeout = 600  # 10 minutes timeout for API requests
 
 from utils.transcription_prompt import \
     transcription_prompt  # Transcription prompt for Generic IDEA example (abbreviations, etc.)
-from utils.custom_instructions import get_custom_instructions  # Generic Assistant (Custom Instructions)
+## from utils.custom_instructions import get_custom_instructions  # Generic Assistant (Custom Instructions)
+from utils.custom_instructions_v04_2026 import get_custom_instructions  # Generic Assistant (Custom Instructions), v04-2026
 #from utils.custom_instructions_ClimateIndices import get_custom_instructions  # Climate Assistant
 
 # Import prompt manager
@@ -56,11 +70,15 @@ from mcp_routes import router as mcp_router
 from sqlmodel import Session
 from auth import (
     generate_auth_token, verify_password, is_authenticated, get_auth_token,
-    add_auth_session, remove_auth_session, SESSION_TIMEOUT, get_db, get_current_user
+    add_auth_session, remove_auth_session, remove_auth_sessions_for_user,
+    SESSION_TIMEOUT, GUEST_SESSION_TIMEOUT_MINUTES, GUEST_SESSION_TIMEOUT,
+    get_db, get_current_user
 )
+from core.db import engine
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
-from utils.pqa_multi_tenant import ensure_user_pqa_settings
+from utils.pqa_multi_tenant import delete_user_pqa_state, ensure_user_pqa_settings
+from utils.email import send_password_reset_email
 from core.mcp_manager import mcp_manager
 
 #import interpreter.core.llm.llm as llm_mod
@@ -85,6 +103,45 @@ from core.mcp_manager import mcp_manager
 # )
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+LONG_CONTEXT_TOKEN_THRESHOLD = int(
+    os.getenv("IDEA_LONG_CONTEXT_TOKEN_THRESHOLD", "272000")
+)
+COMPACTION_INPUT_TOKEN_THRESHOLD = int(
+    os.getenv(
+        "IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD",
+        str(int(LONG_CONTEXT_TOKEN_THRESHOLD * 0.5)),
+    )
+)
+# For local compaction-flow testing, set IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD=10000.
+MAX_INPUT_TOKEN_THRESHOLD = int(
+    os.getenv(
+        "IDEA_MAX_INPUT_TOKEN_THRESHOLD",
+        str(int(LONG_CONTEXT_TOKEN_THRESHOLD * 0.9)),
+    )
+)
+MAX_COMPLETION_TOKENS = int(
+    os.getenv("IDEA_MAX_COMPLETION_TOKENS", "64000")
+)
+GPT55_CONTEXT_WINDOW = int(
+    os.getenv("IDEA_GPT55_CONTEXT_WINDOW", "1050000")
+)
+COMPACTION_IMAGE_TOKEN_ESTIMATE = int(
+    os.getenv("IDEA_COMPACTION_IMAGE_TOKEN_ESTIMATE", "1200")
+)
+COMPACTION_DEVELOPER_MESSAGE = (
+    "The prior conversation was compacted before this request. The preceding "
+    "compaction item summarizes the earlier Responses thread. Continue seamlessly "
+    "for the user; do not mention compaction unless directly relevant."
+)
+IDEA_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
+IDEA_GUEST_MODEL = "gpt-5.4-mini-2026-03-17"
+IDEA_GUEST_MODEL_DISCLOSURE = (
+    "\n\nIDEA guest sessions use the less expensive model "
+    f"{IDEA_GUEST_MODEL} with medium reasoning. If the user asks about model "
+    "selection, service limits, performance differences, or why behavior differs "
+    "from a regular IDEA account, disclose this plainly."
+)
 
 # # Inject reasoning_effort at the completions layer (affects both text + tool paths)
 # _orig_completions = llm_mod.fixed_litellm_completions
@@ -139,6 +196,7 @@ async def gather_available_mcp_tools(db: Session):
             tools_payload = await mcp_manager.list_tools(connection)
         except Exception as exc:  # pragma: no cover - dependent service
             logger.warning("Failed to list tools for connection %s: %s", connection.id, exc)
+            await mcp_manager.reset_connection(connection.id)
             continue
 
         tools = (
@@ -553,6 +611,10 @@ IDLE_TIMEOUT = 3600  # 1 hour in seconds
 INTERPRETER_PREFIX = "interpreter:"
 LAST_ACTIVE_PREFIX = "last_active:"
 CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
+GUEST_EXPIRY_CHECK_INTERVAL_SECONDS = int(os.getenv("GUEST_EXPIRY_CHECK_INTERVAL_SECONDS", "60"))
+GUEST_USER_EXPIRY_ZSET = "guest_user_expirations"
+GUEST_EMAIL_DOMAIN = "temporary.com"
+GUEST_NAME = "Guest User"
 
 # Constants for file upload
 STATIC_DIR = Path("./static") # Use relative path instead of absolute "/app/static"
@@ -585,6 +647,10 @@ MAX_UPLOADS_PER_SESSION = 100  # Maximum files per session
 CLAMD_HOST = "localhost"  # Docker service name
 CLAMD_PORT = 3310
 CHAT_RATE_LIMIT = "10/minute"
+PASSWORD_RESET_REQUEST_RATE_LIMIT = "3/hour"
+PASSWORD_RESET_CONFIRM_RATE_LIMIT = "10/minute"
+PASSWORD_RESET_TOKEN_TTL_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
+PASSWORD_RESET_PUBLIC_MESSAGE = "If an account exists for that email, a password reset link has been sent."
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -748,8 +814,309 @@ async def check_session_upload_limit(user_id: str, session_id: str) -> bool:
 
 redis_client = redis.Redis(host="redis", port=6379, db=0)
 # Global dictionary to store interpreter instances
-# Not thread safe, but should be ok for proof of concept
 interpreter_instances: Dict[str, OpenInterpreter] = {}
+interpreter_locks: Dict[str, threading.Lock] = {}
+chat_run_threads: Dict[str, threading.Thread] = {}
+CHAT_RUN_TTL_SECONDS = int(os.getenv("IDEA_CHAT_RUN_TTL_SECONDS", "86400"))
+CHAT_RUN_MAX_POLL_EVENTS = int(os.getenv("IDEA_CHAT_RUN_MAX_POLL_EVENTS", "200"))
+CHAT_RUN_PREFIX = "chat_run:"
+CHAT_RUN_EVENTS_PREFIX = "chat_run_events:"
+CHAT_RUN_SEQ_PREFIX = "chat_run_seq:"
+
+
+def get_interpreter_lock(session_key: str) -> threading.Lock:
+    """Serialize stream mutations for a user's interpreter session."""
+    lock = interpreter_locks.get(session_key)
+    if lock is None:
+        lock = threading.Lock()
+        interpreter_locks[session_key] = lock
+    return lock
+
+
+def repair_interrupted_tool_state(
+    interpreter: OpenInterpreter,
+    reason: str = "Execution stopped before completion.",
+) -> bool:
+    """
+    Ensure an interrupted execute() call has a local tool output before the next turn.
+
+    OpenAI Responses continuations require a function_call_output for every prior
+    function call. If a stream disconnects while code is running, local history can
+    be left with a call_id but no computer output. In that recovery case, append a
+    synthetic output and reset Responses continuation so the next request replays
+    local history instead of continuing a suspect provider-side thread.
+    """
+    call_id = getattr(getattr(interpreter, "llm", None), "pending_tool_call_id", None)
+    for message in reversed(getattr(interpreter, "messages", []) or []):
+        if not isinstance(message, dict):
+            continue
+        if not call_id and message.get("type") == "code" and message.get("call_id"):
+            call_id = message["call_id"]
+            break
+        if call_id:
+            break
+
+    if not call_id:
+        return False
+
+    has_output = any(
+        isinstance(message, dict)
+        and message.get("call_id") == call_id
+        and message.get("role") in ("computer", "tool", "function")
+        and (
+            message.get("type") in ("image", "file")
+            or (
+                message.get("type") == "console"
+                and message.get("format") == "output"
+            )
+        )
+        for message in getattr(interpreter, "messages", []) or []
+    )
+    if has_output:
+        return False
+
+    if hasattr(interpreter, "append_tool_output_for_call_id"):
+        interpreter.append_tool_output_for_call_id(
+            call_id,
+            reason,
+            allow_existing_output=True,
+        )
+    else:
+        interpreter.messages.append(
+            {
+                "role": "computer",
+                "type": "console",
+                "format": "output",
+                "content": reason,
+                "call_id": call_id,
+            }
+        )
+
+    if getattr(interpreter, "llm", None):
+        interpreter.llm.pending_tool_call_id = None
+        if hasattr(interpreter.llm, "reset_response_continuation"):
+            interpreter.llm.reset_response_continuation()
+
+    return True
+
+
+def _chat_run_key(run_id: str) -> str:
+    return f"{CHAT_RUN_PREFIX}{run_id}"
+
+
+def _chat_run_events_key(run_id: str) -> str:
+    return f"{CHAT_RUN_EVENTS_PREFIX}{run_id}"
+
+
+def _chat_run_seq_key(run_id: str) -> str:
+    return f"{CHAT_RUN_SEQ_PREFIX}{run_id}"
+
+
+def _set_chat_run_status(run_id: str, status: dict[str, Any]) -> None:
+    redis_client.set(
+        _chat_run_key(run_id),
+        json.dumps(status, default=str),
+        ex=CHAT_RUN_TTL_SECONDS,
+    )
+
+
+def _get_chat_run_status(run_id: str) -> dict[str, Any] | None:
+    raw_status = redis_client.get(_chat_run_key(run_id))
+    if not raw_status:
+        return None
+    try:
+        return json.loads(raw_status)
+    except Exception:
+        return None
+
+
+def _update_chat_run_status(run_id: str, **updates: Any) -> dict[str, Any]:
+    status = _get_chat_run_status(run_id) or {"run_id": run_id}
+    status.update(updates)
+    status.setdefault("updated_at", datetime.utcnow().isoformat())
+    _set_chat_run_status(run_id, status)
+    return status
+
+
+def _append_chat_run_event(run_id: str, chunk: dict[str, Any] | str) -> dict[str, Any]:
+    seq = int(redis_client.incr(_chat_run_seq_key(run_id)))
+    event = {
+        "seq": seq,
+        "created_at": datetime.utcnow().isoformat(),
+        "chunk": chunk,
+    }
+    events_key = _chat_run_events_key(run_id)
+    redis_client.rpush(events_key, json.dumps(event, default=str))
+    redis_client.expire(events_key, CHAT_RUN_TTL_SECONDS)
+    redis_client.expire(_chat_run_seq_key(run_id), CHAT_RUN_TTL_SECONDS)
+    return event
+
+
+def _list_chat_run_events(run_id: str, after: int = 0) -> list[dict[str, Any]]:
+    raw_events = redis_client.lrange(_chat_run_events_key(run_id), 0, -1)
+    events: list[dict[str, Any]] = []
+    for raw_event in raw_events:
+        try:
+            event = json.loads(raw_event)
+        except Exception:
+            continue
+        try:
+            seq = int(event.get("seq", 0))
+        except Exception:
+            seq = 0
+        if seq > after:
+            events.append(event)
+        if len(events) >= CHAT_RUN_MAX_POLL_EVENTS:
+            break
+    return events
+
+
+def _is_persistable_interpreter_chunk(chunk: Any) -> bool:
+    if not isinstance(chunk, dict):
+        return False
+    if chunk.get("start") or chunk.get("end") or chunk.get("error"):
+        return False
+    if chunk.get("format") in {"active_line", "execution_status", "tool_status", "compaction_status"}:
+        return False
+    return bool(chunk.get("content") or chunk.get("type") in {"image", "file"})
+
+
+def _persist_interpreter_messages(session_key: str, interpreter: OpenInterpreter) -> None:
+    redis_client.set(f"messages:{session_key}", json.dumps(interpreter.messages))
+    redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+
+
+def _ensure_all_tool_calls_have_outputs(
+    interpreter: OpenInterpreter,
+    fallback_reason: str = "Tool execution completed without captured output.",
+) -> bool:
+    """Ensure every locally recorded execute() call has a matching tool output."""
+    repaired = False
+    messages = getattr(interpreter, "messages", []) or []
+    call_ids = [
+        message.get("call_id")
+        for message in messages
+        if isinstance(message, dict) and message.get("type") == "code" and message.get("call_id")
+    ]
+    for call_id in call_ids:
+        has_output = any(
+            isinstance(message, dict)
+            and message.get("call_id") == call_id
+            and message.get("role") in ("computer", "tool", "function")
+            and (
+                message.get("type") in ("image", "file")
+                or (
+                    message.get("type") == "console"
+                    and message.get("format") == "output"
+                )
+            )
+            for message in messages
+        )
+        if has_output:
+            continue
+        if hasattr(interpreter, "append_tool_output_for_call_id"):
+            interpreter.append_tool_output_for_call_id(call_id, fallback_reason)
+        else:
+            interpreter.messages.append(
+                {
+                    "role": "computer",
+                    "type": "console",
+                    "format": "output",
+                    "content": fallback_reason,
+                    "call_id": call_id,
+                }
+            )
+        repaired = True
+
+    if repaired and getattr(interpreter, "llm", None):
+        interpreter.llm.pending_tool_call_id = None
+        if hasattr(interpreter.llm, "reset_response_continuation"):
+            interpreter.llm.reset_response_continuation()
+    return repaired
+
+
+def _load_run_for_user(run_id: str, user_id: UUID, session_id: str | None = None) -> dict[str, Any]:
+    status = _get_chat_run_status(run_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Chat run not found")
+    if str(status.get("user_id")) != str(user_id):
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    if session_id and status.get("session_id") != session_id:
+        raise HTTPException(status_code=403, detail="Run does not belong to this session")
+    return status
+
+
+def generate_guest_email(session: Session) -> str:
+    """Create a unique temporary guest email address."""
+    for _ in range(20):
+        email = f"guest-{secrets.token_hex(3)}@{GUEST_EMAIL_DOMAIN}"
+        if crud.get_user_by_email(session=session, email=email) is None:
+            return email
+    raise HTTPException(status_code=500, detail="Failed to generate a guest account")
+
+
+def revoke_user_runtime_state(user_id: UUID) -> None:
+    """Remove auth sessions and in-memory runtime state for a user."""
+    user_prefix = f"{user_id}:"
+    matching_session_keys = [
+        session_key for session_key in list(interpreter_instances.keys())
+        if session_key.startswith(user_prefix)
+    ]
+    for session_key in matching_session_keys:
+        try:
+            clear_session(session_key)
+        except Exception as error:
+            logger.error(f"Failed to clear expired guest session {session_key}: {error}")
+
+    for redis_pattern in (f"{LAST_ACTIVE_PREFIX}{user_id}:*", f"messages:{user_id}:*"):
+        for redis_key in redis_client.scan_iter(match=redis_pattern):
+            redis_client.delete(redis_key)
+
+    user_static_dir = STATIC_DIR / str(user_id)
+    if user_static_dir.exists():
+        shutil.rmtree(user_static_dir, ignore_errors=True)
+
+    remove_auth_sessions_for_user(user_id)
+
+
+def expire_guest_user(user_id_value: str) -> None:
+    """Deactivate a guest user and revoke any live sessions."""
+    try:
+        user_id = UUID(user_id_value)
+    except ValueError:
+        logger.warning(f"Skipping invalid guest user id in expiry queue: {user_id_value}")
+        redis_client.zrem(GUEST_USER_EXPIRY_ZSET, user_id_value)
+        return
+
+    with Session(engine) as db_session:
+        db_user = crud.get_user_by_id(session=db_session, user_id=user_id)
+        if db_user and db_user.is_active:
+            db_user.is_active = False
+            db_session.add(db_user)
+            db_session.commit()
+
+    revoke_user_runtime_state(user_id)
+    try:
+        delete_user_pqa_state(user_id)
+    except Exception as error:
+        logger.error(f"Failed to delete expired guest PaperQA state for {user_id_value}: {error}")
+    redis_client.zrem(GUEST_USER_EXPIRY_ZSET, user_id_value)
+    logger.info(f"Expired guest user {user_id_value}")
+
+
+async def cleanup_expired_guest_users() -> None:
+    """Deactivate guest users whose temporary access window has ended."""
+    expired_user_ids = redis_client.zrangebyscore(
+        GUEST_USER_EXPIRY_ZSET,
+        0,
+        time(),
+    )
+    for raw_user_id in expired_user_ids:
+        user_id_value = raw_user_id.decode("utf-8") if isinstance(raw_user_id, bytes) else str(raw_user_id)
+        try:
+            expire_guest_user(user_id_value)
+        except Exception as error:
+            logger.error(f"Failed to expire guest user {user_id_value}: {error}")
 
 
 
@@ -773,6 +1140,122 @@ async def login(login_request: LoginRequest, session: Session = Depends(get_db))
             status_code=401,
             detail="Invalid email or password"
         )
+
+
+@app.post("/guest-login", response_model=LoginResponse)
+async def guest_login(session: Session = Depends(get_db)):
+    """Create a temporary guest account and return an authenticated session."""
+    guest_email = generate_guest_email(session)
+    guest_user = crud.create_user(
+        session=session,
+        user_create=UserCreate(
+            email=guest_email,
+            password=secrets.token_urlsafe(24),
+            full_name=GUEST_NAME,
+            is_superuser=False,
+            is_active=True,
+        ),
+    )
+
+    token = generate_auth_token()
+    expiry_time = datetime.now() + timedelta(seconds=GUEST_SESSION_TIMEOUT)
+    add_auth_session(token, guest_user.id, expiry_time)
+    redis_client.zadd(GUEST_USER_EXPIRY_ZSET, {str(guest_user.id): expiry_time.timestamp()})
+
+    return LoginResponse(
+        success=True,
+        token=token,
+        message="Guest login successful",
+        is_guest=True,
+        guest_expires_in_minutes=GUEST_SESSION_TIMEOUT_MINUTES,
+        guest_expires_at=expiry_time.isoformat(),
+        show_guest_notice=True,
+    )
+
+
+def _build_password_reset_url(request: Request, token: str) -> str:
+    frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost").rstrip("/")
+    root_path = (request.scope.get("root_path", "") or "").rstrip("/")
+    reset_path = f"{root_path}/reset-password.html" if root_path else "/reset-password.html"
+    return f"{frontend_base_url}{reset_path}?token={quote(token)}"
+
+
+@app.get("/reset-password.html")
+async def reset_password_page():
+    """Serve the password reset page through the API proxy when needed."""
+    frontend_dir = Path(__file__).parent / "frontend"
+    reset_html_path = frontend_dir / "reset-password.html"
+
+    if not reset_html_path.exists():
+        raise HTTPException(status_code=404, detail="Reset password page not found")
+
+    return FileResponse(reset_html_path, media_type="text/html")
+
+
+@app.post("/password-reset/request", response_model=GenericMessage)
+@limiter.limit(PASSWORD_RESET_REQUEST_RATE_LIMIT)
+async def request_password_reset(
+    request: Request,
+    payload: PasswordResetRequest,
+    db: Session = Depends(get_db),
+):
+    """Request a password reset email without revealing whether the account exists."""
+    public_response = GenericMessage(message=PASSWORD_RESET_PUBLIC_MESSAGE)
+    email = str(payload.email).strip().lower()
+
+    try:
+        user = crud.get_user_by_email(session=db, email=email)
+        if user is None or not user.is_active or _is_guest_user(user.id):
+            return public_response
+
+        raw_token = generate_password_reset_token()
+        token_hash = hash_password_reset_token(raw_token)
+        expires_at = datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
+        reset_token = crud.create_password_reset_token(
+            session=db,
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+
+        try:
+            send_password_reset_email(
+                to_email=user.email,
+                reset_url=_build_password_reset_url(request, raw_token),
+                expires_minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES,
+            )
+        except Exception as exc:
+            crud.consume_password_reset_token(session=db, reset_token=reset_token)
+            logger.error("Failed to send password reset email for user %s: %s", user.id, exc)
+
+        return public_response
+    except Exception as exc:
+        logger.error("Password reset request failed: %s", exc)
+        return public_response
+
+
+@app.post("/password-reset/confirm", response_model=GenericMessage)
+@limiter.limit(PASSWORD_RESET_CONFIRM_RATE_LIMIT)
+async def confirm_password_reset(
+    request: Request,
+    payload: PasswordResetConfirm,
+    db: Session = Depends(get_db),
+):
+    """Reset a password with a valid one-time token."""
+    token_hash = hash_password_reset_token(payload.token)
+    reset_token = crud.get_valid_password_reset_token(session=db, token_hash=token_hash)
+    if reset_token is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired password reset token")
+
+    user = crud.get_user_by_id(session=db, user_id=reset_token.user_id)
+    if user is None or not user.is_active or _is_guest_user(user.id):
+        crud.consume_password_reset_token(session=db, reset_token=reset_token)
+        raise HTTPException(status_code=400, detail="Invalid or expired password reset token")
+
+    crud.update_user(session=db, db_user=user, user_in=UserUpdate(password=payload.new_password))
+    crud.consume_password_reset_token(session=db, reset_token=reset_token)
+    remove_auth_sessions_for_user(user.id)
+    return GenericMessage(message="Password updated successfully")
 
 
 @app.post("/logout")
@@ -800,13 +1283,23 @@ async def get_current_user_profile(token: str = Depends(get_auth_token), db: Ses
         db_user = crud.get_user_by_id(session=db, user_id=user.id)
         if db_user is None:
             raise HTTPException(status_code=404, detail="User not found")
-            
+
+        guest_expiry_score = redis_client.zscore(GUEST_USER_EXPIRY_ZSET, str(db_user.id))
+        guest_expires_at = (
+            datetime.fromtimestamp(float(guest_expiry_score)).isoformat()
+            if guest_expiry_score is not None
+            else None
+        )
+
         return {
             "id": str(db_user.id),
             "email": db_user.email,
             "full_name": db_user.full_name,
             "is_active": db_user.is_active,
             "is_superuser": db_user.is_superuser,
+            "is_guest": guest_expiry_score is not None,
+            "guest_expires_at": guest_expires_at,
+            "guest_expires_in_minutes": GUEST_SESSION_TIMEOUT_MINUTES if guest_expiry_score is not None else None,
         }
     except HTTPException:
         raise
@@ -832,9 +1325,8 @@ async def shared_conversation_page(share_token: str):
 async def change_password(payload: UpdatePassword, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Change password for the current authenticated user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
+        _ensure_non_guest_user(user, "change passwords")
 
         # Re-fetch user in this DB session to avoid detached instance issues
         db_user = crud.get_user_by_id(session=db, user_id=user.id)
@@ -862,6 +1354,206 @@ def _ensure_superuser(token: str) -> User:
     if not user.is_superuser:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     return user
+
+
+def _get_current_user_or_401(token: str) -> User:
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
+def _is_guest_user(user_id: UUID) -> bool:
+    return redis_client.zscore(GUEST_USER_EXPIRY_ZSET, str(user_id)) is not None
+
+
+def _ensure_non_guest_user(user: User, action: str) -> None:
+    if _is_guest_user(user.id):
+        raise HTTPException(status_code=403, detail=f"Guest users cannot {action}")
+
+
+def _get_user_first_name(user: User | None) -> str:
+    if user is None:
+        return "User"
+    if _is_guest_user(user.id):
+        return "Guest"
+
+    full_name = (user.full_name or "").strip()
+    if not full_name:
+        return "User"
+
+    return full_name.split()[0]
+
+
+def _response_to_dict(response: Any) -> dict[str, Any]:
+    if isinstance(response, dict):
+        return response
+    if hasattr(response, "model_dump"):
+        return response.model_dump(mode="json", exclude_none=True, warnings=False)
+    if hasattr(response, "dict"):
+        return response.dict(exclude_none=True)
+    return json.loads(json.dumps(response, default=lambda obj: getattr(obj, "__dict__", str(obj))))
+
+
+def _normalize_compacted_content_parts(parts: Any, role: str | None) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    text_type = "output_text" if role == "assistant" else "input_text"
+    for part in parts or []:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str):
+            normalized.append({"type": text_type, "text": text})
+    return normalized
+
+
+def _normalize_compacted_item_for_create(item: dict[str, Any]) -> dict[str, Any] | None:
+    item_type = item.get("type")
+    if item_type == "compaction":
+        return {
+            key: item[key]
+            for key in ("id", "encrypted_content", "type")
+            if key in item and item[key] is not None
+        }
+
+    if item_type == "message":
+        role = item.get("role")
+        normalized = {
+            "type": "message",
+            "role": role,
+            "content": _normalize_compacted_content_parts(item.get("content"), role),
+        }
+        if role == "assistant":
+            for key in ("id", "status", "phase"):
+                if key in item and item[key] is not None:
+                    normalized[key] = item[key]
+        elif item.get("status") is not None:
+            normalized["status"] = item["status"]
+        return normalized
+
+    return item
+
+
+def _normalize_compacted_output_for_create(output: list[Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        normalized_item = _normalize_compacted_item_for_create(item)
+        if normalized_item is not None:
+            normalized.append(normalized_item)
+    return normalized
+
+
+def _rough_count_text_tokens(text: Any, model: str | None = None) -> int:
+    if text is None:
+        return 0
+    if not isinstance(text, str):
+        try:
+            text = json.dumps(text, ensure_ascii=False)
+        except Exception:
+            text = str(text)
+    if not text:
+        return 0
+    if tiktoken is not None:
+        try:
+            token_model = (model or "gpt-4").split("/")[-1]
+            encoder = tiktoken.encoding_for_model(token_model)
+            return len(encoder.encode(text))
+        except Exception:
+            pass
+    return max(1, ceil(len(text) / 4))
+
+
+def _rough_count_message_tokens(message: Any, model: str | None = None) -> int:
+    if not isinstance(message, dict):
+        return _rough_count_text_tokens(message, model=model)
+
+    tokens = 4
+    msg_type = message.get("type") or message.get("message_type") or "message"
+    content = message.get("content", "")
+
+    if msg_type == "image":
+        return tokens + COMPACTION_IMAGE_TOKEN_ESTIMATE
+
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in {"input_image", "image_url"}:
+                tokens += COMPACTION_IMAGE_TOKEN_ESTIMATE
+            else:
+                tokens += _rough_count_text_tokens(part, model=model)
+        return tokens
+
+    tokens += _rough_count_text_tokens(content, model=model)
+    for key in ("role", "type", "format", "recipient"):
+        if message.get(key):
+            tokens += _rough_count_text_tokens(message[key], model=model)
+    return tokens
+
+
+def estimate_conversation_input_tokens(
+    interpreter: OpenInterpreter,
+    prospective_messages: list[Any],
+) -> int:
+    model = getattr(interpreter.llm, "model", None)
+    total = _rough_count_text_tokens(interpreter.system_message, model=model)
+    if interpreter.custom_instructions:
+        total += _rough_count_text_tokens(interpreter.custom_instructions, model=model)
+    for message in prospective_messages:
+        total += _rough_count_message_tokens(message, model=model)
+    return total
+
+
+def compact_interpreter_runtime(
+    interpreter: OpenInterpreter,
+    estimated_tokens: int,
+) -> list[dict[str, Any]]:
+    previous_response_id = getattr(interpreter.llm, "previous_response_id", None)
+    compact_input: list[dict[str, Any]] = []
+    compact_kwargs: dict[str, Any] = {
+        "model": interpreter.llm.model,
+        "instructions": interpreter.system_message,
+    }
+
+    if previous_response_id:
+        logger.info(
+            "Compacting live interpreter runtime at approximately %d input tokens from response %s",
+            estimated_tokens,
+            previous_response_id,
+        )
+        compact_kwargs["previous_response_id"] = previous_response_id
+        compact_kwargs["input"] = []
+    else:
+        compact_input = convert_to_openai_responses_messages(
+            interpreter.messages,
+            shrink_images=interpreter.shrink_images,
+            interpreter=None,
+        )
+        if not compact_input:
+            return []
+        logger.info(
+            "Compacting restored local interpreter history at approximately %d input tokens with %d input items",
+            estimated_tokens,
+            len(compact_input),
+        )
+        compact_kwargs["input"] = compact_input
+
+    original_drop_params = litellm.drop_params
+    try:
+        litellm.drop_params = False
+        compacted = compact_responses(**compact_kwargs)
+    finally:
+        litellm.drop_params = original_drop_params
+    compacted_output = _response_to_dict(compacted).get("output") or []
+    compacted_input = _normalize_compacted_output_for_create(compacted_output)
+    if not compacted_input:
+        raise RuntimeError("Compaction returned no reusable input items.")
+
+    interpreter.messages = []
+    interpreter.llm.reset_response_continuation()
+    interpreter.llm.compacted_input_items = compacted_input
+    interpreter.llm.compaction_developer_message = COMPACTION_DEVELOPER_MESSAGE
+    return compacted_input
 
 
 @app.get("/users", response_model=List[UserPublic])
@@ -939,9 +1631,7 @@ async def delete_user_admin(user_id: UUID, token: str = Depends(get_auth_token),
 async def list_prompts(token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """List all available prompts for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
         prompts = get_prompt_manager().list_prompts(db, user.id)
         return prompts
     except HTTPException:
@@ -954,9 +1644,7 @@ async def list_prompts(token: str = Depends(get_auth_token), db: Session = Depen
 async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Get a specific prompt by ID for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
         prompt = get_prompt_manager().get_prompt(db, user.id, prompt_id)
         if not prompt:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -971,9 +1659,8 @@ async def get_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: S
 async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Create a new prompt for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
+        _ensure_non_guest_user(user, "create assistants")
         new_prompt = get_prompt_manager().create_prompt(
             db,
             user.id,
@@ -992,9 +1679,8 @@ async def create_prompt(prompt_data: PromptCreateRequest, token: str = Depends(g
 async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Update an existing prompt for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
+        _ensure_non_guest_user(user, "edit assistants")
         updated_prompt = get_prompt_manager().update_prompt(
             db,
             user.id,
@@ -1016,9 +1702,8 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdateRequest, token:
 async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Delete a prompt for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
+        _ensure_non_guest_user(user, "delete assistants")
         success = get_prompt_manager().delete_prompt(db, user.id, prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -1033,9 +1718,7 @@ async def delete_prompt(prompt_id: str, token: str = Depends(get_auth_token), db
 async def set_active_prompt(request: SetActivePromptRequest, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Set a prompt as the active one for the current user"""
     try:
-        user = get_current_user(token)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = _get_current_user_or_401(token)
         success = get_prompt_manager().set_active_prompt(db, user.id, request.prompt_id)
         if not success:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -1065,21 +1748,25 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         # Get active system prompt from prompt manager
         active_prompt = ""
         user = None
+        is_guest = False
         if token and db is not None:
             user = get_current_user(token)
             if user:
                 active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
+                is_guest = _is_guest_user(user.id)
         if not active_prompt and (token and db and user):
             # Fallback to previous file-backed default behavior for safety
             active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
         interpreter.system_message = sys_prompt + active_prompt
+        if is_guest:
+            interpreter.system_message += IDEA_GUEST_MODEL_DISCLOSURE
 
         # Enable vision
         interpreter.llm.supports_vision = True
 
         ## OpenAI Models
-        interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
-        #interpreter.llm.model = "gpt-5.2-2025-12-11" # "Reasoning" model
+        interpreter.llm.model = IDEA_GUEST_MODEL if is_guest else IDEA_DEFAULT_MODEL # "Reasoning" model
+        #interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
         #interpreter.llm.model = "gpt-5.1-2025-11-13" # "Reasoning" model
         #interpreter.llm.model = "gpt-5-2025-08-07" # "Reasoning" model
         #interpreter.llm.model = "gpt-4.1-2025-04-14" # "Intelligence" model
@@ -1097,11 +1784,13 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
 
         ## Specific settings for LLMs
         # Reasoning models (e.g, GPT5+)
-        interpreter.llm.reasoning_effort = "low" # GPT-5.1 "none" | "low" | "medium" | "high"
+        interpreter.llm.reasoning_effort = "medium"
+        #interpreter.llm.reasoning_effort = "low" # GPT-5.1 "none" | "low" | "medium" | "high"
         #interpreter.llm.reasoning_effort = "minimal" # GPT-5 "minimal" | "low" | "medium" | "high"
-        interpreter.llm.temperature = 0.2 # Temperature not used by reasoning models, set to default (e.g., GPT-5)
-        interpreter.llm.context_window = 400000 # GPT-5 (max context window)
-        interpreter.llm.max_completion_tokens = 64000 # GPT-5 (128K, previously max_tokens, max tokens generated per request (prompt + max_completion_tokens can not exceed context_window)
+        interpreter.llm.temperature = None # Reasoning models use the provider default temperature
+        interpreter.llm.context_window = GPT55_CONTEXT_WINDOW # GPT-5.5 max context window
+        interpreter.llm.max_input_tokens = MAX_INPUT_TOKEN_THRESHOLD # Keep request input below long-context pricing guardrail
+        interpreter.llm.max_tokens = MAX_COMPLETION_TOKENS # Responses max_output_tokens
 
         # # Intelligence models (e.g., GPT4.1)
         # interpreter.llm.temperature = 0.2 # Temperature (0-2, float) --> fairly deterministic
@@ -1113,9 +1802,11 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         ## General settings for computer interpreter
         #interpreter.max_output = 16383 # Max number of characters (not tokens) for code outputs (SEA web, GPT4.1)
         interpreter.max_output = 64000 # Max number of characters (not tokens) for code outputs (SEA local, GPT5)
+        interpreter.code_execution_timeout = float(os.getenv("IDEA_CODE_EXECUTION_TIMEOUT_SECONDS", "600"))
         interpreter.computer.import_computer_api = False
         interpreter.computer.run("python", custom_tool)
         interpreter.auto_run = True
+        interpreter.stop_event = threading.Event()
 
         # Store the instance
         interpreter_instances[session_key] = interpreter
@@ -1138,10 +1829,22 @@ async def periodic_cleanup():
             await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
 
 
+async def periodic_guest_cleanup():
+    """Background task for expiring temporary guest users."""
+    while True:
+        try:
+            await cleanup_expired_guest_users()
+            await asyncio.sleep(GUEST_EXPIRY_CHECK_INTERVAL_SECONDS)
+        except Exception as e:
+            logger.error(f"Error in guest cleanup: {str(e)}")
+            await asyncio.sleep(60)
+
+
 @app.on_event("startup")
 async def start_periodic_cleanup():
     """Start the periodic cleanup task when the app starts"""
     asyncio.create_task(periodic_cleanup())
+    asyncio.create_task(periodic_guest_cleanup())
 
 
 @app.on_event("shutdown")
@@ -1160,6 +1863,7 @@ def clear_session(session_key: str):
             interpreter.reset()
             # Remove from instances dict
             del interpreter_instances[session_key]
+        interpreter_locks.pop(session_key, None)
 
         # Clear Redis keys
         redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_key}")
@@ -1196,6 +1900,7 @@ def clear_all_interpreter_instances():
                 logger.error(f"Error resetting interpreter for session {session_key}: {str(e)}")
 
         interpreter_instances.clear()
+        interpreter_locks.clear()
         logger.info("Cleared all interpreter instances due to system prompt change")
     except Exception as e:
         logger.error(f"Error clearing all interpreter instances: {str(e)}")
@@ -1276,9 +1981,325 @@ async def transcribe_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Transcription failed")
 
 
+async def _run_chat_job_async(
+    *,
+    run_id: str,
+    session_id: str,
+    token: str,
+    user_id: UUID,
+    messages: list[dict[str, Any]],
+) -> None:
+    session_key = make_session_key(user_id, session_id)
+    session_lock = get_interpreter_lock(session_key)
+    lock_acquired = False
+    db_session = Session(engine)
+    try:
+        _update_chat_run_status(
+            run_id,
+            status="running",
+            started_at=datetime.utcnow().isoformat(),
+            updated_at=datetime.utcnow().isoformat(),
+        )
+        await asyncio.to_thread(session_lock.acquire)
+        lock_acquired = True
+
+        interpreter = get_or_create_interpreter(session_key, token, db_session)
+        if not hasattr(interpreter, "stop_event"):
+            interpreter.stop_event = threading.Event()
+        interpreter.stop_event.clear()
+
+        ensure_user_pqa_settings(user_id)
+
+        tool_defs = []
+        tool_lookup = {}
+        mcp_tool_descriptions = []
+        try:
+            tool_defs, tool_lookup = await gather_available_mcp_tools(db_session)
+            if tool_defs:
+                for tool_def in tool_defs:
+                    func_spec = tool_def.get("function", {})
+                    tool_id = func_spec.get("name")
+                    if tool_id and tool_id in tool_lookup:
+                        connection, tool = tool_lookup[tool_id]
+                        desc = func_spec.get("description", "No description")
+                        params = func_spec.get("parameters", {}).get("properties", {})
+                        param_list = ", ".join([f"{k} ({v.get('type', 'any')})" for k, v in params.items()])
+                        mcp_tool_descriptions.append(
+                            f"- {tool_id}({param_list}): {desc}"
+                        )
+        except Exception as exc:
+            logger.warning("Failed to gather MCP tools for chat run %s: %s", run_id, exc)
+
+        interpreter.custom_instructions = get_custom_instructions(
+            host=host,
+            user_id=str(user_id),
+            session_id=session_id,
+            static_dir=STATIC_DIR,
+            upload_dir=UPLOAD_DIR,
+            user_first_name=_get_user_first_name(get_current_user(token)),
+            mcp_tools=mcp_tool_descriptions,
+        )
+
+        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+
+        stored_messages = redis_client.get(f"messages:{session_key}")
+        if stored_messages:
+            try:
+                restored_messages = json.loads(stored_messages)
+                if interpreter.messages != restored_messages and hasattr(interpreter.llm, "reset_response_continuation"):
+                    interpreter.llm.reset_response_continuation()
+                interpreter.messages = restored_messages
+            except Exception as exc:
+                logger.warning("Failed to restore messages from Redis for chat run %s: %s", run_id, exc)
+
+        repaired_before_turn = _ensure_all_tool_calls_have_outputs(
+            interpreter,
+            "Tool execution completed without captured output.",
+        )
+        if repaired_before_turn:
+            _persist_interpreter_messages(session_key, interpreter)
+            logger.warning("Repaired missing tool output before chat run %s", run_id)
+
+        estimated_input_tokens = estimate_conversation_input_tokens(
+            interpreter,
+            [*interpreter.messages, messages[-1]],
+        )
+        should_compact_runtime = estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
+
+        tool_runs = []
+        try:
+            last_user_message = ""
+            for m in reversed(messages):
+                if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
+                    last_user_message = m["content"]
+                    break
+            if last_user_message:
+                tool_runs = await plan_and_run_mcp_tools(
+                    interpreter=interpreter,
+                    user_message=last_user_message,
+                    db=db_session,
+                )
+        except Exception as exc:
+            logger.warning("MCP planning/execution skipped for chat run %s: %s", run_id, exc)
+
+        if should_compact_runtime:
+            start_chunk = {
+                "start": True,
+                "role": "assistant",
+                "type": "message",
+                "format": "compaction_status",
+                "content": "",
+            }
+            _append_chat_run_event(run_id, start_chunk)
+            status_chunk = {
+                "role": "assistant",
+                "type": "message",
+                "format": "compaction_status",
+                "content": "Compacting conversation",
+            }
+            _append_chat_run_event(run_id, status_chunk)
+            compact_interpreter_runtime(interpreter, estimated_input_tokens)
+            _persist_interpreter_messages(session_key, interpreter)
+            end_chunk = {
+                "end": True,
+                "role": "assistant",
+                "type": "message",
+                "format": "compaction_status",
+                "content": "",
+            }
+            _append_chat_run_event(run_id, end_chunk)
+
+        if tool_runs:
+            streamed_keys: set[str] = set()
+            repos_summary = None
+            for run in tool_runs:
+                connection = run["connection"]
+                tool = run["tool"]
+                arguments = run["arguments"]
+                key = json.dumps(
+                    {"cid": str(connection.id), "tool": tool.get("name"), "args": arguments},
+                    sort_keys=True,
+                )
+                if key in streamed_keys:
+                    continue
+                streamed_keys.add(key)
+                _append_chat_run_event(
+                    run_id,
+                    {
+                        "start": True,
+                        "role": "computer",
+                        "type": "message",
+                        "format": "tool_status",
+                        "content": f"🔧 Using {connection.name} • {tool.get('name')}",
+                    },
+                )
+                if tool.get("name") == "search_repositories":
+                    try:
+                        repos_summary = _render_repo_table(run["result"])
+                    except Exception:
+                        repos_summary = None
+                _append_chat_run_event(
+                    run_id,
+                    {
+                        "end": True,
+                        "role": "computer",
+                        "type": "message",
+                        "format": "tool_status",
+                        "content": "",
+                    },
+                )
+            if repos_summary:
+                _append_chat_run_event(
+                    run_id,
+                    {
+                        "start": True,
+                        "end": True,
+                        "role": "computer",
+                        "type": "message",
+                        "content": repos_summary,
+                    },
+                )
+
+        for result in interpreter.chat(messages[-1], stream=True):
+            chunk = result if isinstance(result, dict) else {"role": "assistant", "type": "message", "content": str(result)}
+            if _is_persistable_interpreter_chunk(chunk):
+                _persist_interpreter_messages(session_key, interpreter)
+            _append_chat_run_event(run_id, chunk)
+
+        _ensure_all_tool_calls_have_outputs(
+            interpreter,
+            "Tool execution completed without captured output.",
+        )
+        _persist_interpreter_messages(session_key, interpreter)
+        _update_chat_run_status(
+            run_id,
+            status="completed",
+            completed_at=datetime.utcnow().isoformat(),
+            updated_at=datetime.utcnow().isoformat(),
+        )
+    except Exception as exc:
+        logger.error("Error in chat run %s: %s", run_id, exc)
+        _append_chat_run_event(run_id, {"error": str(exc)})
+        try:
+            interpreter = interpreter_instances.get(session_key)
+            if interpreter is not None:
+                repair_interrupted_tool_state(
+                    interpreter,
+                    "Execution stopped before completion.",
+                )
+                _ensure_all_tool_calls_have_outputs(
+                    interpreter,
+                    "Tool execution completed without captured output.",
+                )
+                _persist_interpreter_messages(session_key, interpreter)
+        except Exception as repair_exc:
+            logger.warning("Failed to repair chat run %s after error: %s", run_id, repair_exc)
+        _update_chat_run_status(
+            run_id,
+            status="failed",
+            error=str(exc),
+            completed_at=datetime.utcnow().isoformat(),
+            updated_at=datetime.utcnow().isoformat(),
+        )
+    finally:
+        try:
+            interpreter = interpreter_instances.get(session_key)
+            if interpreter is not None and hasattr(interpreter, "stop_event"):
+                interpreter.stop_event.clear()
+        finally:
+            if lock_acquired:
+                session_lock.release()
+            db_session.close()
+
+
+def _run_chat_job_thread(**kwargs: Any) -> None:
+    asyncio.run(_run_chat_job_async(**kwargs))
+
+
+@app.post("/chat-runs")
+@limiter.limit(CHAT_RATE_LIMIT)
+async def start_chat_run_endpoint(request: Request, token: str = Depends(get_auth_token)):
+    session_id = request.headers.get("x-session-id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="x-session-id header is required")
+
+    body = await request.json()
+    messages = body.get("messages", [])
+    if not messages:
+        raise HTTPException(status_code=400, detail="No messages provided")
+
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    run_id = uuid.uuid4().hex
+    status = {
+        "run_id": run_id,
+        "session_id": session_id,
+        "user_id": str(user.id),
+        "status": "queued",
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    _set_chat_run_status(run_id, status)
+    redis_client.delete(_chat_run_events_key(run_id))
+    redis_client.delete(_chat_run_seq_key(run_id))
+
+    thread = threading.Thread(
+        target=_run_chat_job_thread,
+        kwargs={
+            "run_id": run_id,
+            "session_id": session_id,
+            "token": token,
+            "user_id": user.id,
+            "messages": messages,
+        },
+        daemon=True,
+    )
+    chat_run_threads[run_id] = thread
+    thread.start()
+    return {"run_id": run_id, "status": "queued"}
+
+
+@app.get("/chat-runs/{run_id}")
+def get_chat_run_endpoint(run_id: str, request: Request, token: str = Depends(get_auth_token)):
+    session_id = request.headers.get("x-session-id")
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return _load_run_for_user(run_id, user.id, session_id)
+
+
+@app.get("/chat-runs/{run_id}/events")
+def get_chat_run_events_endpoint(
+    run_id: str,
+    request: Request,
+    after: int = 0,
+    token: str = Depends(get_auth_token),
+):
+    session_id = request.headers.get("x-session-id")
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    status = _load_run_for_user(run_id, user.id, session_id)
+    events = _list_chat_run_events(run_id, after=after)
+    latest_seq = after
+    if events:
+        latest_seq = max(int(event.get("seq", after)) for event in events)
+    return {
+        "run_id": run_id,
+        "status": status.get("status"),
+        "events": events,
+        "next_after": latest_seq,
+        "error": status.get("error"),
+    }
+
+
 @app.post("/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
 async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    session_lock = None
+    lock_acquired = False
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -1295,8 +2316,15 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         session_key = make_session_key(user.id, session_id)
 
+        session_lock = get_interpreter_lock(session_key)
+        await asyncio.to_thread(session_lock.acquire)
+        lock_acquired = True
+
         logger.info(f"Received messages for session {session_key}")
         interpreter = get_or_create_interpreter(session_key, token, db)
+        if not hasattr(interpreter, "stop_event"):
+            interpreter.stop_event = threading.Event()
+        interpreter.stop_event.clear()
 
         # Ensure user PQA directories and settings exist
         # Index building now happens lazily in query_knowledge_base()
@@ -1332,6 +2360,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             session_id=session_id,
             static_dir=STATIC_DIR,
             upload_dir=UPLOAD_DIR,
+            user_first_name=_get_user_first_name(user),
             mcp_tools=mcp_tool_descriptions,
         )
 
@@ -1341,10 +2370,26 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         stored_messages = redis_client.get(f"messages:{session_key}")
         if stored_messages:
             try:
-                interpreter.messages = json.loads(stored_messages)
+                restored_messages = json.loads(stored_messages)
+                if interpreter.messages != restored_messages and hasattr(interpreter.llm, "reset_response_continuation"):
+                    interpreter.llm.reset_response_continuation()
+                interpreter.messages = restored_messages
                 logger.info(f"Restored {len(interpreter.messages)} messages from Redis for session {session_key}")
             except Exception as e:
                 logger.warning(f"Failed to restore messages from Redis: {str(e)}")
+
+        if _ensure_all_tool_calls_have_outputs(
+            interpreter,
+            "Tool execution completed without captured output.",
+        ):
+            _persist_interpreter_messages(session_key, interpreter)
+            logger.warning("Repaired missing tool output before chat request for session %s", session_key)
+
+        estimated_input_tokens = estimate_conversation_input_tokens(
+            interpreter,
+            [*interpreter.messages, messages[-1]],
+        )
+        should_compact_runtime = estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
 
         # MCP tools are now available via mcp_tools.py (generated at startup and when connections change)
         # No need to regenerate on every chat request
@@ -1370,6 +2415,32 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
 
         def event_stream():
             try:
+                if should_compact_runtime:
+                    start_chunk = {
+                        "start": True,
+                        "role": "assistant",
+                        "type": "message",
+                        "format": "compaction_status",
+                        "content": "",
+                    }
+                    yield f"data: {json.dumps(start_chunk)}\n\n"
+                    status_chunk = {
+                        "role": "assistant",
+                        "type": "message",
+                        "format": "compaction_status",
+                        "content": "Compacting conversation",
+                    }
+                    yield f"data: {json.dumps(status_chunk)}\n\n"
+                    compact_interpreter_runtime(interpreter, estimated_input_tokens)
+                    end_chunk = {
+                        "end": True,
+                        "role": "assistant",
+                        "type": "message",
+                        "format": "compaction_status",
+                        "content": "",
+                    }
+                    yield f"data: {json.dumps(end_chunk)}\n\n"
+
                 if tool_runs:
                     streamed_keys: set[str] = set()
                     repos_summary = None
@@ -1422,18 +2493,53 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                 for result in interpreter.chat(messages[-1], stream=True):
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
+            except GeneratorExit:
+                try:
+                    interpreter.interrupt(timeout=1.5)
+                except Exception as exc:
+                    logger.warning(
+                        "Interpreter interrupt after stream disconnect failed for session %s: %s",
+                        session_key,
+                        exc,
+                    )
+                repaired = repair_interrupted_tool_state(
+                    interpreter,
+                    "Execution stopped before completion.",
+                )
+                if repaired:
+                    logger.warning(
+                        "Repaired interrupted tool state after stream disconnect for session %s",
+                        session_key,
+                    )
+                raise
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
                 error_message = {"error": str(e)}
                 yield f"data: {json.dumps(error_message)}\n\n"
             finally:
-                redis_client.set(
-                    f"messages:{session_key}", json.dumps(interpreter.messages)
-                )
+                try:
+                    if hasattr(interpreter, "stop_event"):
+                        interpreter.stop_event.clear()
+                    repair_interrupted_tool_state(
+                        interpreter,
+                        "Execution stopped before completion.",
+                    )
+                    _ensure_all_tool_calls_have_outputs(
+                        interpreter,
+                        "Tool execution completed without captured output.",
+                    )
+                    redis_client.set(
+                        f"messages:{session_key}", json.dumps(interpreter.messages)
+                    )
+                finally:
+                    if lock_acquired and session_lock:
+                        session_lock.release()
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     except Exception as e:
+        if lock_acquired and session_lock:
+            session_lock.release()
         logger.error(f"Unexpected error in chat_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -1475,9 +2581,55 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.post("/interrupt")
+async def interrupt_endpoint(request: Request, token: str = Depends(get_auth_token)):
+    try:
+        session_id = request.headers.get("x-session-id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="x-session-id header is required")
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = body.get("reason") or "Execution stopped before completion."
+
+        session_key = make_session_key(user.id, session_id)
+        interpreter = interpreter_instances.get(session_key)
+        if interpreter is None:
+            return {"status": "no_active_interpreter"}
+
+        if not hasattr(interpreter, "stop_event"):
+            interpreter.stop_event = threading.Event()
+        interpreter.stop_event.set()
+
+        try:
+            interpreter.interrupt(timeout=1.5)
+        except Exception as exc:
+            logger.warning("Interpreter interrupt failed for session %s: %s", session_key, exc)
+
+        repair_interrupted_tool_state(interpreter, reason)
+        redis_client.set(f"messages:{session_key}", json.dumps(interpreter.messages))
+        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+        return {"status": "interrupted"}
+    except redis.RedisError as e:
+        logger.error(f"Redis error in interrupt_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to interrupt execution")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in interrupt_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.post("/load-conversation")
 async def load_conversation_endpoint(request: Request, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
     """Load a conversation's messages into the interpreter context"""
+    session_lock = None
+    lock_acquired = False
     try:
         session_id = request.headers.get("x-session-id")
         if not session_id:
@@ -1492,10 +2644,48 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
         messages = body.get("messages", [])
         
         session_key = make_session_key(user.id, session_id)
+        session_lock = get_interpreter_lock(session_key)
+        await asyncio.to_thread(session_lock.acquire)
+        lock_acquired = True
         
         # Convert frontend message format to interpreter format
-        interpreter_messages = []
+        max_console_output_chars = 6000
+        max_total_console_output_chars = 24000
+        total_console_output_chars = 0
+        valid_loaded_message_types = {"message", "code", "image", "file", "confirmation"}
+        restore_notice = (
+            "This conversation was loaded from saved history. Treat prior code blocks "
+            "and outputs as historical transcript only. The execution environment has "
+            "been reset; variables, unsaved files, running processes, and in-memory "
+            "state from earlier turns are not available unless recreated."
+        )
+        interpreter_messages = [
+            {
+                "role": "developer",
+                "type": "message",
+                "content": restore_notice,
+            }
+        ]
+
+        def _stringify_loaded_content(content: Any) -> str:
+            if content is None:
+                return ""
+            if isinstance(content, str):
+                return content
+            try:
+                return json.dumps(content, ensure_ascii=False)
+            except Exception:
+                return str(content)
+
+        def _truncate_loaded_content(content: str, limit: int) -> str:
+            if len(content) <= limit:
+                return content
+            omitted = len(content) - limit
+            return f"{content[:limit]}\n\n[... truncated {omitted} characters from restored history ...]"
+
         for msg in messages:
+            if isinstance(msg.get("content"), str) and msg.get("content", "").strip().startswith("[IDEA conversation compacted at "):
+                continue
             # Skip console messages with active_line format as they cause issues
             if (msg.get("message_type") == "console" and 
                 msg.get("message_format") == "active_line"):
@@ -1503,25 +2693,48 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
                 
             # Convert to format the interpreter expects (with required fields)
             if msg.get("role") in ["user", "assistant"]:
-                # For user/assistant messages, use message type
+                msg_type = msg.get("message_type", "message")
                 interpreter_msg = {
                     "role": msg.get("role"),
-                    "type": "message",
-                    "content": msg.get("content", "")
+                    "type": msg_type if msg_type in valid_loaded_message_types else "message",
+                    "content": _stringify_loaded_content(msg.get("content", ""))
                 }
+                if msg.get("message_format"):
+                    interpreter_msg["format"] = msg.get("message_format")
                 interpreter_messages.append(interpreter_msg)
             elif msg.get("role") == "computer":
                 # For computer messages, convert to user with appropriate type (computer outputs are shown as user messages)
                 msg_type = msg.get("message_type", "message")
                 if msg_type == "console":
-                    # Skip console messages entirely as they're not needed for context
-                    # (Python environment state is not preserved between sessions)
+                    if total_console_output_chars >= max_total_console_output_chars:
+                        continue
+                    console_content = _stringify_loaded_content(msg.get("content", "")).strip()
+                    if not console_content:
+                        continue
+                    remaining_chars = max_total_console_output_chars - total_console_output_chars
+                    console_content = _truncate_loaded_content(
+                        console_content,
+                        min(max_console_output_chars, remaining_chars),
+                    )
+                    total_console_output_chars += len(console_content)
+                    console_format = msg.get("message_format") or "output"
+                    interpreter_messages.append(
+                        {
+                            "role": "developer",
+                            "type": "message",
+                            "content": (
+                                f"Historical console output from the restored conversation "
+                                f"({console_format}; not from the current runtime):\n"
+                                f"{console_content}"
+                            ),
+                        }
+                    )
                     continue
                 else:
                     interpreter_msg = {
                         "role": "user", # "assistant", # Changed to "user" as assistant role does not support image output
-                        "type": msg_type if msg_type in ["code", "message", "image"] else "message",
-                        "content": msg.get("content", "")
+                        "type": msg_type if msg_type in ["code", "message", "image", "file"] else "message",
+                        "content": _stringify_loaded_content(msg.get("content", ""))
                     }
                     if msg.get("message_format"):
                         interpreter_msg["format"] = msg.get("message_format")
@@ -1547,6 +2760,9 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
     except Exception as e:
         logger.error(f"Error loading conversation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to load conversation: {str(e)}")
+    finally:
+        if lock_acquired and session_lock:
+            session_lock.release()
 
 
 async def has_executable_header(file_path: Path) -> bool:

@@ -1,6 +1,8 @@
 // account-settings.js - Modal behavior for Account Settings and password change
 
 (function() {
+    let currentUserProfile = null;
+
     function getEndpoints() {
         try { return config.getEndpoints(); } catch { return {}; }
     }
@@ -22,6 +24,22 @@
         document.body.style.overflow = '';
     }
 
+    function isGuestUser() {
+        return Boolean(currentUserProfile?.is_guest);
+    }
+
+    function applyGuestVisibility() {
+        const accountButtons = [
+            document.getElementById('accountSettingsButton'),
+            document.getElementById('accountSettingsButtonMobile')
+        ];
+
+        accountButtons.forEach((button) => {
+            if (!button) return;
+            button.style.display = isGuestUser() ? 'none' : '';
+        });
+    }
+
     function attachEvents() {
         const modal = document.getElementById('accountSettingsModal');
         const openBtn = document.getElementById('accountSettingsButton');
@@ -35,10 +53,12 @@
         const messageEl = document.getElementById('accountSettingsMessage');
 
         if (openBtn) openBtn.addEventListener('click', () => {
+            if (isGuestUser()) return;
             openModal(modal);
             loadUserProfile();
         });
         if (openBtnMobile) openBtnMobile.addEventListener('click', () => {
+            if (isGuestUser()) return;
             openModal(modal);
             loadUserProfile();
             const navbarMobileMenu = document.getElementById('navbarMobileMenu');
@@ -68,6 +88,11 @@
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 if (messageEl) { messageEl.textContent = ''; messageEl.className = 'form-message'; }
+
+                if (isGuestUser()) {
+                    setMessage('Guest users cannot manage account settings.', 'error');
+                    return;
+                }
 
                 const currentPassword = currentEl?.value?.trim() || '';
                 const newPassword = newEl?.value?.trim() || '';
@@ -136,8 +161,9 @@
                 });
 
                 if (res.ok) {
-                    const userProfile = await res.json();
-                    userEmailDisplay.value = userProfile.email || '';
+                    currentUserProfile = await res.json();
+                    applyGuestVisibility();
+                    userEmailDisplay.value = currentUserProfile.email || '';
                 } else {
                     console.error('Failed to load user profile');
                     userEmailDisplay.value = 'Unable to load email';
@@ -147,9 +173,18 @@
                 userEmailDisplay.value = 'Unable to load email';
             }
         }
+
+        currentUserProfile = window.getCurrentUserProfile?.() || window.currentUserProfile || null;
+        applyGuestVisibility();
+        window.addEventListener('idea:user-profile-loaded', (event) => {
+            currentUserProfile = event.detail?.profile || null;
+            applyGuestVisibility();
+            if (isGuestUser()) {
+                closeModal(modal);
+            }
+        });
     }
 
     document.addEventListener('DOMContentLoaded', attachEvents);
 })();
-
 

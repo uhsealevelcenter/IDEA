@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1600" role="img" aria-labelledby="title desc">
+  <title id="title">Tropical Coast Sidebar Background</title>
+  <desc id="desc">A darkened tropical shoreline with palms, warm sunset light, and teal water for the IDEA Coast theme sidebar.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#18384b"/>
+      <stop offset="42%" stop-color="#31556a"/>
+      <stop offset="74%" stop-color="#f09a59"/>
+      <stop offset="100%" stop-color="#f6ca82"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#61d6d7"/>
+      <stop offset="48%" stop-color="#2195b0"/>
+      <stop offset="100%" stop-color="#0a4c67"/>
+    </linearGradient>
+    <linearGradient id="sand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#edca8c"/>
+      <stop offset="100%" stop-color="#b98753"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="72%" cy="32%" r="18%">
+      <stop offset="0%" stop-color="#fff7d6" stop-opacity="0.95"/>
+      <stop offset="42%" stop-color="#ffd496" stop-opacity="0.72"/>
+      <stop offset="100%" stop-color="#ffd496" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="foliage" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1b4129"/>
+      <stop offset="100%" stop-color="#0a2117"/>
+    </linearGradient>
+    <filter id="blurSoft">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+  </defs>
+
+  <rect width="900" height="1600" fill="url(#sky)"/>
+  <rect width="900" height="1600" fill="url(#sun)"/>
+
+  <path d="M450 520C680 550 830 600 900 675V1080C790 1000 688 932 540 888C398 845 262 845 136 900C80 925 38 958 0 998V690C58 620 126 582 208 564C300 544 374 536 450 520Z" fill="url(#water)"/>
+  <path d="M0 760C126 734 194 740 258 774C330 812 380 880 428 950C474 1018 528 1082 620 1140C706 1193 800 1236 900 1290V1600H0Z" fill="url(#sand)"/>
+
+  <path d="M0 0H218L160 210L246 318L174 470L232 620L144 790L216 944L84 1190L120 1600H0Z" fill="url(#foliage)"/>
+  <path d="M0 1150C110 1108 194 1086 252 1088C312 1088 360 1118 426 1184C292 1214 180 1282 0 1428Z" fill="#10281d"/>
+  <path d="M0 0H130L74 180L154 320L70 480L126 632L42 804L74 1006L0 1180Z" fill="#081811" opacity="0.94"/>
+
+  <g opacity="0.8">
+    <path d="M268 142C324 110 380 96 454 104C398 144 362 186 332 246C306 218 286 188 268 142Z" fill="#284f36"/>
+    <path d="M280 176C344 148 412 144 500 154C430 202 388 256 354 320C324 278 304 232 280 176Z" fill="#2d5e3e"/>
+    <path d="M302 220C368 204 438 212 524 236C454 270 406 326 370 390C338 348 316 292 302 220Z" fill="#346845"/>
+  </g>
+
+  <g transform="translate(214 70)">
+    <path d="M60 1160C72 1046 78 936 78 828C78 642 58 406 36 112" fill="none" stroke="#3d281d" stroke-linecap="round" stroke-width="20"/>
+    <path d="M36 130C-26 100 -74 86 -130 84C-54 120 -12 164 24 226" fill="none" stroke="#1f4b2f" stroke-linecap="round" stroke-width="16"/>
+    <path d="M46 96C102 54 156 38 228 36C144 86 98 138 56 206" fill="none" stroke="#1f4b2f" stroke-linecap="round" stroke-width="16"/>
+    <path d="M42 156C-24 164 -92 186 -164 230C-72 234 -4 248 54 286" fill="none" stroke="#275b39" stroke-linecap="round" stroke-width="16"/>
+    <path d="M58 148C130 154 204 178 286 220C192 222 116 242 48 284" fill="none" stroke="#275b39" stroke-linecap="round" stroke-width="16"/>
+    <path d="M44 204C-8 248 -48 302 -92 382C-12 340 42 324 110 318" fill="none" stroke="#2d6a42" stroke-linecap="round" stroke-width="14"/>
+    <path d="M56 206C110 254 152 310 196 384C118 340 62 324 -10 320" fill="none" stroke="#2d6a42" stroke-linecap="round" stroke-width="14"/>
+  </g>
+
+  <g opacity="0.24">
+    <ellipse cx="642" cy="604" rx="144" ry="22" fill="#fff0c0" filter="url(#blurSoft)"/>
+    <ellipse cx="628" cy="652" rx="184" ry="28" fill="#fff0c0" filter="url(#blurSoft)"/>
+    <ellipse cx="592" cy="708" rx="226" ry="34" fill="#fff0c0" filter="url(#blurSoft)"/>
+  </g>
+
+  <path d="M0 0H900V1600H0Z" fill="url(#sky)" opacity="0.22"/>
+</svg>
