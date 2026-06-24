@@ -23,6 +23,8 @@ coverage.xml
 .hypothesis/
 .DS_Store
 .codex/
+.env
+.env.*
 
 
 

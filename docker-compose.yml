@@ -2,10 +2,7 @@ version: '3.8'
 
 services:
   web:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-    image: idea
+    image: ghcr.io/uhsealevelcenter/idea:${IMAGE_TAG}
     container_name: idea_container
     shm_size: "2gb" # increase shared memory size to prevent potential issues with large models or data processing
     ports:

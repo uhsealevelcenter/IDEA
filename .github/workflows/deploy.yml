@@ -1,0 +1,141 @@
+name: Deploy
+
+on:
+  push:
+    branches: [dev, staging, main]
+  # Manual trigger for redeploys / rollbacks without a new commit.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit SHA to deploy (defaults to the selected branch's tip)"
+        required: false
+        type: string
+
+# Never runs two deploys against the same environment simultaneously.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Maps the triggering branch -> GitHub Environment name.
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.map.outputs.environment }}
+    steps:
+      - id: map
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            dev)     echo "environment=dev"     >> "$GITHUB_OUTPUT" ;;
+            staging) echo "environment=staging" >> "$GITHUB_OUTPUT" ;;
+            main)    echo "environment=prod"    >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::Branch '${GITHUB_REF_NAME}' is not mapped to an environment."
+              exit 1
+              ;;
+          esac
+
+  # Builds the Docker image and pushes it to ghcr.io. 
+  build:
+    needs: select
+    runs-on: ubuntu-latest
+    environment: ${{ needs.select.outputs.environment }}
+    if: vars.DEPLOY_ENABLED == 'true'
+    permissions:
+      contents: read
+      packages: write  # required to push to ghcr.io
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/uhsealevelcenter/idea
+          tags: |
+            type=sha,prefix=,format=short
+            type=ref,event=branch
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [select, build]
+    runs-on: ubuntu-latest
+    # Binds job to the per-VM secrets GitHub Environment and applies any environment protection rules.
+    environment: ${{ needs.select.outputs.environment }}
+    # Only runs for environments that have DEPLOY_ENABLED=true (set in the GitHub Environment's vars).
+    if: vars.DEPLOY_ENABLED == 'true'
+    env:
+      DEPLOY_REF: ${{ github.event.inputs.ref || github.ref_name }}
+      IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Private deploy key (per-environment secret).
+          install -m 600 /dev/null ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+
+          # Public host key (per-environment secret).
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+              -p "${{ vars.VM_SSH_PORT || '22' }}" \
+              "${{ vars.VM_USER }}@${{ vars.VM_HOST }}" \
+              DEPLOY_REF="${DEPLOY_REF}" IMAGE_TAG="${IMAGE_TAG}" APP_DIR="${{ vars.APP_DIR }}" DEPLOY_CMD="${{ vars.DEPLOY_CMD }}" 'bash -s' <<'REMOTE'
+            set -euo pipefail
+            cd "${APP_DIR}"
+
+            # Per-environment deploy command (GitHub var DEPLOY_CMD). 
+            if [ -z "${DEPLOY_CMD}" ]; then
+              echo "::error::DEPLOY_CMD is not set for this environment."; exit 1
+            fi
+
+            echo "==> Fetching ${DEPLOY_REF}"
+            git fetch --prune origin
+
+            # Sync the checkout to what was pushed. 
+            git checkout -f "${DEPLOY_REF}" 2>/dev/null || true
+            git reset --hard "origin/${DEPLOY_REF}" 2>/dev/null || git reset --hard "${DEPLOY_REF}"
+
+            echo "==> Deployed commit:"
+            git --no-pager log -1 --oneline
+
+            echo "==> Pulling image tag ${IMAGE_TAG}"
+            IMAGE_TAG="${IMAGE_TAG}" docker compose pull web
+
+            echo "==> Running: ${DEPLOY_CMD}"
+            IMAGE_TAG="${IMAGE_TAG}" bash -c "${DEPLOY_CMD}"
+          REMOTE
