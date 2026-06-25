@@ -84,6 +84,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Prune old package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: idea
+          package-type: container
+          min-versions-to-keep: 5
+          delete-only-untagged-versions: false
+
   deploy:
     needs: [select, build]
     runs-on: ubuntu-latest
