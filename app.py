@@ -1265,6 +1265,11 @@ async def logout(token: str = Depends(get_auth_token)):
     return {"message": "Logged out successfully"}
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "version": os.getenv("GIT_SHA", "unknown")}
+
+
 @app.get("/auth/verify")
 async def verify_auth(token: str = Depends(get_auth_token)):
     """Verify if current authentication token is valid"""
