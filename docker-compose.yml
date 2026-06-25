@@ -4,6 +4,7 @@ services:
   web:
     image: ghcr.io/uhsealevelcenter/idea:${IMAGE_TAG}
     container_name: idea_container
+    restart: unless-stopped
     shm_size: "2gb" # increase shared memory size to prevent potential issues with large models or data processing
     ports:
       - "8002:8001" # so that we can have SEA and IDEA on the same machine
@@ -44,6 +45,7 @@ services:
 
   redis:
     image: redis:alpine
+    restart: unless-stopped
     ports:
       - "6380:6379" # so that we can have SEA and IDEA on the same machine
     volumes:
