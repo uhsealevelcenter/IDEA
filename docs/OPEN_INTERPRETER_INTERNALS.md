@@ -20,6 +20,8 @@ A deep-dive into how the library reasons, plans, executes code, and loops back t
 12. [OS Control Mode](#12-os-control-mode)
 13. [Context Window Management](#13-context-window-management)
 14. [Full Data Flow Diagram](#14-full-data-flow-diagram)
+15. [IDEA Integration — Endpoint & Request Flow](#15-idea-integration--endpoint--request-flow)
+16. [Long Conversations — Full Context vs. Trimmed Slices](#16-long-conversations--full-context-vs-trimmed-slices)
 
 ---
 
@@ -527,6 +529,178 @@ chat() ──┬── non-blocking ──▶ Thread
                   ▼
          Return self.messages[last_messages_count:]
 ```
+
+---
+
+## 15. IDEA Integration — Endpoint & Request Flow
+
+### Exposed endpoint
+
+```
+POST /idea-api/chat
+```
+
+Defined in `routes/chat.py`, registered in `app.py` with `root_path="/idea-api"`. It is rate-limited at **10 requests / minute** per IP via `slowapi`.
+
+### Required headers
+
+| Header | Purpose |
+|---|---|
+| `Authorization: Bearer <token>` | JWT auth, validated by `get_current_user()` |
+| `x-session-id` | Caller-supplied UUID that namespaces the interpreter instance |
+
+### Session keying
+
+Every interpreter is stored in a process-local dict `interpreter_instances` keyed by `"{user_id}:{session_id}"` (formed in `backend/state.py` via `make_session_key()`). This means two browser tabs with the same `session_id` for the same user share one interpreter; different session IDs get independent interpreters.
+
+### Request flow, step by step
+
+```
+Client
+  │  POST /idea-api/chat
+  │  headers: Authorization, x-session-id
+  │  body:    { "messages": [...full UI history...] }
+  │
+  ▼
+FastAPI chat_endpoint()          (routes/chat.py)
+  │
+  ├─ authenticate JWT → user object
+  ├─ build session_key = f"{user.id}:{session_id}"
+  ├─ get_or_create_interpreter(session_key)   ← in-memory dict lookup / new
+  │     Sets: system_message, model, context_window (400k), max_output (64k),
+  │           auto_run=True, custom_tool pre-loaded into Python REPL
+  │
+  ├─ custom_instructions = get_custom_instructions(...)   ← injected each call
+  │     Contains: host, user_id, session_id, upload paths,
+  │               available custom functions (get_datetime, get_station_info, etc.)
+  │               and any MCP tool descriptions
+  │
+  ├─ Redis GET "messages:{session_key}" → interpreter.messages
+  │     (Full prior conversation is RESTORED into the interpreter object)
+  │
+  ├─ plan_and_run_mcp_tools(last_user_message)   ← optional pre-flight
+  │
+  └─ StreamingResponse( event_stream() )
+           │
+           ├─ [stream MCP tool status chunks if any]
+           │
+           ├─ interpreter.chat(messages[-1], stream=True)
+           │       ↑ Only the LAST message from the body is handed to OI.
+           │       ↑ OI will append it to interpreter.messages internally.
+           │
+           │    [yields SSE chunks: role/type/content dicts]
+           │
+           └─ Redis SET "messages:{session_key}" ← interpreter.messages
+                   (Full updated conversation saved back to Redis)
+```
+
+### Key detail: only `messages[-1]` is passed to `interpreter.chat()`
+
+The request body carries the complete UI-side message list, but the endpoint extracts only the **last element** and passes it to OI:
+
+```python
+# routes/chat.py:202
+for result in interpreter.chat(messages[-1], stream=True):
+```
+
+The prior turn history is not fed from the request body — it is loaded from Redis into `interpreter.messages` *before* the call. OI's `_streaming_chat()` then appends the new user message to `self.messages` and the respond loop builds `messages_for_llm = [system_message] + self.messages`.
+
+### Idle cleanup
+
+`cleanup_idle_sessions()` runs every 30 minutes and evicts any interpreter that has been idle for > 1 hour (`IDLE_TIMEOUT = 3600 s`). Eviction calls `interpreter.reset()`, deletes the in-memory instance, and removes both Redis keys (`last_active:…` and `messages:…`).
+
+### Conversation persistence (separate from Redis)
+
+Redis is the **live working memory** (volatile, per-session). Long-term saves go through `routes/conversations.py` → PostgreSQL via `ConversationMessage` rows. Loading a saved conversation calls `POST /load-conversation`, which re-serialises stored DB messages into LMC format and writes them to the Redis `messages:` key, then destroys the in-memory interpreter so a fresh one picks up the loaded history on the next chat call.
+
+---
+
+## 16. Long Conversations — Full Context vs. Trimmed Slices
+
+### The short answer
+
+**The entire conversation is fed back to the LLM on every turn.** Open Interpreter does not summarise or chunk history by default. Before each LLM call, `respond()` builds:
+
+```python
+messages_for_llm = [system_message] + self.messages
+```
+
+`self.messages` is the **unbounded running log** of all user inputs, assistant text, code blocks, and computer (execution) outputs since the session started.
+
+### What that means in practice for IDEA
+
+| Setting | Value set in `interpreter_manager.py` |
+|---|---|
+| `context_window` | 400,000 tokens |
+| `max_completion_tokens` | 64,000 tokens |
+| `max_output` | 64,000 chars (per code-execution output, stored truncated) |
+
+With a 400k-token context window the conversation can grow very long before any trimming kicks in.
+
+### When trimming does kick in (`tokentrim`)
+
+Inside `Llm.run()`, before building the API payload:
+
+```
+target budget = context_window - max_tokens - 25
+             = 400,000 - 64,000 - 25 = ~335,975 tokens
+
+tokentrim splits messages into:
+  • text messages  (role=user/assistant, type=message)
+  • non-text       (code blocks, console output, images)
+
+text messages are dropped from the MIDDLE of the history first
+non-text messages are reinserted at their original positions
+```
+
+So in a very long session:
+- **Code blocks and execution outputs are preserved** (they carry execution state the LLM needs).
+- **Conversational prose from the middle of the history is trimmed first** to free up budget.
+- The most recent turns (both ends of the message list) are always kept.
+
+### Per-output truncation (`max_output = 64,000`)
+
+Before any trimming, individual execution outputs are already capped. In `_respond_and_store()`, if a `console` output exceeds `interpreter.max_output` characters it is truncated in-place inside `self.messages`. This prevents a single runaway `print` statement from consuming the entire context budget.
+
+### Image handling in long conversations
+
+For OS-mode (screenshots): only the **last 2 images** are kept in the message list before each LLM call. For non-OS mode: all images except the first and last 2 are dropped. This is an aggressive prune that runs independently of `tokentrim`.
+
+### The full picture for a turn N in a long conversation
+
+```
+Turn N incoming:
+  Redis  →  interpreter.messages  (full history, turns 1 … N-1)
+  chat()    appends turn N user message
+
+  respond() builds messages_for_llm:
+    [system_message]                ← rebuilt fresh every turn
+    + interpreter.messages          ← all prior turns + new user msg
+    + [loop_message if loop=True]   ← optional
+
+  Llm.run() trims to fit 335,975 token budget:
+    - drop middle text messages if over budget
+    - keep code/console/image non-text at positions
+    - prune images to last 2 (OS mode) or first+last 2 (non-OS)
+
+  LLM receives: effectively the entire conversation,
+                minus any middle prose that was trimmed out
+
+  LLM responds → code executed → output appended to messages
+
+  Redis  ←  interpreter.messages  (full updated history saved)
+```
+
+### Summary table
+
+| Aspect | Behaviour |
+|---|---|
+| History strategy | Full replay every turn (no summarisation) |
+| Text trimming | `tokentrim` drops middle prose when over ~336k-token budget |
+| Code/output trimming | Non-text preserved; individual outputs capped at 64k chars |
+| Image trimming | Last 2 kept (OS mode); first + last 2 kept (non-OS) |
+| State persistence | Redis per-session; PostgreSQL for saved conversations |
+| Idle eviction | After 1 hour of inactivity (history deleted from Redis) |
 
 ---
 

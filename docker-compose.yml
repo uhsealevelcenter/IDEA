@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   web:
     build:
@@ -42,6 +40,7 @@ services:
       timeout: 10s
     volumes:
       - app-db-data:/var/lib/postgresql/data/pgdata
+      - ./postgres/init-langfuse.sql:/docker-entrypoint-initdb.d/init-langfuse.sql:ro
     env_file:
       - .env
     environment:
@@ -57,6 +56,7 @@ services:
     image: idea-litellm
     container_name: litellm_container
     restart: always
+    stop_grace_period: 30s
     ports:
       - "8080:8080"
     env_file:
@@ -65,10 +65,16 @@ services:
       - LITELLM_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=litellm
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_INIT_PROJECT_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_started
+      langfuse:
         condition: service_started
 
   redis:
@@ -78,6 +84,37 @@ services:
     volumes:
       - idea_redis_data:/data
     command: redis-server --appendonly yes
+
+  langfuse:
+    image: langfuse/langfuse:2
+    restart: always
+    ports:
+      - "8081:3000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/langfuse
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:8081}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-idea-org}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-IDEA}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-idea-project}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-IDEA}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/public/health', r => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
 volumes:
   idea_persistent_data:

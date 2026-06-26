@@ -96,6 +96,11 @@ litellm_settings:
   # Redact virtual-key / team identifiers from supported logging callbacks.
   redact_user_api_key_info: true
 
+  # Langfuse observability — traces every request/response for cost, latency, and token tracking.
+  # Credentials are injected via LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_HOST env vars.
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+
   cache: true
   cache_params:
     type: redis

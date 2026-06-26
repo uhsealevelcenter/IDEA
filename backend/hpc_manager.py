@@ -207,7 +207,12 @@ def submit_hpc_job(
     module_lines = "\n".join(
         f"module load {mod}" for mod in HPC_MODULES.split() if mod
     ) if HPC_MODULES else ""
-    conda_line = f"conda activate {HPC_CONDA_ENV}" if HPC_CONDA_ENV else ""
+    # Use `conda run` instead of `conda activate` — activate requires sourcing conda's
+    # shell integration first and silently no-ops in non-interactive SLURM batch scripts.
+    python_cmd = (
+        f"conda run --no-capture-output -n {HPC_CONDA_ENV} python"
+        if HPC_CONDA_ENV else "python"
+    )
 
     try:
         client = _get_ssh_client()
@@ -235,10 +240,9 @@ def submit_hpc_job(
             f"{gpu_line}\n"
             f"#SBATCH --output={submit_dir}/stdout.txt\n"
             f"#SBATCH --error={submit_dir}/stderr.txt\n\n"
-            f"{module_lines}\n"
-            f"{conda_line}\n\n"
+            f"{module_lines}\n\n"
             f"cd {submit_dir}\n"
-            f"python user_script.py\n"
+            f"{python_cmd} user_script.py\n"
         )
 
         sftp = client.open_sftp()
