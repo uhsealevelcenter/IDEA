@@ -133,9 +133,12 @@ jobs:
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key \
               -p "${{ vars.VM_SSH_PORT || '22' }}" \
-              "${{ vars.VM_USER }}@${{ vars.VM_HOST }}" \
-              DEPLOY_REF="${DEPLOY_REF}" IMAGE_TAG="${IMAGE_TAG}" APP_DIR="${{ vars.APP_DIR }}" DEPLOY_CMD="${{ vars.DEPLOY_CMD }}" 'bash -s' <<'REMOTE'
+              "${{ vars.VM_USER }}@${{ vars.VM_HOST }}" 'bash -s' <<'REMOTE'
             set -euo pipefail
+            APP_DIR="${{ vars.APP_DIR }}"
+            DEPLOY_REF="${{ env.DEPLOY_REF }}"
+            IMAGE_TAG="${{ env.IMAGE_TAG }}"
+            DEPLOY_CMD="${{ vars.DEPLOY_CMD }}"
             cd "${APP_DIR}"
 
             # Per-environment deploy command (GitHub var DEPLOY_CMD). 
