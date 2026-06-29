@@ -25,12 +25,12 @@ services:
   db:
     restart: "no"
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432" # direct DB access for dev, but localhost-only on a public VM
   
   frontend:
       image: python:3.11-alpine
       ports:
-        - "8000:8000"  # Changed from expose to ports for direct access if needed
+        - "127.0.0.1:8000:8000"  # Changed from expose to ports for direct access if needed
       volumes:
         - ./frontend:/app/frontend:delegated  # Added delegated for better performance
       working_dir: /app/frontend
@@ -55,7 +55,7 @@ services:
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379" # localhost-only so Redis isn't public (containers reach it over the docker network)
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes

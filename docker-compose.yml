@@ -47,7 +47,7 @@ services:
     image: redis:alpine
     restart: unless-stopped
     ports:
-      - "6380:6379" # so that we can have SEA and IDEA on the same machine
+      - "127.0.0.1:6380:6379" # so that we can have SEA and IDEA on the same machine; localhost-only so Redis isn't public (containers reach it over the docker network)
     volumes:
       - idea_redis_data:/data
     command: redis-server --appendonly yes
