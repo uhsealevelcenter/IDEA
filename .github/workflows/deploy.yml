@@ -38,12 +38,23 @@ jobs:
               ;;
           esac
 
-  # Builds the Docker image and pushes it to ghcr.io. 
-  build:
+  # Reads the per-environment DEPLOY_ENABLED variable inside a step and re-exposes it as a job output.
+  gate:
     needs: select
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.environment }}
-    if: vars.DEPLOY_ENABLED == 'true'
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        run: echo "enabled=${{ vars.DEPLOY_ENABLED }}" >> "$GITHUB_OUTPUT"
+
+  # Builds the Docker image and pushes it to ghcr.io.
+  build:
+    needs: [select, gate]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.select.outputs.environment }}
+    if: needs.gate.outputs.enabled == 'true'
     permissions:
       contents: read
       packages: write  # required to push to ghcr.io
@@ -93,12 +104,12 @@ jobs:
           delete-only-untagged-versions: false
 
   deploy:
-    needs: [select, build]
+    needs: [select, gate, build]
     runs-on: ubuntu-latest
     # Binds job to the per-VM secrets GitHub Environment and applies any environment protection rules.
     environment: ${{ needs.select.outputs.environment }}
     # Only runs for environments that have DEPLOY_ENABLED=true (set in the GitHub Environment's vars).
-    if: vars.DEPLOY_ENABLED == 'true'
+    if: needs.gate.outputs.enabled == 'true'
     env:
       DEPLOY_REF: ${{ github.event.inputs.ref || github.ref_name }}
       IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
