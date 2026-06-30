@@ -81,7 +81,8 @@ jobs:
         with:
           images: ghcr.io/uhsealevelcenter/idea
           tags: |
-            type=sha,prefix=,format=short
+            # priority=1000 makes the immutable short-SHA the tag so deploys/rollbacks pin an exact commit
+            type=sha,prefix=,format=short,priority=1000
             type=ref,event=branch
 
       - name: Build and push
@@ -110,6 +111,9 @@ jobs:
     environment: ${{ needs.select.outputs.environment }}
     # Only runs for environments that have DEPLOY_ENABLED=true (set in the GitHub Environment's vars).
     if: needs.gate.outputs.enabled == 'true'
+    permissions:
+      contents: read
+      packages: read  # lets the run-scoped GITHUB_TOKEN pull the (private) image from ghcr.io
     env:
       DEPLOY_REF: ${{ github.event.inputs.ref || github.ref_name }}
       IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
@@ -156,8 +160,14 @@ jobs:
             echo "==> Deployed commit:"
             git --no-pager log -1 --oneline
 
+            echo "==> Logging in to ghcr.io (ephemeral, run-scoped token) to pull the private image"
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
             echo "==> Pulling image tag ${IMAGE_TAG}"
             IMAGE_TAG="${IMAGE_TAG}" docker compose pull web
+
+            # Remove the credential from the VM right away; the token also expires when the run ends.
+            docker logout ghcr.io
 
             echo "==> Running: ${DEPLOY_CMD}"
             IMAGE_TAG="${IMAGE_TAG}" bash -c "${DEPLOY_CMD}"
