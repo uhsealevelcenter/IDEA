@@ -1,0 +1,470 @@
+# Implementation Status
+
+## ✅ COMPLETED
+
+### 1. Database CRUD Layer
+**Location:** `/langgraph/db/conversation_crud.py`
+
+**Classes:**
+- `ConversationCRUD` - Clean API for conversation management
+  - `create_conversation()` - Creates conversation with metadata
+  - `get_conversation_by_session()` - Retrieves by user_id + session_id
+  - `update_conversation()` - Updates title, tokens, cost, favorite status
+  - `delete_conversation()` - Deletes with cascade to messages
+  - `list_user_conversations()` - Lists all conversations for a user
+
+- `MessageCRUD` - Clean API for message management
+  - `add_message()` - Adds single message
+  - `add_messages_batch()` - Batch add multiple messages
+  - `get_messages_by_conversation()` - Retrieves all messages
+
+**Benefits:**
+- ✅ Complete separation of database operations from business logic
+- ✅ Reusable across different parts of the application
+- ✅ Easy to test independently
+- ✅ Clean API surface
+
+### 2. Conversation Orchestrator
+**Location:** `/langgraph/multi-agent.py`
+
+**Class:** `ConversationOrchestrator`
+
+**Responsibilities:**
+- ✅ Manages conversation context and history
+- ✅ Decides what context to provide to terminal agent (smart context selection)
+- ✅ Handles database persistence for registered users
+- ✅ Handles Redis-only storage for guests (ephemeral)
+- ✅ Formats responses in Open Interpreter format for frontend
+- ✅ Delegates task execution to TerminalAgent
+- ✅ Tracks metadata (tokens, cost)
+
+**Key Methods:**
+- `__init__()` - Loads existing conversation from DB if available
+- `chat(message, stream=True)` - Main entry point, yields SSE chunks
+- `_build_agent_context()` - Intelligently selects relevant context for agent
+- `_ensure_conversation_exists()` - Auto-creates conversation on first message
+- `_save_messages_to_db()` - Persists messages (guests: no-op)
+- `cleanup()` - Cleans up terminal agent resources
+
+**Architecture Pattern:**
+```
+User Message
+    → Orchestrator adds to history
+    → Orchestrator loads/creates DB conversation (if registered user)
+    → Orchestrator saves user message to DB
+    → Orchestrator builds smart context for agent
+    → Orchestrator delegates to TerminalAgent
+    → TerminalAgent executes task
+    → Orchestrator captures streaming responses
+    → Orchestrator yields chunks in OI format (SSE)
+    → Orchestrator saves assistant messages to DB
+    → Orchestrator updates conversation metadata
+```
+
+### 3. Terminal Agent (Already Existed)
+**Location:** `/langgraph/agents/terminal_agent.py`
+
+**Class:** `TerminalAgent`
+
+**What it does:**
+- ✅ Executes tasks with persistent terminal
+- ✅ Streams LLM responses
+- ✅ Handles tool calls
+- ✅ Tracks token usage
+- ✅ **Focused ONLY on execution** - no conversation management
+
+**What it does NOT do:**
+- ❌ No database operations
+- ❌ No conversation history management
+- ❌ No format conversion
+- ❌ No user/guest distinction
+
+---
+
+## 🆕 Update (Jul 2026): `langgraph/utils/` — Tools, Skills, System Prompt Ported
+
+**Location:** `/langgraph/utils/`
+
+A self-contained port of the root `utils/` package (used by Open Interpreter) was added directly to the `langgraph` service, so it no longer depends on the root app's filesystem:
+
+```
+langgraph/utils/
+├── system_prompt.md          # single consolidated IDEA system prompt
+├── tools/                    # LangChain @tool-decorated data functions
+│   ├── datetime_tool.py      # get_datetime_tool
+│   ├── station_tool.py       # get_station_info_tool
+│   ├── climate_tool.py       # get_climate_index_tool (returns CSV text)
+│   ├── web_search_tool.py    # web_search_tool
+│   ├── knowledge_base_tool.py# query_knowledge_base_tool (PaperQA2)
+│   └── __init__.py           # exports DATA_TOOLS list
+├── data/
+│   └── station_list_appendix.py  # STATION_LIST_APPENDIX data
+├── pqa/
+│   ├── my_pqa_settings.py    # ported from utils/my_pqa_settings.py
+│   └── pqa_multi_tenant.py   # ported from utils/pqa_multi_tenant.py
+└── skills/                   # full copy of the 9 skill folders (SKILL.md)
+```
+
+**Key architecture difference from Open Interpreter:** OI pre-injects these as plain Python functions into a persistent REPL (`interpreter.computer.run("python", custom_tool)`), so LLM-generated code calls them directly and gets back live Python objects (e.g., a DataFrame). LangGraph's `TerminalAgent` instead uses LLM function-calling — tools are invoked by the LLM directly and must return text. So:
+- `get_climate_index_tool` returns CSV text (the agent saves it via `write_file_tool` before plotting/analyzing).
+- `get_station_info_tool` / `web_search_tool` / `query_knowledge_base_tool` return text/JSON strings.
+
+**Wired into `agents/terminal_agent.py`:**
+- System prompt is now loaded from `utils/system_prompt.md` instead of a hardcoded string.
+- `bind_tools()` includes `run_terminal_tool`, `write_file_tool`, and all `DATA_TOOLS`.
+- Generic tool dispatch (`TOOLS_BY_NAME`) added so the 5 new tools execute and stream results like the existing terminal/file tools.
+
+**Infra:**
+- `Dockerfile` now `COPY utils/ ./utils/`.
+- `requirements.txt` updated with `litellm`, `beautifulsoup4`, `nest-asyncio`, `paper-qa`, `paper-qa-pymupdf`, and previously-missing `pexpect`, `langchain-core`, `langchain-openai`, `numpy`.
+
+**Still NOT wired (see gaps below):** MCP tools, automatic user/session context injection into the system prompt, per-user active prompt (PromptManager), guest-vs-registered model selection, vision support, reasoning-model LLM config.
+
+---
+
+## 🔨 TODO
+
+### 1. Update `app.py` to use Orchestrator
+
+**Current Code (app.py):**
+```python
+from interpreter import OpenInterpreter
+
+def get_or_create_interpreter(session_key: str, token: str | None = None, db: Session | None = None) -> OpenInterpreter:
+    if session_key in interpreter_instances:
+        return interpreter_instances[session_key]
+    
+    interpreter = OpenInterpreter()
+    interpreter.system_message = system_prompt
+    interpreter.custom_instructions = custom_instructions
+    # ... more setup ...
+    
+    interpreter_instances[session_key] = interpreter
+    return interpreter
+```
+
+**New Code (app.py):**
+```python
+from langgraph.multi_agent import ConversationOrchestrator
+
+def get_or_create_interpreter(session_key: str, token: str | None = None, db: Session | None = None) -> ConversationOrchestrator:
+    if session_key in interpreter_instances:
+        return interpreter_instances[session_key]
+    
+    # Extract user info
+    user = get_current_user(token) if token else None
+    user_id = str(user.id) if user else None
+    is_guest = _is_guest_user(user.id) if user else True
+    
+    # Extract session_id from session_key (format: "user_id:session_id")
+    session_id = session_key.split(':')[1] if ':' in session_key else session_key
+    
+    # Create orchestrator
+    orchestrator = ConversationOrchestrator(
+        user_id=user_id,
+        session_id=session_id,
+        is_guest=is_guest,
+        db=db,
+        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+        temperature=0.2
+    )
+    
+    # Set system prompt and custom instructions
+    orchestrator.system_message = system_prompt
+    orchestrator.custom_instructions = custom_instructions
+    
+    interpreter_instances[session_key] = orchestrator
+    return orchestrator
+```
+
+**Changes Required:**
+1. Import `ConversationOrchestrator` instead of `OpenInterpreter`
+2. Extract user_id, session_id, is_guest from token/session_key
+3. Pass db connection to orchestrator
+4. Everything else stays the same! (system_message, custom_instructions, etc.)
+
+### 2. Update Database Schema (Optional New Fields)
+
+**Add to `models.py` Conversation model:**
+```python
+class Conversation(ConversationBase, table=True):
+    # ... existing fields ...
+    
+    # New fields (optional, nice to have):
+    session_id: str | None = Field(default=None, max_length=255, index=True)
+    model_name: str | None = Field(default=None, max_length=100)
+    total_tokens: int | None = Field(default=None)
+    total_cost: float | None = Field(default=None)
+    agent_type: str | None = Field(default=None, max_length=50)  # "terminal_agent"
+```
+
+**Create Alembic migration:**
+```bash
+cd /Users/rodericktabalba/Documents/Github/IDEA
+alembic revision --autogenerate -m "Add terminal agent metadata to conversations"
+alembic upgrade head
+```
+
+### 3. Testing Checklist
+
+**Basic Functionality:**
+- [ ] Guest user can chat (Redis only, no DB)
+- [ ] Registered user can chat (saves to DB)
+- [ ] Conversation loads on page refresh (registered users)
+- [ ] Messages persist across sessions
+- [ ] SSE streaming works correctly
+- [ ] Frontend displays messages correctly
+
+**Edge Cases:**
+- [ ] First message creates conversation
+- [ ] Title auto-generates from first message
+- [ ] Multiple tabs (different session_ids) create separate conversations
+- [ ] Interruption works
+- [ ] Error handling works
+- [ ] Token/cost tracking works
+
+**Database:**
+- [ ] Conversations created with correct metadata
+- [ ] Messages saved with correct roles/types
+- [ ] Timestamps update correctly
+- [ ] Cascade delete works (delete conversation deletes messages)
+
+---
+
+## Migration Path
+
+### Step 1: Database Migration (if adding new fields)
+```bash
+alembic revision --autogenerate -m "Add terminal agent metadata"
+alembic upgrade head
+```
+
+### Step 2: Update app.py
+- Change import from `OpenInterpreter` to `ConversationOrchestrator`
+- Update `get_or_create_interpreter()` function
+- Test locally
+
+### Step 3: Test
+- Test guest user flow
+- Test registered user flow
+- Test conversation persistence
+- Test SSE streaming
+
+### Step 4: Deploy
+- Deploy to staging
+- Monitor logs and database
+- Validate everything works
+- Deploy to production
+
+### Step 5: Cleanup
+- Remove `open-interpreter` from requirements.txt
+- Remove unused code
+- Celebrate! 🎉
+
+---
+
+## Key Architectural Decisions
+
+### 1. ✅ Database Abstraction Layer
+**Why:** Clean separation of concerns, reusable, testable, maintainable.
+
+**Instead of:**
+```python
+# Scattered database calls everywhere
+conversation = Conversation(...)
+self.db.add(conversation)
+self.db.commit()
+self.db.refresh(conversation)
+```
+
+**We have:**
+```python
+# Clean API
+conversation = conversation_crud.create_conversation(
+    user_id=user_id,
+    title=title,
+    session_id=session_id
+)
+```
+
+### 2. ✅ Orchestrator Pattern
+**Why:** Single responsibility principle - each component does one thing well.
+
+**Separation:**
+- **Orchestrator:** Context management, persistence coordination, formatting
+- **TerminalAgent:** Task execution only
+- **CRUD Layer:** Database operations only
+
+### 3. ✅ Open Interpreter Format for Frontend
+**Why:** Zero frontend changes. The frontend already expects this format.
+
+**We maintain the format but NOT the code:**
+- ✅ Format: `{role, type, content, format}`
+- ❌ Library: No Open Interpreter dependency
+- ✅ All logic is our own code
+
+### 4. ✅ Smart Context Selection
+**Why:** Don't overwhelm the agent with full conversation history.
+
+**Current:** Last 10 messages (configurable)
+**Future:** Semantic search, relevance filtering, token-aware truncation
+
+---
+
+## ❌ MISSING: Open Interpreter Capabilities Not Yet Ported
+
+### Critical Features Required for Feature Parity
+
+#### 1. **Custom Data Access Functions** (5 functions) — ✅ DONE
+**Location in OI:** `utils/custom_functions.py`
+**New location:** `langgraph/utils/tools/`
+- ✅ `query_knowledge_base_tool(query, user_id, session_id)` - PaperQA2 RAG integration (`knowledge_base_tool.py`)
+- ✅ `get_climate_index_tool(name)` - Climate data (ONI, RONI, PDO, PNA, etc.) (`climate_tool.py`)
+- ✅ `get_station_info_tool(query)` - UHSLC tide gauge station lookup (`station_tool.py`)
+- ✅ `web_search_tool(query)` - LiteLLM web search with citations (`web_search_tool.py`)
+- ✅ `get_datetime_tool()` - UTC datetime utilities (`datetime_tool.py`)
+
+**Implemented as:** LangChain `@tool`-decorated functions bound to `TerminalAgent`'s LLM (function-calling), not pre-injected into a Python REPL — see the langgraph/utils update above for the architecture rationale. All 5 are exported via `DATA_TOOLS` in `langgraph/utils/tools/__init__.py` and wired into `TerminalAgent.bind_tools()`.
+
+#### 2. **MCP (Model Context Protocol) Tools**
+**Location in OI:** `app.py:186-210`, `mcp_tools.py`
+- ❌ `call_mcp_tool(tool_id, **kwargs)` function
+- ❌ `list_mcp_tools()` function
+- ❌ Dynamic tool discovery from database via `gather_available_mcp_tools(db)`
+- ❌ MCP tool descriptions injected into custom instructions
+- ❌ Pre-planning execution with `plan_and_run_mcp_tools()`
+
+**Action Required:** Integrate with existing MCP manager, expose tools in agent environment
+
+#### 3. **Skills System** (9 specialized skills) — ✅ DONE
+**Location in OI:** `skills/*/SKILL.md`, `utils/system_prompt.py:122-172`
+**New location:** `langgraph/utils/skills/`
+- ✅ Skills copied into `langgraph/utils/skills/<skill-name>/SKILL.md`
+- ✅ Skills: `frontend-design`, `review-code`, `latex`, `poster-design`, `co-ops-api`, `co-ops-tadc`, `cora-aws-beta`, `aquaview-ocean-data`, `skill-creator`
+- ✅ Skill activation instructions in `langgraph/utils/system_prompt.md` (`cat langgraph/utils/skills/<skill-name>/SKILL.md`)
+
+#### 4. **Comprehensive System Prompts** — 🟡 PARTIAL
+**Location in OI:** `utils/system_prompt.py` (195 lines), `utils/custom_instructions_v04_2026.py` (183 lines)
+**New location:** `langgraph/utils/system_prompt.md` (single consolidated file)
+- ✅ IDEA role definition for geoscientists
+- ✅ Execution/workflow policies (adapted for `run_terminal_tool`/`write_file_tool` instead of OI's `execute(...)`)
+- ✅ Security policies (guarddog, destructive ops prevention)
+- ✅ Math formatting (MathJax), mapping (folium), data output guidelines
+- ✅ Data tool usage guidance (the 5 ported functions)
+- ❌ Vision support instructions (image viewing, OCR, `plt.show()`) — not yet added, no vision wiring on the LLM side either (see #7)
+- ❌ Codex CLI integration instructions — not applicable to `TerminalAgent`'s architecture yet
+- ❌ User-specific active prompts from `PromptManager` — not wired (see #5)
+
+**Action Required:** Add vision instructions once vision support is wired (#7); decide whether/how to surface per-user active prompts (#5) in the orchestrator.
+
+#### 5. **User Context Injection**
+**Location in OI:** `app.py:2331`, `custom_instructions_v04_2026.py:33-37`
+- ❌ `user_id` in custom instructions
+- ❌ `session_id` in custom instructions
+- ❌ `user_first_name` personalization
+- ❌ Upload directory paths: `/app/static/{user_id}/{session_id}/uploads/`
+- ❌ Output directory paths: `/app/static/{user_id}/{session_id}/`
+- ❌ Host URL for file link generation
+
+**Action Required:** Pass user context to orchestrator and inject into custom instructions
+
+#### 6. **Knowledge Base (PQA) Integration** — 🟡 PARTIAL
+**Location in OI:** `utils/pqa_multi_tenant.py`, `app.py:2331`
+**New location:** `langgraph/utils/pqa/`, `langgraph/utils/tools/knowledge_base_tool.py`
+- ✅ `pqa_multi_tenant.py` + `my_pqa_settings.py` ported into `langgraph/utils/pqa/`
+- ✅ Multi-tenant paper directories: `/app/data/papers/{user_id}/` (same `PQA_HOME`/`PAPER_DIRECTORY` env vars as OI)
+- ✅ Index caching per user (in-memory + on-disk pickle, same as OI)
+- ✅ Media extraction to `static/{user_id}/{session_id}/pqa_media/` via `query_knowledge_base_tool`
+- ❌ `ensure_user_pqa_settings(user_id)` is not explicitly called anywhere in the orchestrator/service startup path (it currently only runs implicitly the first time the tool is invoked, via `get_user_settings`)
+- ❌ `user_id`/`session_id` must currently be supplied by the LLM as tool arguments — not auto-injected (see #5)
+
+**Action Required:** Verify `PQA_HOME`/`PAPER_DIRECTORY` env vars are set/shared with the langgraph service deployment; auto-inject `user_id`/`session_id` so the LLM doesn't have to guess them (see #5).
+
+#### 7. **Vision Support**
+**Location in OI:** `app.py:1765`
+- ❌ `interpreter.llm.supports_vision = True`
+- ❌ Image viewing capabilities
+- ❌ Plot display via `plt.show()`
+- ❌ OCR instructions (no separate extraction step)
+
+**Action Required:** Enable vision in LLM config, add vision instructions to prompt
+
+#### 8. **Pre-loaded Python Environment**
+**Location in OI:** `app.py:1807`, `utils/custom_functions.py:1-16`
+- ❌ All custom functions pre-injected via `custom_tool` string
+- ❌ Functions available without import
+- ❌ Standard libraries (pandas, numpy, matplotlib, requests, etc.)
+- ❌ MCP tools module imported
+
+**Action Required:** Create initialization script for Python environment in terminal agent
+
+#### 9. **Security & Guest Handling**
+**Location in OI:** `app.py:1756-1762`, `utils/system_prompt.py:63-70`
+- ❌ Guest vs. registered user detection
+- ❌ Different models for guests (`IDEA_GUEST_MODEL`)
+- ❌ Model disclosure for guests
+- ❌ Enhanced scrutiny for guest users
+- ❌ Package scanning with `guarddog` before pip/npm install
+
+**Action Required:** Add security policies to system prompt, guest detection in orchestrator
+
+#### 10. **Advanced Conversation Features**
+**Location in OI:** `app.py:2383-2443`
+- ❌ Token estimation & conversation compaction
+- ❌ Tool state repair mechanisms
+- ❌ Output validation (`_ensure_all_tool_calls_have_outputs`)
+- ❌ Interrupt handling with cleanup
+- ❌ Session locking for concurrency
+
+**Action Required:** Port utility functions to orchestrator
+
+#### 11. **File & URL Management**
+**Location in OI:** `custom_instructions.py:116-119`
+- ❌ Static file serving configuration
+- ❌ URL generation for downloadable files: `{host}/static/{user_id}/{session_id}/...`
+- ❌ Clickable Markdown links in responses
+- ❌ Output directory auto-creation
+
+**Action Required:** Add file path utilities and URL generation to custom instructions
+
+#### 12. **Reasoning Model Configuration**
+**Location in OI:** `app.py:1768-1794`
+- ❌ GPT-5.5 with reasoning effort settings (`medium`)
+- ❌ Context window: 256K+ tokens
+- ❌ Temperature: None (provider default for reasoning models)
+- ❌ Max input/output token limits
+
+**Action Required:** Update terminal agent to use reasoning model configuration
+
+---
+
+## Summary
+
+**Completed:**
+- ✅ Database CRUD layer with clean API
+- ✅ Conversation orchestrator with smart context management
+- ✅ Guest vs registered user handling
+- ✅ Database persistence for registered users
+- ✅ SSE streaming format compatibility
+- ✅ Custom data access functions ported as LangChain tools (`langgraph/utils/tools/`)
+- ✅ Skills system ported (`langgraph/utils/skills/`)
+- ✅ Consolidated system prompt (`langgraph/utils/system_prompt.md`)
+- ✅ PaperQA2 multi-tenant knowledge base module ported (`langgraph/utils/pqa/`)
+
+**Remaining for Basic Functionality:**
+- 🔨 Update app.py (5-10 lines of code)
+- 🔨 Optional database migration (if adding new fields)
+- 🔨 Testing
+
+**Remaining for Full Feature Parity with Open Interpreter:**
+- 🟡 4 of 12 capability gaps closed or partially closed (Custom functions ✅, Skills ✅, System prompts 🟡, PQA integration 🟡)
+- ❌ 8 remaining gaps: MCP tools, user context auto-injection, vision support, pre-loaded Python env (superseded by tool-calling architecture), guest/security model selection, advanced conversation features, file/URL management, reasoning model config
+- ❌ Most critical remaining: MCP tools, user context auto-injection, reasoning model config
+
+**Total Implementation Time:** 
+- Basic replacement: ~30 minutes
+- Full feature parity: ~1-2 days remaining
+
+**Risk Level:** 
+- Basic replacement: Very low
+- Full feature parity: Medium (extensive integration, thorough testing required)

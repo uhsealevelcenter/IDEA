@@ -53,6 +53,24 @@ services:
       - idea_redis_data:/data
     command: redis-server --appendonly yes
 
+  langgraph:
+    build:
+      context: ./langgraph
+      dockerfile: ./Dockerfile
+    image: idea-langgraph
+    container_name: idea_langgraph
+    ports:
+      - "8010:8010"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - redis
+
 volumes:
   idea_persistent_data:
   idea_redis_data:

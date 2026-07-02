@@ -18,19 +18,19 @@ services:
       - LOCAL_DEV=1
       - PQA_HOME=/app/data
       - PROMPT_DIRECTORY=/app/data/prompts
-    command: uvicorn app:app --reload --reload-exclude mcp_tools.py --host 0.0.0.0 --port 8001
+    command: uvicorn app:app --reload --reload-exclude mcp_tools.py --reload-exclude 'langgraph/*' --host 0.0.0.0 --port 8001
     depends_on:
       - redis
   
   db:
     restart: "no"
     ports:
-      - "5432:5432"
+      - "5434:5432"
   
   frontend:
       image: python:3.11-alpine
       ports:
-        - "8000:8000"  # Changed from expose to ports for direct access if needed
+        - "8003:8000"  # Changed from expose to ports for direct access if needed
       volumes:
         - ./frontend:/app/frontend:delegated  # Added delegated for better performance
       working_dir: /app/frontend
@@ -55,10 +55,19 @@ services:
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
+
+  langgraph:
+    volumes:
+      - ./langgraph:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    command: uvicorn langgraph_service:app --host 0.0.0.0 --port 8010
 
 volumes:
   redis_data:

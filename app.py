@@ -14,6 +14,7 @@ import secrets
 import uuid
 from uuid import UUID
 from urllib.parse import quote
+import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -823,6 +824,10 @@ CHAT_RUN_PREFIX = "chat_run:"
 CHAT_RUN_EVENTS_PREFIX = "chat_run_events:"
 CHAT_RUN_SEQ_PREFIX = "chat_run_seq:"
 
+# Global dictionary to store LangGraph orchestrator instances
+langgraph_orchestrators: Dict[str, Any] = {}
+langgraph_locks: Dict[str, threading.Lock] = {}
+
 
 def get_interpreter_lock(session_key: str) -> threading.Lock:
     """Serialize stream mutations for a user's interpreter session."""
@@ -831,6 +836,54 @@ def get_interpreter_lock(session_key: str) -> threading.Lock:
         lock = threading.Lock()
         interpreter_locks[session_key] = lock
     return lock
+
+
+def get_langgraph_lock(session_key: str) -> threading.Lock:
+    """Serialize stream mutations for a user's LangGraph orchestrator session."""
+    lock = langgraph_locks.get(session_key)
+    if lock is None:
+        lock = threading.Lock()
+        langgraph_locks[session_key] = lock
+    return lock
+
+
+def get_or_create_langgraph_orchestrator(session_key: str, user_id: str, is_guest: bool, db: Session):
+    """Get existing orchestrator or create new one."""
+    try:
+        # Import here to make it optional
+        import sys
+        from pathlib import Path
+        
+        # Add langgraph directory to path
+        langgraph_path = Path(__file__).parent / "langgraph"
+        if str(langgraph_path) not in sys.path:
+            sys.path.insert(0, str(langgraph_path))
+        
+        from multi_agent import ConversationOrchestrator
+        
+        if session_key in langgraph_orchestrators:
+            logger.info(f"Retrieved existing LangGraph orchestrator for session {session_key}")
+            return langgraph_orchestrators[session_key]
+        
+        # Create new orchestrator
+        model = IDEA_GUEST_MODEL if is_guest else IDEA_DEFAULT_MODEL
+        orchestrator = ConversationOrchestrator(
+            user_id=user_id,
+            session_id=session_key,
+            is_guest=is_guest,
+            db=db,
+            model=model,
+            temperature=0.2,
+            max_iterations=20
+        )
+        
+        langgraph_orchestrators[session_key] = orchestrator
+        logger.info(f"Created new LangGraph orchestrator for session {session_key}")
+        return orchestrator
+        
+    except ImportError as e:
+        logger.error(f"LangGraph dependencies not available: {e}")
+        raise HTTPException(status_code=503, detail="LangGraph service not available")
 
 
 def repair_interrupted_tool_state(
@@ -2541,6 +2594,184 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         if lock_acquired and session_lock:
             session_lock.release()
         logger.error(f"Unexpected error in chat_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/chat-runs-langgraph")
+@limiter.limit(CHAT_RATE_LIMIT)
+async def chat_runs_langgraph_endpoint(request: Request, token: str = Depends(get_auth_token)):
+    """
+    LangGraph chat-runs endpoint. Proxies to LangGraph microservice /chat-runs.
+    """
+    try:
+        # Validate session ID
+        session_id = request.headers.get("x-session-id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="x-session-id header is required")
+
+        # Parse request body
+        body = await request.json()
+        messages = body.get("messages", [])
+        if not messages:
+            raise HTTPException(status_code=400, detail="No messages provided")
+
+        # Authenticate user
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        is_guest = _is_guest_user(user.id)
+        
+        logger.info(f"[LangGraph] Starting chat run for user {user.id}, session {session_id}")
+
+        # Prepare request to LangGraph microservice
+        langgraph_url = os.getenv("LANGGRAPH_SERVICE_URL", "http://langgraph:8010")
+        payload = {
+            "session_id": session_id,
+            "user_id": str(user.id),
+            "is_guest": is_guest,
+            "messages": messages,
+            "model": IDEA_GUEST_MODEL if is_guest else IDEA_DEFAULT_MODEL,
+        }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(f"{langgraph_url}/chat-runs", json=payload)
+            if response.status_code != 200:
+                logger.error(f"[LangGraph] Service error: {response.text}")
+                raise HTTPException(status_code=500, detail="LangGraph service error")
+            
+            return response.json()
+
+    except httpx.ConnectError:
+        logger.error("[LangGraph] Cannot connect to LangGraph service")
+        raise HTTPException(status_code=503, detail="LangGraph service unavailable")
+    except Exception as e:
+        logger.error(f"[LangGraph] Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/chat-runs-langgraph/{run_id}")
+async def get_chat_run_langgraph_endpoint(run_id: str, request: Request, token: str = Depends(get_auth_token)):
+    """Get LangGraph chat run status"""
+    session_id = request.headers.get("x-session-id")
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    langgraph_url = os.getenv("LANGGRAPH_SERVICE_URL", "http://langgraph:8010")
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{langgraph_url}/chat-runs/{run_id}")
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail="Chat run not found")
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail="LangGraph service error")
+            return response.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="LangGraph service unavailable")
+
+
+@app.get("/chat-runs-langgraph/{run_id}/events")
+async def get_chat_run_events_langgraph_endpoint(
+    run_id: str,
+    request: Request,
+    after: int = 0,
+    token: str = Depends(get_auth_token),
+):
+    """Get LangGraph chat run events"""
+    session_id = request.headers.get("x-session-id")
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    langgraph_url = os.getenv("LANGGRAPH_SERVICE_URL", "http://langgraph:8010")
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{langgraph_url}/chat-runs/{run_id}/events?after={after}")
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail="Chat run not found")
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail="LangGraph service error")
+            return response.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="LangGraph service unavailable")
+
+
+@app.post("/chat_langgraph")
+@limiter.limit(CHAT_RATE_LIMIT)
+async def chat_langgraph_endpoint(request: Request, background_tasks: BackgroundTasks, token: str = Depends(get_auth_token), db: Session = Depends(get_db)):
+    """
+    LangGraph-based streaming chat endpoint. Proxies requests to the LangGraph microservice.
+    """
+    try:
+        # Validate session ID
+        session_id = request.headers.get("x-session-id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="x-session-id header is required")
+
+        # Parse request body
+        body = await request.json()
+        messages = body.get("messages", [])
+        if not messages:
+            raise HTTPException(status_code=400, detail="No messages provided")
+
+        # Authenticate user
+        user = get_current_user(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        session_key = make_session_key(user.id, session_id)
+        is_guest = _is_guest_user(user.id)
+
+        logger.info(f"[LangGraph] Proxying request for session {session_key}")
+
+        # Update last active timestamp
+        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+
+        # Extract last user message
+        last_message = messages[-1]
+        if isinstance(last_message, dict):
+            last_message = last_message.get("content", "")
+
+        # Prepare request to LangGraph microservice
+        langgraph_url = os.getenv("LANGGRAPH_SERVICE_URL", "http://langgraph:8010")
+        payload = {
+            "session_key": session_key,
+            "user_id": str(user.id),
+            "is_guest": is_guest,
+            "message": last_message,
+            "model": IDEA_GUEST_MODEL if is_guest else IDEA_DEFAULT_MODEL,
+            "restore_history": True
+        }
+
+        async def event_stream():
+            try:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    async with client.stream("POST", f"{langgraph_url}/chat", json=payload) as response:
+                        if response.status_code != 200:
+                            error_text = await response.aread()
+                            logger.error(f"[LangGraph] Service error: {error_text}")
+                            yield f"data: {json.dumps({'error': 'LangGraph service error'})}\n\n"
+                            return
+                        
+                        # Stream raw text chunks to preserve SSE format
+                        async for chunk in response.aiter_text():
+                            if chunk:
+                                yield chunk
+                                
+            except httpx.ConnectError:
+                logger.error("[LangGraph] Cannot connect to LangGraph service")
+                yield f"data: {json.dumps({'error': 'LangGraph service unavailable'})}\n\n"
+            except Exception as e:
+                logger.error(f"[LangGraph] Error in proxy stream: {str(e)}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    except Exception as e:
+        logger.error(f"[LangGraph] Unexpected error in chat_langgraph_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

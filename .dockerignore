@@ -7,6 +7,7 @@ __pycache__/
 *.pyd
 .Python
 env/
+ENV/
 pip-log.txt
 pip-delete-this-directory.txt
 .tox/
@@ -18,11 +19,31 @@ coverage.xml
 *.cover
 *.log
 .git/
+.gitignore
 .mypy_cache/
 .pytest_cache/
 .hypothesis/
 .DS_Store
 .codex/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Data files
+*.csv
+*.json
+data/
+
+# OS
+Thumbs.db
 
 
 
