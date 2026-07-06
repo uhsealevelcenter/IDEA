@@ -6,8 +6,8 @@ A general-purpose AI agent with access to a persistent terminal session.
 import time
 import uuid
 import base64
-import os
-from typing import Dict, Any, Optional, Callable, Set
+import hashlib
+from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -15,12 +15,12 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from tools.persistent_terminal import run_terminal_tool, write_file_tool, _persistent_terminals
+from tools.persistent_terminal import run_terminal_tool, write_file_tool, show_image_tool, _persistent_terminals
 from utils.tools import DATA_TOOLS
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
 
-ALL_TOOLS = [run_terminal_tool, write_file_tool, *DATA_TOOLS]
+ALL_TOOLS = [run_terminal_tool, write_file_tool, show_image_tool, *DATA_TOOLS]
 TOOLS_BY_NAME = {t.name: t for t in ALL_TOOLS}
 
 
@@ -34,7 +34,7 @@ class TerminalAgent:
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
-        self.seen_images: Set[str] = set()  # Track images we've already shown
+        self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
         # Initialize LLM with tools
         # Reasoning models (e.g., gpt-5.5) only support the provider default
@@ -43,12 +43,6 @@ class TerminalAgent:
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
         self.llm = ChatOpenAI(**llm_kwargs).bind_tools(ALL_TOOLS)
-    
-    @staticmethod
-    def _is_image_file(filepath: str) -> bool:
-        """Check if a file is an image based on extension."""
-        image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'}
-        return Path(filepath).suffix.lower() in image_extensions
     
     @staticmethod
     def _encode_image_to_base64(filepath: str) -> tuple[str, str]:
@@ -65,27 +59,6 @@ class TerminalAgent:
         ext = Path(filepath).suffix.lower().lstrip('.')
         return b64_content, ext
     
-    def _detect_new_images(self, working_dir: str = ".") -> list[str]:
-        """
-        Scan working directory for new image files that haven't been shown yet.
-        
-        Returns:
-            List of new image file paths
-        """
-        new_images = []
-        try:
-            for item in os.listdir(working_dir):
-                filepath = os.path.join(working_dir, item)
-                if os.path.isfile(filepath) and self._is_image_file(filepath):
-                    abs_path = os.path.abspath(filepath)
-                    if abs_path not in self.seen_images:
-                        new_images.append(filepath)
-                        self.seen_images.add(abs_path)
-        except Exception as e:
-            print(f"Warning: Failed to scan for images: {e}")
-        
-        return new_images
-    
     def reset_terminal(self):
         """Reset the persistent terminal session."""
         session_id = 'solver_session'
@@ -93,8 +66,6 @@ class TerminalAgent:
             _persistent_terminals[session_id].close()
             del _persistent_terminals[session_id]
             print("✓ Terminal session reset")
-        # Clear seen images for new conversation
-        self.seen_images.clear()
     
     def cleanup(self):
         """Clean up resources (close persistent terminal)."""
@@ -114,6 +85,7 @@ class TerminalAgent:
         
         # Reset terminal at the start of each task for clean state
         self.reset_terminal()
+        self._shown_image_hashes.clear()
         
         # Load system prompt from the consolidated markdown file
         system_prompt = SYSTEM_PROMPT_PATH.read_text()
@@ -315,6 +287,51 @@ class TerminalAgent:
                                 'end': True
                             })
                         
+                    elif tool_name == 'show_image_tool':
+                        image_path = tool_call['args']['filepath']
+                        print(f"\n🖼️  LLM requested to show image: {image_path}")
+
+                        result = show_image_tool.invoke(tool_call['args'])
+
+                        if result.startswith("✓") and stream_callback:
+                            try:
+                                b64_content, img_format = self._encode_image_to_base64(image_path)
+                                content_hash = hashlib.sha256(b64_content.encode('utf-8')).hexdigest()
+
+                                if content_hash in self._shown_image_hashes:
+                                    result = f"✓ Image already displayed to the user (identical content): {image_path}. Do not call show_image_tool again for this image."
+                                    print(f"⏭️  Skipping duplicate image: {image_path}")
+                                else:
+                                    self._shown_image_hashes.add(content_hash)
+                                    # Split into two chunks to avoid content duplication bug in frontend
+                                    stream_callback({
+                                        'role': 'assistant',
+                                        'type': 'image',
+                                        'format': f'base64.{img_format}',
+                                        'content': '',
+                                        'start': True
+                                    })
+                                    stream_callback({
+                                        'role': 'assistant',
+                                        'type': 'image',
+                                        'format': f'base64.{img_format}',
+                                        'content': b64_content,
+                                        'end': True
+                                    })
+                                    print(f"✓ Image displayed: {image_path}")
+                            except Exception as e:
+                                result = f"✗ Failed to display image {image_path}: {e}"
+                                print(result)
+                        elif stream_callback:
+                            stream_callback({
+                                'role': 'computer',
+                                'type': 'console',
+                                'format': 'output',
+                                'content': result,
+                                'start': True,
+                                'end': True
+                            })
+
                     elif tool_name in TOOLS_BY_NAME:
                         # Generic dispatch for data tools (datetime, station, climate, web search, knowledge base)
                         print(f"\n📝 Args: {tool_call['args']}")
@@ -364,37 +381,6 @@ class TerminalAgent:
                         content=result,
                         tool_call_id=tool_call_id
                     ))
-                    
-                    # Check for newly created images and display them
-                    new_images = self._detect_new_images()
-                    for image_path in new_images:
-                        try:
-                            print(f"\n🖼️  Detected new image: {image_path}")
-                            b64_content, img_format = self._encode_image_to_base64(image_path)
-                            
-                            # Yield image chunk for streaming display
-                            # Split into two chunks to avoid content duplication bug in frontend
-                            if stream_callback:
-                                # First chunk with start flag (empty content)
-                                stream_callback({
-                                    'role': 'assistant',
-                                    'type': 'image',
-                                    'format': f'base64.{img_format}',
-                                    'content': '',
-                                    'start': True
-                                })
-                                # Second chunk with end flag (actual base64 data)
-                                stream_callback({
-                                    'role': 'assistant',
-                                    'type': 'image',
-                                    'format': f'base64.{img_format}',
-                                    'content': b64_content,
-                                    'end': True
-                                })
-                            
-                            print(f"✓ Image displayed: {image_path}")
-                        except Exception as e:
-                            print(f"⚠️  Failed to display image {image_path}: {e}")
             else:
                 # LLM responded without calling tools - task is complete
                 print(f"\n💬 LLM Response (no tool calls):")

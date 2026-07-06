@@ -8,6 +8,8 @@ import os
 import sys
 import uuid
 import logging
+import queue
+import threading
 from typing import Dict, Any, Optional, Callable, Generator
 from datetime import datetime
 
@@ -137,19 +139,41 @@ class ConversationOrchestrator:
                 max_iterations=self.max_iterations
             )
         
-        # Stream agent execution
+        # Stream agent execution in real time.
+        # self._agent.run() is a synchronous, blocking call that invokes
+        # stream_callback() as it goes. To actually stream chunks out of this
+        # generator as they happen (instead of buffering everything and
+        # yielding it all at once after run() returns), run() executes in a
+        # background thread and pushes chunks onto a queue that this
+        # generator drains in real time.
+        chunk_queue: "queue.Queue" = queue.Queue()
         assistant_messages = []
-        chunk_index = [0]  # Use list to allow modification in nested function
+        # Tracks whether we're in the middle of a contiguous burst of assistant
+        # text. This must be reset (to False) every time a non-text chunk
+        # (tool call, console output, image) is emitted, so that the *next*
+        # text burst starts a brand-new message bubble on the frontend
+        # instead of appending to the very first text bubble of the turn.
+        # The frontend (assistant.js: processChunk) only creates a new,
+        # chronologically-positioned message element when chunk.start=True;
+        # otherwise it appends to the last active message of that role/type,
+        # which is what caused all assistant text to visually collapse to
+        # the top of the turn regardless of how many tool calls happened in
+        # between.
+        text_burst_active = [False]
+        run_exception: list = []
+        _SENTINEL = object()
         
         def capture_stream(content):
-            """Capture streaming content and yield as SSE chunks. Accepts str or dict."""
-            # Handle dict chunks (e.g., images) directly
+            """Capture streaming content and push it to the queue immediately. Accepts str or dict."""
+            # Handle dict chunks (e.g., images, tool execution) directly
             if isinstance(content, dict):
+                text_burst_active[0] = False
                 assistant_messages.append(content)
+                chunk_queue.put(content)
                 return
             
             # Handle string content (normal text streaming)
-            is_first = chunk_index[0] == 0
+            is_first = not text_burst_active[0]
             chunk = {
                 'role': 'assistant',
                 'type': 'message',
@@ -157,26 +181,50 @@ class ConversationOrchestrator:
             }
             if is_first:
                 chunk['start'] = True
+                text_burst_active[0] = True
             assistant_messages.append(chunk)
-            chunk_index[0] += 1
+            chunk_queue.put(chunk)
+        
+        def _run_agent():
+            try:
+                self._agent.run(
+                    prompt=agent_context,
+                    stream_callback=capture_stream if stream else None
+                )
+            except Exception as e:
+                run_exception.append(e)
+            finally:
+                chunk_queue.put(_SENTINEL)
         
         try:
-            # Run agent with streaming
-            result = self._agent.run(
-                prompt=agent_context,
-                stream_callback=capture_stream if stream else None
-            )
+            agent_thread = threading.Thread(target=_run_agent, daemon=True)
+            agent_thread.start()
             
-            # Mark last message chunk with end flag (images already have start/end)
-            if assistant_messages:
-                # Find the last message chunk (not image)
-                for i in range(len(assistant_messages) - 1, -1, -1):
-                    if assistant_messages[i].get('type') == 'message':
-                        assistant_messages[i]['end'] = True
-                        break
+            saw_message_chunk = False
+            while True:
+                item = chunk_queue.get()
+                if item is _SENTINEL:
+                    break
+                if item.get('type') == 'message':
+                    saw_message_chunk = True
+                yield item
             
-            for chunk in assistant_messages:
-                yield chunk
+            agent_thread.join()
+            
+            if run_exception:
+                raise run_exception[0]
+            
+            # Emit a synthetic empty "end" marker chunk rather than mutating
+            # an already-yielded/already-consumed chunk (chunks are streamed
+            # to the caller in real time now, so we can't retroactively flag
+            # the last one as 'end' after the fact).
+            if saw_message_chunk:
+                yield {
+                    'role': 'assistant',
+                    'type': 'message',
+                    'content': '',
+                    'end': True
+                }
             
             # Consolidate into ONE history entry for the final text answer,
             # instead of one entry per streaming chunk (streaming can emit

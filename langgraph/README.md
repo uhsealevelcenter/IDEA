@@ -31,14 +31,14 @@ A production-ready AI agent microservice built on LangGraph and LangChain, provi
 - **Command Output**: Streamed to console panels (`type: 'console', format: 'output'`)
 - **File Operations**: File writes displayed with language-specific syntax highlighting
 - **Status Updates**: Real-time tool execution feedback
-- **Images**: Automatic detection, base64 encoding, and inline display
+- **Images**: Displayed explicitly via `show_image_tool`, base64 encoding, and inline display
 
-### **Automatic Image Display**
-- Detects `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg` files
-- Automatically base64-encodes after creation
+### **Explicit Image Display**
+- The LLM calls `show_image_tool(filepath)` whenever it wants to show an image
+- Supports `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg` files
+- Base64-encodes the file on demand
 - Streams as `type: 'image', format: 'base64.{ext}'` chunks
 - Displays inline in chat (Open Interpreter style)
-- Prevents duplicates with seen-image tracking
 
 ### **Async Job Queue**
 - Non-blocking execution via `/chat-runs` endpoints
@@ -218,7 +218,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **5. Images** (Auto-detected)
+#### **5. Images** (via `show_image_tool`)
 ```json
 {
   "role": "assistant",
@@ -348,7 +348,7 @@ Agent:
 1. Queries NOAA API for tide gauge data
 2. Creates Python script with matplotlib
 3. Runs script to generate PNG
-4. Auto-detects and displays image inline
+4. Calls `show_image_tool(filepath)` to display the image inline
 ```
 
 ### **Code Execution**
@@ -416,13 +416,12 @@ Agent:
 # TTL: 3600 seconds
 ```
 
-### **Image Detection**
+### **Image Display**
 
-After each tool execution, the agent:
-1. Scans working directory for image files
-2. Checks against `seen_images` set (prevents duplicates)
-3. Base64-encodes new images
-4. Streams as two chunks:
+When the LLM calls `show_image_tool(filepath)`, the agent:
+1. Validates the file exists and has a supported image extension
+2. Base64-encodes the image
+3. Streams as two chunks:
    - Chunk 1: Empty content with `start: true`
    - Chunk 2: Base64 data with `end: true`
 5. Frontend renders on `isComplete = true`
@@ -435,8 +434,7 @@ When LLM calls a tool:
 1. **Command Display**: Stream as `type: 'code', format: 'shell'`
 2. **Execution**: Run in persistent terminal
 3. **Output Display**: Stream as `type: 'console', format: 'output'`
-4. **Image Detection**: Check for new images
-5. **Image Display**: Auto-stream if detected
+4. **Image Display**: LLM calls `show_image_tool(filepath)` to stream an image when it wants to show one
 
 This creates the Open Interpreter experience where users see:
 - What code is being written
@@ -463,7 +461,7 @@ This creates the Open Interpreter experience where users see:
 
 **Cause:** Base64 data was duplicated due to `start` and `end` both being true
 
-**Solution:** Already fixed - images now split into two chunks
+**Solution:** Images are split into two chunks (empty `start` chunk, then data on the `end` chunk)
 
 ### **Job Stuck in "Running" State**
 
@@ -511,6 +509,6 @@ This creates the Open Interpreter experience where users see:
 - Full logs retained without truncation
 - Real-time streaming with proper `start`/`end` flags
 - 30-minute timeout for long-running tasks
-- Automatic image detection and display
+- Explicit, LLM-triggered image display via `show_image_tool`
 - Compatible with Open Interpreter frontend patterns
 - Production-ready async job queue architecture

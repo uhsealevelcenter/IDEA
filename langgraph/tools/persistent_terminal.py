@@ -220,6 +220,35 @@ def run_terminal_tool(command: str) -> str:
 
 
 @tool
+def show_image_tool(filepath: str) -> str:
+    """
+    Display an image file to the user in the chat interface.
+    Call this explicitly whenever you want to show a plot, chart, or any
+    other image you have created or found, instead of relying on the file
+    just existing on disk. The image is read from disk and streamed to the
+    frontend as base64-encoded content.
+
+    Args:
+        filepath: Path to the image file (relative or absolute).
+                  Supported extensions: .png, .jpg, .jpeg, .gif, .bmp, .webp, .svg
+
+    Returns:
+        Success message confirming the image was displayed, or an error message.
+    """
+    import os
+
+    valid_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'}
+    ext = os.path.splitext(filepath)[1].lower()
+
+    if not os.path.isfile(filepath):
+        return f"✗ Image not found: {filepath}"
+    if ext not in valid_extensions:
+        return f"✗ Unsupported image extension '{ext}' for {filepath}"
+
+    return f"✓ Image ready to display: {filepath}"
+
+
+@tool
 def write_file_tool(filepath: str, content: str, append: bool = False) -> str:
     """
     Write content to a file. Use this for creating or modifying files.
