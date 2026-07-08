@@ -1,0 +1,82 @@
+name: Monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  # Manual trigger for testing without waiting on the schedule.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Only `dev` exists today; add more entries to matrix once staging/prod VMs are provisioned.
+  check:
+    strategy:
+      matrix:
+        environment: [dev]
+    runs-on: ubuntu-latest
+    environment: ${{ matrix.environment }}
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Private deploy key (per-environment secret, same as deploy.yml).
+          install -m 600 /dev/null ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+
+          # Public host key (per-environment secret).
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Health check
+        id: health
+        run: |
+          set -uo pipefail
+          if curl -fsS "http://${{ vars.VM_HOST }}:8002/idea-api/health" > /dev/null 2>&1; then
+            echo "healthy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "healthy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check logs and file descriptors
+        id: check
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+              -p "${{ vars.VM_SSH_PORT || '22' }}" \
+              "${{ vars.VM_USER }}@${{ vars.VM_HOST }}" 'bash -s' <<'REMOTE' | tee remote_output.txt
+            set -euo pipefail
+
+            echo "==> Recent 5xx responses (last 16 minutes)"
+            docker logs idea_container --since 16m 2>&1 | grep -E '" [45][0-9]{2} ' || echo "NO_5XX_FOUND"
+
+            echo "==> Open file descriptor count"
+            docker exec idea_container sh -lc 'pid=$(pgrep -f uvicorn | head -1); date; echo open_fds=$(ls /proc/$pid/fd | wc -l)'
+          REMOTE
+
+          if grep -qE '" [45][0-9]{2} ' remote_output.txt; then
+            echo "found_5xx=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found_5xx=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify Slack on issue
+        if: (steps.check.outputs.found_5xx == 'true' || steps.health.outputs.healthy == 'false') && secrets.SLACK_WEBHOOK_URL != ''
+        run: |
+          set -euo pipefail
+          reasons=""
+          [ "${{ steps.health.outputs.healthy }}" = "false" ] && reasons="${reasons}health check failed; "
+          [ "${{ steps.check.outputs.found_5xx }}" = "true" ] && reasons="${reasons}5xx responses in last 16 minutes; "
+          curl -fsS -X POST -H 'Content-type: application/json' \
+            --data "{\"text\": \"IDEA (${{ matrix.environment }}): ${reasons}See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "${{ secrets.SLACK_WEBHOOK_URL }}"
+
+      - name: Fail job if health check failed
+        if: steps.health.outputs.healthy == 'false'
+        run: |
+          echo "::error::Health check failed against http://${{ vars.VM_HOST }}:8002/idea-api/health"
+          exit 1
