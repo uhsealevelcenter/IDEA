@@ -5,12 +5,13 @@ returns a summarized result with citation URLs.
 """
 
 import json
+import os
 from typing import Any
 
 from langchain_core.tools import tool
 from litellm import responses
 
-WEB_SEARCH_MODEL = "openai/gpt-5.4-mini-2026-03-17"
+WEB_SEARCH_MODEL = "openai/gpt-4o-mini"
 
 
 def _extract_web_query_response(web_query_response: Any) -> dict:
@@ -48,7 +49,8 @@ def web_search_tool(query: str) -> str:
     """
     web_query_response = responses(
         model=WEB_SEARCH_MODEL,
-        reasoning={"effort": "low"},
+        api_base=os.getenv("OPENAI_BASE_URL"),
+        api_key=os.getenv("OPENAI_API_KEY"),
         input=[
             {
                 "role": "system",

@@ -4,6 +4,7 @@ Looks up UHSLC tide gauge station id/name information (Fast Delivery
 product) using an LLM grounded on the Station List Appendix.
 """
 
+import os
 from typing import Any, Optional
 
 from langchain_core.tools import tool
@@ -11,7 +12,7 @@ from litellm import responses
 
 from ..data.station_list_appendix import STATION_LIST_APPENDIX
 
-STATION_LOOKUP_MODEL = "openai/gpt-5.4-mini-2026-03-17"
+STATION_LOOKUP_MODEL = "openai/gpt-4o-mini"
 
 
 def _extract_text_from_station_response(response: Any) -> Optional[str]:
@@ -49,7 +50,8 @@ def get_station_info_tool(station_query: str) -> str:
     """
     response = responses(
         model=STATION_LOOKUP_MODEL,
-        reasoning={"effort": "low"},
+        api_base=os.getenv("OPENAI_BASE_URL"),
+        api_key=os.getenv("OPENAI_API_KEY"),
         input=[
             {"role": "system", "content": STATION_LIST_APPENDIX},
             {"role": "user", "content": station_query},

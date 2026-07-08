@@ -51,9 +51,10 @@ A production-ready AI agent microservice built on LangGraph and LangChain, provi
 
 ### **Docker Compose (Recommended)**
 
-1. Ensure environment variables are set:
+1. Ensure environment variables are set (Azure AI Foundry OpenAI-compatible endpoint):
 ```bash
-export OPENAI_API_KEY="your-api-key-here"
+export OPENAI_API_KEY="your-azure-api-key-here"
+export OPENAI_BASE_URL="https://<your-resource>.services.ai.azure.com/openai/v1"
 ```
 
 2. Start the entire stack:
@@ -302,6 +303,7 @@ write_file_tool(
 ```yaml
 # Required
 OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://<your-resource>.services.ai.azure.com/openai/v1
 
 # Optional
 REDIS_HOST=redis         # Default: redis
@@ -332,7 +334,7 @@ web:
 
 ```python
 agent = TerminalAgent(
-    model="gpt-4o",          # OpenAI model
+    model="gpt-4o-mini",     # Azure AI Foundry deployment name
     temperature=0.2,         # 0.0-1.0, lower = more deterministic
     max_iterations=20        # Max iteration limit
 )

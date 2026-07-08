@@ -3,6 +3,7 @@ Terminal Agent
 A general-purpose AI agent with access to a persistent terminal session.
 """
 
+import os
 import time
 import uuid
 import base64
@@ -30,16 +31,24 @@ class TerminalAgent:
     The LLM can write code to files, run scripts, install packages, and solve tasks iteratively.
     """
     
-    def __init__(self, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
+    def __init__(self, model: str = "gpt-4o-mini", temperature: Optional[float] = None, max_iterations: int = 20):
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
         # Initialize LLM with tools
-        # Reasoning models (e.g., gpt-5.5) only support the provider default
-        # temperature - omit the kwarg entirely when temperature is None.
-        llm_kwargs: Dict[str, Any] = {"model": model, "streaming": True}
+        # Azure AI Foundry OpenAI-compatible endpoint: OPENAI_API_KEY and
+        # OPENAI_BASE_URL (e.g. https://<resource>.services.ai.azure.com/openai/v1)
+        # are read from the environment and passed explicitly to ChatOpenAI.
+        # Reasoning models only support the provider default temperature -
+        # omit the kwarg entirely when temperature is None.
+        llm_kwargs: Dict[str, Any] = {
+            "model": model,
+            "streaming": True,
+            "api_key": os.getenv("OPENAI_API_KEY"),
+            "base_url": os.getenv("OPENAI_BASE_URL"),
+        }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
         self.llm = ChatOpenAI(**llm_kwargs).bind_tools(ALL_TOOLS)
