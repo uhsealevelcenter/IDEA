@@ -65,7 +65,9 @@ jobs:
           fi
 
       - name: Notify Slack on issue
-        if: (steps.check.outputs.found_5xx == 'true' || steps.health.outputs.healthy == 'false') && secrets.SLACK_WEBHOOK_URL != ''
+        if: (steps.check.outputs.found_5xx == 'true' || steps.health.outputs.healthy == 'false') && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
           reasons=""
@@ -73,7 +75,7 @@ jobs:
           [ "${{ steps.check.outputs.found_5xx }}" = "true" ] && reasons="${reasons}5xx responses in last 16 minutes; "
           curl -fsS -X POST -H 'Content-type: application/json' \
             --data "{\"text\": \"IDEA (${{ matrix.environment }}): ${reasons}See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-            "${{ secrets.SLACK_WEBHOOK_URL }}"
+            "$SLACK_WEBHOOK_URL"
 
       - name: Fail job if health check failed
         if: steps.health.outputs.healthy == 'false'
