@@ -67,7 +67,7 @@ from utils.prompt_manager import init_prompt_manager, get_prompt_manager
 from knowledge_base_routes import router as knowledge_base_router, MAX_PAPER_SIZE
 from conversation_routes import router as conversation_router
 from mcp_routes import router as mcp_router
-from sqlmodel import Session
+from sqlmodel import Session, select
 from auth import (
     generate_auth_token, verify_password, is_authenticated, get_auth_token,
     add_auth_session, remove_auth_session, remove_auth_sessions_for_user,
@@ -1267,7 +1267,30 @@ async def logout(token: str = Depends(get_auth_token)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": os.getenv("GIT_SHA", "unknown")}
+    checks = {}
+
+    try:
+        with Session(engine) as session:
+            session.exec(select(1))
+        checks["db"] = "ok"
+    except Exception as e:
+        logger.error(f"Health check: db connectivity failed: {e}")
+        checks["db"] = "error"
+
+    try:
+        redis_client.ping()
+        checks["redis"] = "ok"
+    except redis.RedisError as e:
+        logger.error(f"Health check: redis connectivity failed: {e}")
+        checks["redis"] = "error"
+
+    healthy = all(v == "ok" for v in checks.values())
+    body = {
+        "status": "ok" if healthy else "error",
+        "version": os.getenv("GIT_SHA", "unknown"),
+        "checks": checks,
+    }
+    return JSONResponse(status_code=200 if healthy else 503, content=body)
 
 
 @app.get("/auth/verify")
