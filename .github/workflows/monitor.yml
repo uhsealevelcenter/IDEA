@@ -2,7 +2,7 @@ name: Monitor
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "0 * * * *"
   # Manual trigger for testing without waiting on the schedule.
   workflow_dispatch:
 
@@ -34,9 +34,10 @@ jobs:
 
       - name: Health check
         id: health
+        timeout-minutes: 2
         run: |
           set -uo pipefail
-          if curl -fsS "http://${{ vars.VM_HOST }}:8002/idea-api/health" > /dev/null 2>&1; then
+          if curl -fsS --connect-timeout 5 --max-time 10 "http://${{ vars.VM_HOST }}:8002/idea-api/health" > /dev/null 2>&1; then
             echo "healthy=true" >> "$GITHUB_OUTPUT"
           else
             echo "healthy=false" >> "$GITHUB_OUTPUT"
@@ -44,41 +45,113 @@ jobs:
 
       - name: Check logs and file descriptors
         id: check
+        timeout-minutes: 3
         run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key \
+          set -uo pipefail
+          if timeout 60 ssh -o ConnectTimeout=10 -o ConnectionAttempts=1 -o BatchMode=yes \
+              -i ~/.ssh/deploy_key \
               -p "${{ vars.VM_SSH_PORT || '22' }}" \
-              "${{ vars.VM_USER }}@${{ vars.VM_HOST }}" 'bash -s' <<'REMOTE' | tee remote_output.txt
+              "${{ vars.VM_USER }}@${{ vars.VM_HOST }}" 'bash -s' <<'REMOTE' > remote_output.txt 2>&1
             set -euo pipefail
 
-            echo "==> Recent 5xx responses (last 16 minutes)"
-            docker logs idea_container --since 16m 2>&1 | grep -E '" [45][0-9]{2} ' || echo "NO_5XX_FOUND"
+            echo "==> Recent 5xx responses (last 61 minutes)"
+            docker logs idea_container --since 61m 2>&1 | grep -E '" 5[0-9]{2} ' || echo "NO_5XX_FOUND"
 
             echo "==> Open file descriptor count"
             docker exec idea_container sh -lc 'pid=$(pgrep -f uvicorn | head -1); date; echo open_fds=$(ls /proc/$pid/fd | wc -l)'
           REMOTE
+          then
+            echo "ssh_failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ssh_failed=true" >> "$GITHUB_OUTPUT"
+          fi
 
-          if grep -qE '" [45][0-9]{2} ' remote_output.txt; then
+          if grep -qE '" 5[0-9]{2} ' remote_output.txt 2>/dev/null; then
             echo "found_5xx=true" >> "$GITHUB_OUTPUT"
           else
             echo "found_5xx=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Notify Slack on issue
-        if: (steps.check.outputs.found_5xx == 'true' || steps.health.outputs.healthy == 'false') && env.SLACK_WEBHOOK_URL != ''
+      # always() + !cancelled() so this still runs (and reports "down") if check step above is
+      # killed by its own timeout-minutes
+      - name: Determine overall status
+        id: status
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.health.outcome }}" = "success" ] && \
+             [ "${{ steps.check.outcome }}" = "success" ] && \
+             [ "${{ steps.health.outputs.healthy }}" = "true" ] && \
+             [ "${{ steps.check.outputs.ssh_failed }}" != "true" ] && \
+             [ "${{ steps.check.outputs.found_5xx }}" != "true" ]; then
+            echo "state=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=down" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Persist the last known state across runs so we only alert on a
+      # transition (ok -> down, or down -> ok), instead of re-notifying on
+      # every run while an outage is ongoing.
+      - name: Restore previous status
+        id: restore_status
+        if: always() && !cancelled()
+        uses: actions/cache/restore@v4
+        with:
+          path: prev_status.txt
+          key: monitor-status-${{ matrix.environment }}-${{ github.run_id }}
+          restore-keys: |
+            monitor-status-${{ matrix.environment }}-
+
+      - name: Compare with previous status
+        id: compare
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          prev="unknown"
+          [ -f prev_status.txt ] && prev="$(cat prev_status.txt)"
+          echo "previous=$prev" >> "$GITHUB_OUTPUT"
+          echo "${{ steps.status.outputs.state }}" > prev_status.txt
+
+          state="${{ steps.status.outputs.state }}"
+          # Don't set "RECOVERED" on very first run or after a cache
+          # eviction, where "previous" is unknown rather than a real prior down state 
+          if [ "$state" != "$prev" ] && ! { [ "$prev" = "unknown" ] && [ "$state" = "ok" ]; }; then
+            echo "notify=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notify=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save status for next run
+        if: always() && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: prev_status.txt
+          key: monitor-status-${{ matrix.environment }}-${{ github.run_id }}
+
+      - name: Notify Slack on state change
+        if: always() && !cancelled() && steps.compare.outputs.notify == 'true' && env.SLACK_WEBHOOK_URL != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
-          reasons=""
-          [ "${{ steps.health.outputs.healthy }}" = "false" ] && reasons="${reasons}health check failed; "
-          [ "${{ steps.check.outputs.found_5xx }}" = "true" ] && reasons="${reasons}5xx responses in last 16 minutes; "
-          curl -fsS -X POST -H 'Content-type: application/json' \
-            --data "{\"text\": \"IDEA (${{ matrix.environment }}): ${reasons}See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+          if [ "${{ steps.status.outputs.state }}" = "down" ]; then
+            reasons=""
+            [ "${{ steps.health.outputs.healthy }}" = "false" ] && reasons="${reasons}health check failed; "
+            [ "${{ steps.check.outputs.ssh_failed }}" = "true" ] && reasons="${reasons}SSH connection failed; "
+            [ "${{ steps.check.outputs.found_5xx }}" = "true" ] && reasons="${reasons}5xx responses in last 61 minutes; "
+            text="IDEA (${{ matrix.environment }}) is DOWN: ${reasons}See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            text="IDEA (${{ matrix.environment }}) has RECOVERED. See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+          curl -fsS --connect-timeout 5 --max-time 10 -X POST -H 'Content-type: application/json' \
+            --data "{\"text\": \"$text\"}" \
             "$SLACK_WEBHOOK_URL"
 
-      - name: Fail job if health check failed
-        if: steps.health.outputs.healthy == 'false'
+      # Scoped to health endpoint, not SSH/5xx findings.
+      # Only fires on the run where the outage begins, so GitHub's own failed-run
+      # notifications don't fire once per hour.
+      - name: Fail job if this run introduced a new health-check outage
+        if: always() && !cancelled() && steps.health.outputs.healthy == 'false' && steps.status.outputs.state != steps.compare.outputs.previous
         run: |
           echo "::error::Health check failed against http://${{ vars.VM_HOST }}:8002/idea-api/health"
           exit 1
