@@ -11,7 +11,7 @@ from typing import Any
 from langchain_core.tools import tool
 from litellm import responses
 
-WEB_SEARCH_MODEL = "openai/gpt-4o-mini"
+WEB_SEARCH_MODEL = "openai/gpt-5.5"
 
 
 def _extract_web_query_response(web_query_response: Any) -> dict:
@@ -51,6 +51,7 @@ def web_search_tool(query: str) -> str:
         model=WEB_SEARCH_MODEL,
         api_base=os.getenv("OPENAI_BASE_URL"),
         api_key=os.getenv("OPENAI_API_KEY"),
+        reasoning={"effort": "low"},
         input=[
             {
                 "role": "system",

@@ -135,8 +135,8 @@ COMPACTION_DEVELOPER_MESSAGE = (
     "compaction item summarizes the earlier Responses thread. Continue seamlessly "
     "for the user; do not mention compaction unless directly relevant."
 )
-IDEA_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
-IDEA_GUEST_MODEL = "gpt-5.4-mini-2026-03-17"
+IDEA_DEFAULT_MODEL = "gpt-5.5"
+IDEA_GUEST_MODEL = "gpt-5.5"
 IDEA_GUEST_MODEL_DISCLOSURE = (
     "\n\nIDEA guest sessions use the less expensive model "
     f"{IDEA_GUEST_MODEL} with medium reasoning. If the user asks about model "

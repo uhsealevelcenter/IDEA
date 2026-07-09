@@ -31,7 +31,7 @@ class TerminalAgent:
     The LLM can write code to files, run scripts, install packages, and solve tasks iteratively.
     """
     
-    def __init__(self, model: str = "gpt-4o-mini", temperature: Optional[float] = None, max_iterations: int = 20):
+    def __init__(self, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
@@ -41,8 +41,8 @@ class TerminalAgent:
         # Azure AI Foundry OpenAI-compatible endpoint: OPENAI_API_KEY and
         # OPENAI_BASE_URL (e.g. https://<resource>.services.ai.azure.com/openai/v1)
         # are read from the environment and passed explicitly to ChatOpenAI.
-        # Reasoning models only support the provider default temperature -
-        # omit the kwarg entirely when temperature is None.
+        # Reasoning models (e.g., gpt-5.5) only support the provider default
+        # temperature - omit the kwarg entirely when temperature is None.
         llm_kwargs: Dict[str, Any] = {
             "model": model,
             "streaming": True,
