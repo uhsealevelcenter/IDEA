@@ -2,12 +2,14 @@ version: '3.8'
 
 services:
   web:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-    image: idea
+    image: ghcr.io/uhsealevelcenter/idea:${IMAGE_TAG}
     container_name: idea_container
+    restart: unless-stopped
     shm_size: "2gb" # increase shared memory size to prevent potential issues with large models or data processing
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     ports:
       - "8002:8001" # so that we can have SEA and IDEA on the same machine
     env_file:
@@ -28,7 +30,7 @@ services:
 
   db:
     image: pgvector/pgvector:pg17
-    restart: always
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -47,8 +49,9 @@ services:
 
   redis:
     image: redis:alpine
+    restart: unless-stopped
     ports:
-      - "6380:6379" # so that we can have SEA and IDEA on the same machine
+      - "127.0.0.1:6380:6379" # so that we can have SEA and IDEA on the same machine; localhost-only so Redis isn't public (containers reach it over the docker network)
     volumes:
       - idea_redis_data:/data
     command: redis-server --appendonly yes

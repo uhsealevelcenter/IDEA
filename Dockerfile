@@ -50,6 +50,10 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
+
 # Install runtime dependencies including GDAL and LaTeX
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     wget \
