@@ -134,6 +134,8 @@ class ConversationOrchestrator:
         # Create or reuse terminal agent
         if not self._agent:
             self._agent = TerminalAgent(
+                session_id=self.session_id,
+                user_id=self.user_id,
                 model=self.model,
                 temperature=self.temperature,
                 max_iterations=self.max_iterations
@@ -277,6 +279,7 @@ class ConversationOrchestrator:
 
 def run_agent_task(
     prompt: str,
+    session_id: Optional[str] = None,
     model: str = "gpt-5.5",
     temperature: Optional[float] = None,
     max_iterations: int = 20,
@@ -287,6 +290,7 @@ def run_agent_task(
     For integration with conversation orchestrator, use ConversationOrchestrator.chat()
     """
     agent = TerminalAgent(
+        session_id=session_id or str(uuid.uuid4()),
         model=model,
         temperature=temperature,
         max_iterations=max_iterations

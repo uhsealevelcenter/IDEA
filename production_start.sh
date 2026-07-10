@@ -2,11 +2,11 @@
 
 # Step 1: Bring down the Docker Compose stack
 echo "Stopping Docker Compose stack..."
-docker compose -f docker-compose.yml down
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 
 # Step 2: Bring up the Docker Compose stack in detached mode
 echo "Starting Docker Compose stack..."
-docker compose -f docker-compose.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 # Step 3: Tail the logs for a specific container
 # Replace 'slassi_web' with your actual image or service name from the docker-compose.yml

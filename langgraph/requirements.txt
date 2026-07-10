@@ -3,7 +3,6 @@ pandas
 numpy
 matplotlib
 seaborn
-pexpect
 langchain-core
 langchain-openai
 litellm==1.83.14

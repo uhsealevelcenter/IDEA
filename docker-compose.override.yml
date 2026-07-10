@@ -67,7 +67,15 @@ services:
       - PYTHONUNBUFFERED=1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - SANDBOX_SERVICE_URL=http://sandbox:8020
     command: uvicorn langgraph_service:app --host 0.0.0.0 --port 8010
+
+  sandbox:
+    volumes:
+      - ./sandbox_service:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: uvicorn main:app --host 0.0.0.0 --port 8020
 
 volumes:
   redis_data:

@@ -13,6 +13,11 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# NOTE: this service no longer talks to microsandbox/pexpect directly - all
+# terminal/sandbox execution is delegated over HTTP to the sandbox_service
+# (see tools/persistent_terminal.py, /sandbox_service/). No msb install or
+# /dev/kvm passthrough needed here anymore.
+
 # Copy requirements first for better caching
 COPY requirements.txt .
 

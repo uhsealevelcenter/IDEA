@@ -1,0 +1,18 @@
+version: '3.8'
+
+# Production-only overlay. Apply on top of the base docker-compose.yml, e.g.:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Kept separate from docker-compose.yml (rather than added there directly)
+# because docker-compose.override.yml is auto-merged on top of the base file
+# for local dev (see local_start.sh), and /dev/kvm does not exist on most
+# local dev machines (e.g. Macs) - so this must not leak into that path.
+
+services:
+  sandbox:
+    devices:
+      # Passes host KVM through so microsandbox (sandbox_service/msb_sandbox.py)
+      # can boot per-user microVMs. The sandbox backend auto-detects this at
+      # runtime and falls back to a plain local shell if unavailable, but
+      # the device still needs to exist for microsandbox to work at all.
+      - /dev/kvm:/dev/kvm

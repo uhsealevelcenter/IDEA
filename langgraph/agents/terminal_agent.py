@@ -16,13 +16,10 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from tools.persistent_terminal import run_terminal_tool, write_file_tool, show_image_tool, _persistent_terminals
+from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes
 from utils.tools import DATA_TOOLS
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
-
-ALL_TOOLS = [run_terminal_tool, write_file_tool, show_image_tool, *DATA_TOOLS]
-TOOLS_BY_NAME = {t.name: t for t in ALL_TOOLS}
 
 
 class TerminalAgent:
@@ -31,11 +28,29 @@ class TerminalAgent:
     The LLM can write code to files, run scripts, install packages, and solve tasks iteratively.
     """
     
-    def __init__(self, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
+    def __init__(self, session_id: str, user_id: Optional[str] = None, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
+        self.session_id = session_id
+        self.user_id = user_id
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
+        
+        # The sandbox/shell is keyed by user_id (stable across page reloads
+        # and browser tabs) rather than session_id (a new random ID minted
+        # by the frontend on every page load - see assistant.js generateId).
+        # This is what makes the sandbox a genuinely *dedicated-per-user*
+        # environment that a user reconnects to instead of getting a fresh
+        # one every time. Falls back to session_id for callers that don't
+        # have a stable user_id (e.g. run_agent_task's one-off CLI usage).
+        self.sandbox_id = str(user_id) if user_id else session_id
+        
+        # Terminal/filesystem tools bound to this user's own sandbox (or
+        # local shell, if sandboxing is unavailable) - never shared with
+        # other users. See tools/persistent_terminal.make_agent_tools.
+        self.run_terminal_tool, self.write_file_tool, self.show_image_tool = make_agent_tools(self.sandbox_id)
+        self.all_tools = [self.run_terminal_tool, self.write_file_tool, self.show_image_tool, *DATA_TOOLS]
+        self.tools_by_name = {t.name: t for t in self.all_tools}
         
         # Initialize LLM with tools
         # Azure AI Foundry OpenAI-compatible endpoint: OPENAI_API_KEY and
@@ -51,30 +66,25 @@ class TerminalAgent:
         }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
-        self.llm = ChatOpenAI(**llm_kwargs).bind_tools(ALL_TOOLS)
+        self.llm = ChatOpenAI(**llm_kwargs).bind_tools(self.all_tools)
     
-    @staticmethod
-    def _encode_image_to_base64(filepath: str) -> tuple[str, str]:
+    def _encode_image_to_base64(self, filepath: str) -> tuple[str, str]:
         """
-        Read an image file and encode it to base64.
+        Read an image file (from this session's sandbox/host) and encode it to base64.
         
         Returns:
             (base64_content, format) tuple, e.g., (base64_str, "png")
         """
-        with open(filepath, 'rb') as f:
-            image_data = f.read()
+        image_data = read_file_bytes(filepath, session_id=self.sandbox_id)
         
         b64_content = base64.b64encode(image_data).decode('utf-8')
         ext = Path(filepath).suffix.lower().lstrip('.')
         return b64_content, ext
     
     def reset_terminal(self):
-        """Reset the persistent terminal session."""
-        session_id = 'solver_session'
-        if session_id in _persistent_terminals:
-            _persistent_terminals[session_id].close()
-            del _persistent_terminals[session_id]
-            print("✓ Terminal session reset")
+        """Gracefully stop (state-preserving) this user's sandbox/terminal."""
+        close_terminal(self.sandbox_id)
+        print(f"✓ Terminal session stopped ({self.sandbox_id})")
     
     def cleanup(self):
         """Clean up resources (close persistent terminal)."""
@@ -92,8 +102,6 @@ class TerminalAgent:
             Dictionary containing the result, messages, and metadata
         """
         
-        # Reset terminal at the start of each task for clean state
-        self.reset_terminal()
         self._shown_image_hashes.clear()
         
         # Load system prompt from the consolidated markdown file
@@ -240,7 +248,7 @@ class TerminalAgent:
                                 'end': True
                             })
                         
-                        result = run_terminal_tool.invoke(tool_call['args'])
+                        result = self.run_terminal_tool.invoke(tool_call['args'])
                         
                         # Stream command output to frontend
                         if stream_callback:
@@ -283,7 +291,7 @@ class TerminalAgent:
                                 'end': True
                             })
                         
-                        result = write_file_tool.invoke(tool_call['args'])
+                        result = self.write_file_tool.invoke(tool_call['args'])
                         
                         # Stream result status
                         if stream_callback:
@@ -300,7 +308,7 @@ class TerminalAgent:
                         image_path = tool_call['args']['filepath']
                         print(f"\n🖼️  LLM requested to show image: {image_path}")
 
-                        result = show_image_tool.invoke(tool_call['args'])
+                        result = self.show_image_tool.invoke(tool_call['args'])
 
                         if result.startswith("✓") and stream_callback:
                             try:
@@ -341,7 +349,7 @@ class TerminalAgent:
                                 'end': True
                             })
 
-                    elif tool_name in TOOLS_BY_NAME:
+                    elif tool_name in self.tools_by_name:
                         # Generic dispatch for data tools (datetime, station, climate, web search, knowledge base)
                         print(f"\n📝 Args: {tool_call['args']}")
 
@@ -356,7 +364,7 @@ class TerminalAgent:
                             })
 
                         try:
-                            result = TOOLS_BY_NAME[tool_name].invoke(tool_call['args'])
+                            result = self.tools_by_name[tool_name].invoke(tool_call['args'])
                         except Exception as e:
                             result = f"✗ {tool_name} failed: {e}"
 

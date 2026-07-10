@@ -21,8 +21,14 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
-# In-memory orchestrator storage
-orchestrators = {}
+# chat_run_threads intentionally NOT persisted/shared - see
+# IMPLEMENTATION_STATUS.md "item 6" for the plan to close this remaining
+# statelessness gap with a proper job queue. Note there is deliberately no
+# `orchestrators` cache anymore: ConversationOrchestrator is now cheap to
+# construct (terminal/sandbox state lives in sandbox_service, not here), so
+# every request rebuilds it fresh from Redis-backed conversation history
+# instead of relying on an in-memory dict that would tie a session to
+# whichever replica happened to handle its first message.
 chat_run_threads = {}
 
 # Constants
@@ -141,21 +147,19 @@ def _run_chat_job(
             updated_at=datetime.utcnow().isoformat(),
         )
         
-        # Get or create orchestrator
-        if session_key not in orchestrators:
-            orchestrators[session_key] = ConversationOrchestrator(
-                user_id=user_id,
-                session_id=session_key,
-                is_guest=is_guest,
-                db=None,
-                model=model,
-                temperature=None,
-                max_iterations=20
-            )
+        # Build a fresh orchestrator for this request (no cross-request cache
+        # - see the note above chat_run_threads) and restore its history from
+        # Redis, the durable/shared store for conversation state.
+        orchestrator = ConversationOrchestrator(
+            user_id=user_id,
+            session_id=session_key,
+            is_guest=is_guest,
+            db=None,
+            model=model,
+            temperature=None,
+            max_iterations=20
+        )
         
-        orchestrator = orchestrators[session_key]
-        
-        # Restore conversation history from Redis
         stored_messages = redis_client.get(f"langgraph_messages:{session_key}")
         if stored_messages:
             try:
@@ -278,19 +282,17 @@ async def chat_endpoint(request: ChatRequest):
     try:
         session_key = request.session_key
         
-        # Get or create orchestrator
-        if session_key not in orchestrators:
-            orchestrators[session_key] = ConversationOrchestrator(
-                user_id=request.user_id,
-                session_id=session_key,
-                is_guest=request.is_guest,
-                db=None,
-                model=request.model,
-                temperature=request.temperature,
-                max_iterations=request.max_iterations
-            )
-        
-        orchestrator = orchestrators[session_key]
+        # Build a fresh orchestrator for this request (no cross-request
+        # cache - see the note above chat_run_threads).
+        orchestrator = ConversationOrchestrator(
+            user_id=request.user_id,
+            session_id=session_key,
+            is_guest=request.is_guest,
+            db=None,
+            model=request.model,
+            temperature=request.temperature,
+            max_iterations=request.max_iterations
+        )
         
         # Restore conversation history from Redis if requested
         if request.restore_history:
@@ -339,11 +341,7 @@ async def clear_session(request: Request):
     if not session_key:
         raise HTTPException(status_code=400, detail="session_key is required")
     
-    # Remove from memory
-    if session_key in orchestrators:
-        del orchestrators[session_key]
-    
-    # Remove from Redis
+    # Remove from Redis (no in-memory orchestrator cache to clear anymore)
     redis_client.delete(f"langgraph_messages:{session_key}")
     
     return {"status": "cleared", "session_key": session_key}

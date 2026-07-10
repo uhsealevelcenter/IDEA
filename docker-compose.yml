@@ -67,10 +67,34 @@ services:
       - PYTHONUNBUFFERED=1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      # OPENAI_API_KEY / OPENAI_BASE_URL intentionally NOT re-declared here -
+      # env_file above already injects them literally from .env. Re-declaring
+      # them as ${OPENAI_API_KEY} would instead resolve from the host shell
+      # environment (if exported there), silently shadowing the .env value.
+      # Base URL of the stateful sandbox_service this service delegates all
+      # terminal/sandbox execution to - see langgraph/tools/persistent_terminal.py.
+      - SANDBOX_SERVICE_URL=${SANDBOX_SERVICE_URL:-http://sandbox:8020}
     depends_on:
       - redis
+      - sandbox
+
+  sandbox:
+    build:
+      context: ./sandbox_service
+      dockerfile: ./Dockerfile
+    image: idea-sandbox
+    container_name: idea_sandbox
+    ports:
+      - "8020:8020"
+    environment:
+      - PYTHONUNBUFFERED=1
+      # "auto" | "microsandbox" | "local" - see sandbox_service/terminal_registry.py
+      - SANDBOX_BACKEND=${SANDBOX_BACKEND:-auto}
+      # Idle sandboxes auto-drain (stop, not delete) after this many seconds
+      # of inactivity; empty SANDBOX_MAX_DURATION_SECONDS disables the hard
+      # lifetime cap. See sandbox_service/msb_sandbox.py.
+      - SANDBOX_IDLE_TIMEOUT_SECONDS=${SANDBOX_IDLE_TIMEOUT_SECONDS:-1800}
+      - SANDBOX_MAX_DURATION_SECONDS=${SANDBOX_MAX_DURATION_SECONDS:-}
 
 volumes:
   idea_persistent_data:
