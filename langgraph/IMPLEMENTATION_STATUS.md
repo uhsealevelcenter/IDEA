@@ -694,6 +694,82 @@ conversation = conversation_crud.create_conversation(
 
 ---
 
+## 📂 Open WebUI File Sync (Jul 12, 2026) — IMPLEMENTED
+
+**Goal:** files the terminal agent creates should land automatically in Open
+WebUI's own file storage/directory (its `Files` API + `StorageProvider`,
+see `openwebui/README.md`), so they show up as downloadable attachments in
+chat - without the model needing to explicitly decide to "share" anything.
+This supersedes/implements part of gap **#11 File & URL Management** above,
+scoped specifically to the Open WebUI frontend integration
+(`openwebui/functions/idea_pipe.py`), not the legacy `frontend/`.
+
+### Design decided so far
+
+- **Sync trigger is end-of-turn, not per-write.** The model is allowed to
+  reorganize/rename/move files mid-turn via `run_terminal_tool` (`mv`,
+  `mkdir`, etc.), so syncing on every individual `write_file_tool` call would
+  push stale copies under paths that get renamed away moments later.
+- **Output directory convention:** the model will be instructed (via
+  `utils/system_prompt.md`) that deliverable files must live under a fixed
+  directory (e.g. `/outputs`) by the end of its turn. It may create
+  subfolders and reorganize freely within the sandbox before that point.
+- **`TerminalAgent.run()`**, after `task_complete = True` and before
+  returning: run `find /outputs -type f` via the existing `run_terminal`
+  helper, then for each path found, reuse the existing `read_file_bytes()`
+  (already used for `show_image_tool`) to pull bytes out of the sandbox.
+- For each file: `POST` to Open WebUI's own `/api/v1/files/` (loopback HTTP
+  call to the `openwebui` container, `process=false` to skip RAG/embedding
+  since these are plain artifacts) using a static admin-generated API key
+  stored in a new `idea_pipe.py` Valve (`OPENWEBUI_API_KEY`). Open WebUI
+  returns a file `id`; result stored via its own `LocalStorageProvider` in
+  the `idea_openwebui_data` volume.
+- New chunk type `{'role': 'assistant', 'type': 'file', 'filename': ...,
+  'content': base64, ...}` streamed once per synced file after the final
+  text response. `idea_pipe.py`'s `_translate_chunk` renders each as a
+  markdown link to Open WebUI's stored copy - no changes needed in
+  `langgraph_service.py` (chunk-type-agnostic passthrough) or
+  `sandbox_service` (existing `/sandboxes/{id}/files/content` route reused).
+- Files outside `/outputs` (scratch scripts, intermediate data the model
+  never moved into place) are intentionally **not** synced.
+- `frontend/assistant.js` (legacy UI) will not render the new `file` chunk
+  type either - explicitly out of scope for this pass, flagged as a
+  follow-up if file-sharing is wanted there too.
+
+### Still open / to optimize
+
+- **Cost/efficiency of the `find` + per-file `read_file_bytes` + upload
+  round-trip** on every turn where `task_complete` is reached - flagged by
+  the team as needing optimization (e.g. skip the scan entirely if no
+  `write_file_tool`/`run_terminal_tool` call touched `/outputs` this turn,
+  rather than always shelling out to `find`).
+- Whether `/outputs` should be namespaced further (it's already inside a
+  per-user sandbox, so no cross-user collision risk, but nested
+  subdirectories from model-chosen names could still collide across turns
+  within the same user's sandbox).
+- Auth model for the loopback call to Open WebUI's Files API - static Valve
+  API key is the simplest option but means every uploaded file is attributed
+  to whichever account generated that key, not the actual chatting user.
+- No dedupe/size-limit handling yet (Open WebUI has its own upload size
+  config; large `/outputs` files could hit it - not yet handled here).
+
+**Implemented:**
+- `utils/system_prompt.md` — `/outputs` directory convention documented for the model.
+- `tools/persistent_terminal.py` — `list_files(directory, session_id)` raw `find` helper.
+- `agents/terminal_agent.py` — `TerminalAgent._sync_outputs_to_openwebui()`, called
+  once at the end of `run()`; streams a `type: "file"` chunk per synced file.
+- `openwebui/functions/idea_pipe.py` — renders `file` chunks as a download link
+  to Open WebUI's own `/api/v1/files/{id}/content`.
+- `docker-compose.yml` / `example.env` — `OPENWEBUI_BASE_URL` / `OPENWEBUI_API_KEY`
+  wired into the `langgraph` service (no-ops if the key is unset).
+
+**Still open (not addressed by this pass):** the "Still open / to optimize"
+items above (per-turn `find` + upload round-trip cost, `/outputs`
+namespacing across turns, static-API-key attribution, no size-limit
+handling) remain unaddressed.
+
+---
+
 ## Summary
 
 **Completed:**

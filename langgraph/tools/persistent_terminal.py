@@ -121,6 +121,32 @@ def file_exists(filepath: str, session_id: str) -> bool:
         return False
 
 
+def list_files(directory: str, session_id: str) -> list[str]:
+    """
+    Return a list of file paths under `directory` in the session's sandbox,
+    via a raw `find` call to sandbox_service's /exec (bypassing
+    run_terminal's human-readable wrapper text, since this is consumed
+    programmatically - see TerminalAgent._sync_outputs_to_openwebui).
+    Returns an empty list if the directory doesn't exist, the command fails,
+    or the sandbox is unreachable.
+    """
+    try:
+        response = _client.post(
+            f"/sandboxes/{session_id}/exec",
+            json={"command": f"find {directory} -type f 2>/dev/null"},
+        )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPError:
+        return []
+
+    if not result.get("success", False):
+        return []
+
+    output = result.get("output", "") or ""
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
 def make_agent_tools(session_id: str):
     """
     Build a run_terminal_tool / write_file_tool / show_image_tool set bound to

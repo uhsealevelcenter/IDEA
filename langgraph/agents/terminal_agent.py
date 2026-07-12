@@ -8,6 +8,7 @@ import time
 import uuid
 import base64
 import hashlib
+import requests
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 from langchain_openai import ChatOpenAI
@@ -16,10 +17,18 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes
+from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files
 from utils.tools import DATA_TOOLS
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
+
+# Files placed under this directory in the sandbox (see system_prompt.md's
+# "Data/Analysis Output & File Operations" section) are auto-synced to Open
+# WebUI's own Files storage at the end of each turn - see
+# TerminalAgent._sync_outputs_to_openwebui.
+OUTPUTS_DIR = "/outputs"
+OPENWEBUI_BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "http://openwebui:8080").rstrip("/")
+OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
 
 
 class TerminalAgent:
@@ -81,6 +90,43 @@ class TerminalAgent:
         ext = Path(filepath).suffix.lower().lstrip('.')
         return b64_content, ext
     
+    def _sync_outputs_to_openwebui(self) -> list[dict]:
+        """
+        Scan this sandbox's OUTPUTS_DIR (final state, after the model has
+        finished any mid-turn reorganizing/renaming) and upload each file
+        found to Open WebUI's own Files API, so it shows up as a
+        downloadable attachment in chat. Best-effort: a failure syncing one
+        file is logged and skipped, never fatal to the turn.
+
+        Returns a list of {'filename', 'openwebui_file_id'} dicts for
+        successfully synced files.
+        """
+        if not OPENWEBUI_API_KEY:
+            return []
+
+        synced = []
+        for filepath in list_files(OUTPUTS_DIR, session_id=self.sandbox_id):
+            try:
+                data = read_file_bytes(filepath, session_id=self.sandbox_id)
+                filename = Path(filepath).name
+                response = requests.post(
+                    f"{OPENWEBUI_BASE_URL}/api/v1/files/",
+                    headers={"Authorization": f"Bearer {OPENWEBUI_API_KEY}"},
+                    files={"file": (filename, data)},
+                    params={"process": "false"},
+                    timeout=60,
+                )
+                response.raise_for_status()
+                file_id = response.json().get("id")
+                if file_id:
+                    synced.append({"filename": filepath, "openwebui_file_id": file_id})
+                    print(f"✓ Synced {filepath} to Open WebUI (file_id={file_id})")
+            except Exception as e:
+                print(f"⚠️  Failed to sync {filepath} to Open WebUI: {e}")
+                continue
+
+        return synced
+
     def reset_terminal(self):
         """Gracefully stop (state-preserving) this user's sandbox/terminal."""
         close_terminal(self.sandbox_id)
@@ -410,6 +456,22 @@ class TerminalAgent:
                 task_complete = True
                 print(f"\n✅ Agent stopped (no tool calls made)")
                 break
+        
+        # Sync any deliverables the model placed under OUTPUTS_DIR to Open
+        # WebUI's own Files storage, once per turn (not per write - see
+        # system_prompt.md and _sync_outputs_to_openwebui docstring), and
+        # let the user know they're available as downloads.
+        synced_files = self._sync_outputs_to_openwebui()
+        if stream_callback:
+            for synced in synced_files:
+                stream_callback({
+                    'role': 'assistant',
+                    'type': 'file',
+                    'filename': synced['filename'],
+                    'openwebui_file_id': synced['openwebui_file_id'],
+                    'start': True,
+                    'end': True
+                })
         
         # Determine success based on completion
         success = task_complete or iterations < self.max_iterations
