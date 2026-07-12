@@ -61,6 +61,11 @@ services:
     command: redis-server --appendonly yes
 
   langgraph:
+    # Dev-only direct access for debugging (curl localhost:8010, etc.) -
+    # not present in the base docker-compose.yml so production_start.sh
+    # (which does not merge this override file) never publishes this port.
+    ports:
+      - "8010:8010"
     volumes:
       - ./langgraph:/app
     environment:
@@ -71,6 +76,9 @@ services:
     command: uvicorn langgraph_service:app --host 0.0.0.0 --port 8010
 
   sandbox:
+    # See the matching comment on `langgraph` above.
+    ports:
+      - "8020:8020"
     volumes:
       - ./sandbox_service:/app
     environment:

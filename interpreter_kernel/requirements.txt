@@ -1,0 +1,20 @@
+# Deliberately minimal - daemon.py only imports the Jupyter-backed Python
+# language runner and the Shell runner (see daemon.py's module docstring
+# for why the wider interpreter/core/computer tree's other dependencies,
+# e.g. selenium/webdriver_manager for Browser, are never imported and so
+# don't need to be installed here).
+#
+# Pinned to match interpreter/'s own pyproject.toml so this vendored copy
+# behaves identically to the original.
+ipykernel==6.29.5
+jupyter_client==8.6.3
+litellm==1.83.14
+matplotlib==3.9.2
+matplotlib-inline==0.1.7
+
+# Additional scientific packages (pandas, numpy, xarray, netCDF4, etc.) are
+# intentionally NOT pre-baked into this image - the agent installs what a
+# given task needs on demand via run_terminal_tool ("pip install ..."),
+# same as the existing sandbox_service shell backend already does. Baking
+# in the full scientific stack would bloat every user's VM image for
+# packages many sessions never use.

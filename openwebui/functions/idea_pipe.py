@@ -31,6 +31,15 @@ class Pipe:
             default=1800,
             description="Matches the terminal agent's own 30-minute exec timeout.",
         )
+        INTERNAL_SERVICE_TOKEN: str = Field(
+            default="",
+            description=(
+                "Must match INTERNAL_SERVICE_TOKEN in the langgraph service's "
+                "own .env (docker-compose.yml) - sent as a Bearer token on "
+                "every request. Leave blank only if langgraph_service.py's "
+                "own copy is also unset (dev-only; see example.env)."
+            ),
+        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -74,10 +83,17 @@ class Pipe:
             "model": self.valves.MODEL,
         }
 
+        headers = (
+            {"Authorization": f"Bearer {self.valves.INTERNAL_SERVICE_TOKEN}"}
+            if self.valves.INTERNAL_SERVICE_TOKEN
+            else {}
+        )
+
         try:
             response = requests.post(
                 f"{self.valves.LANGGRAPH_SERVICE_URL}/chat",
                 json=payload,
+                headers=headers,
                 stream=True,
                 timeout=self.valves.REQUEST_TIMEOUT_SECONDS,
             )

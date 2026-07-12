@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files
+from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files, run_python
 from utils.tools import DATA_TOOLS
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
@@ -57,8 +57,28 @@ class TerminalAgent:
         # Terminal/filesystem tools bound to this user's own sandbox (or
         # local shell, if sandboxing is unavailable) - never shared with
         # other users. See tools/persistent_terminal.make_agent_tools.
-        self.run_terminal_tool, self.write_file_tool, self.show_image_tool = make_agent_tools(self.sandbox_id)
-        self.all_tools = [self.run_terminal_tool, self.write_file_tool, self.show_image_tool, *DATA_TOOLS]
+        (
+            self.run_terminal_tool,
+            self.write_file_tool,
+            self.show_image_tool,
+            self.run_python_tool,
+            self.grep_search_tool,
+            self.glob_search_tool,
+        ) = make_agent_tools(self.sandbox_id)
+        # grep_search_tool/glob_search_tool need no special-case streaming
+        # (unlike run_terminal_tool/write_file_tool/show_image_tool/
+        # run_python_tool above) - they're simple text-in/text-out calls,
+        # so they go through the generic tools_by_name dispatch below,
+        # same as DATA_TOOLS.
+        self.all_tools = [
+            self.run_terminal_tool,
+            self.write_file_tool,
+            self.show_image_tool,
+            self.run_python_tool,
+            self.grep_search_tool,
+            self.glob_search_tool,
+            *DATA_TOOLS,
+        ]
         self.tools_by_name = {t.name: t for t in self.all_tools}
         
         # Initialize LLM with tools
@@ -394,6 +414,74 @@ class TerminalAgent:
                                 'start': True,
                                 'end': True
                             })
+
+                    elif tool_name == 'run_python_tool':
+                        code = tool_call['args']['code']
+                        print(f"\n🐍 Python code to execute (persistent kernel):")
+                        print(f"{'─'*60}")
+                        print(code)
+                        print(f"{'─'*60}")
+
+                        if stream_callback:
+                            stream_callback({
+                                'role': 'computer',
+                                'type': 'code',
+                                'format': 'python',
+                                'content': code,
+                                'start': True,
+                                'end': True
+                            })
+
+                        # Calls the sandbox once directly (not via
+                        # self.run_python_tool.invoke) so the raw chunks
+                        # are available to stream images/console output
+                        # individually, the same way show_image_tool's
+                        # branch below pulls raw bytes separately from the
+                        # tool's own text result - invoking the tool here
+                        # too would execute the code a second time.
+                        chunks = run_python(code, session_id=self.sandbox_id)
+                        console_texts = []
+                        for chunk in chunks:
+                            ctype = chunk.get('type')
+                            if ctype == 'console':
+                                content = chunk.get('content', '')
+                                if not content:
+                                    continue
+                                console_texts.append(content)
+                                if stream_callback:
+                                    stream_callback({
+                                        'role': 'computer',
+                                        'type': 'console',
+                                        'format': 'output',
+                                        'content': content,
+                                        'start': True,
+                                        'end': True
+                                    })
+                            elif ctype == 'image':
+                                b64_content = chunk.get('content', '')
+                                img_format = (chunk.get('format') or 'base64.png').split('.')[-1]
+                                content_hash = hashlib.sha256(b64_content.encode('utf-8')).hexdigest()
+                                if content_hash in self._shown_image_hashes:
+                                    continue
+                                self._shown_image_hashes.add(content_hash)
+                                console_texts.append(f"[image generated: {img_format}]")
+                                if stream_callback:
+                                    stream_callback({
+                                        'role': 'assistant',
+                                        'type': 'image',
+                                        'format': f'base64.{img_format}',
+                                        'content': '',
+                                        'start': True
+                                    })
+                                    stream_callback({
+                                        'role': 'assistant',
+                                        'type': 'image',
+                                        'format': f'base64.{img_format}',
+                                        'content': b64_content,
+                                        'end': True
+                                    })
+
+                        result = "\n".join(t for t in console_texts if t.strip()) or "(no output)"
 
                     elif tool_name in self.tools_by_name:
                         # Generic dispatch for data tools (datetime, station, climate, web search, knowledge base)

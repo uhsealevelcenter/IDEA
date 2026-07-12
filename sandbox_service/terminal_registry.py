@@ -283,6 +283,62 @@ def write_file(filepath: str, content: str, sandbox_id: str, append: bool = Fals
                 f.write(content)
 
 
+def run_python(code: str, sandbox_id: str) -> dict:
+    """
+    Execute Python code in sandbox_id's persistent kernel (microsandbox
+    backend only - see MicrosandboxTerminal.run_python). The local pexpect
+    fallback has no per-VM kernel image to run this against, so it returns
+    a clear error chunk instead of raising - callers (langgraph) degrade to
+    run_terminal_tool in that case rather than failing the whole turn.
+    """
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if isinstance(terminal, MicrosandboxTerminal):
+            return terminal.run_python(code)
+        return {
+            "chunks": [{
+                "type": "console",
+                "format": "output",
+                "content": (
+                    "✗ Persistent Python kernel requires the microsandbox "
+                    "backend (SANDBOX_BACKEND=microsandbox|auto with a "
+                    "sandbox image that includes the OI kernel - see "
+                    "interpreter_kernel/). Use run_terminal_tool instead."
+                ),
+            }]
+        }
+
+
+def grep_search(sandbox_id: str, **kwargs) -> dict:
+    """
+    Search file contents in sandbox_id's VM via Open Terminal (microsandbox
+    backend only - see MicrosandboxTerminal.grep_search). Raises on the
+    local backend / on failure - callers (langgraph) already wrap tool
+    calls in their own try/except, unlike run_python's synthetic-chunk
+    convention which exists specifically for mid-stream error display.
+    """
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if not isinstance(terminal, MicrosandboxTerminal):
+            raise RuntimeError(
+                "grep_search requires the microsandbox backend with an "
+                "Open Terminal-based sandbox image - see interpreter_kernel/."
+            )
+        return terminal.grep_search(**kwargs)
+
+
+def glob_search(sandbox_id: str, **kwargs) -> dict:
+    """Search files by name in sandbox_id's VM via Open Terminal - see grep_search's docstring."""
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if not isinstance(terminal, MicrosandboxTerminal):
+            raise RuntimeError(
+                "glob_search requires the microsandbox backend with an "
+                "Open Terminal-based sandbox image - see interpreter_kernel/."
+            )
+        return terminal.glob_search(**kwargs)
+
+
 def read_file_bytes(filepath: str, sandbox_id: str) -> bytes:
     """Read raw file bytes from inside sandbox_id's sandbox, or the host disk."""
     terminal = _get_terminal(sandbox_id)

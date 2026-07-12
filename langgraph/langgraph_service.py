@@ -1,13 +1,14 @@
 """
 LangGraph Microservice - FastAPI server exposing the ConversationOrchestrator
 """
+import hmac
 import json
 import os
 import uuid
 import threading
 from typing import Optional, Any
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
+from fastapi import Depends, FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import redis
@@ -15,6 +16,23 @@ import redis
 from multi_agent import ConversationOrchestrator
 
 app = FastAPI(title="LangGraph Service", version="1.0.0")
+
+# Shared secret between this service's callers (openwebui/functions/
+# idea_pipe.py's Valve of the same name) and this service itself - not a
+# per-user credential. See sandbox_service/main.py for the identical
+# pattern guarding that service. Empty/unset fails OPEN (no check) rather
+# than locking out dev setups that haven't configured it yet - every
+# production .env should set this; see example.env.
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+
+
+def require_internal_token(request: Request) -> None:
+    if not INTERNAL_SERVICE_TOKEN:
+        return
+    auth_header = request.headers.get("authorization", "")
+    provided = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
+    if not hmac.compare_digest(provided, INTERNAL_SERVICE_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid or missing internal service token")
 
 # Redis connection
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
@@ -209,7 +227,7 @@ async def health_check():
     return {"status": "healthy", "service": "langgraph"}
 
 
-@app.post("/chat-runs")
+@app.post("/chat-runs", dependencies=[Depends(require_internal_token)])
 async def start_chat_run(request: ChatRunRequest):
     """Start an async chat run and return immediately with run_id"""
     run_id = uuid.uuid4().hex
@@ -244,7 +262,7 @@ async def start_chat_run(request: ChatRunRequest):
     return {"run_id": run_id, "status": "queued"}
 
 
-@app.get("/chat-runs/{run_id}")
+@app.get("/chat-runs/{run_id}", dependencies=[Depends(require_internal_token)])
 async def get_chat_run(run_id: str):
     """Get chat run status"""
     status = _get_chat_run_status(run_id)
@@ -253,7 +271,7 @@ async def get_chat_run(run_id: str):
     return status
 
 
-@app.get("/chat-runs/{run_id}/events")
+@app.get("/chat-runs/{run_id}/events", dependencies=[Depends(require_internal_token)])
 async def get_chat_run_events(run_id: str, after: int = 0):
     """Get chat run events (for polling)"""
     status = _get_chat_run_status(run_id)
@@ -274,7 +292,7 @@ async def get_chat_run_events(run_id: str, after: int = 0):
     }
 
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(require_internal_token)])
 async def chat_endpoint(request: ChatRequest):
     """
     Direct streaming chat endpoint (alternative to /chat-runs)
@@ -332,7 +350,7 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/clear")
+@app.post("/clear", dependencies=[Depends(require_internal_token)])
 async def clear_session(request: Request):
     """Clear a session's orchestrator and history"""
     body = await request.json()
