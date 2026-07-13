@@ -22,6 +22,11 @@ import urllib.parse
 import uuid
 from typing import Optional
 
+# ioctl request number for KVM_GET_API_VERSION (arch-independent, see
+# linux/kvm.h) - used by _kvm_functional() below. Imported lazily inside
+# that function instead since fcntl doesn't exist on non-POSIX platforms.
+_KVM_GET_API_VERSION = 0xAE00
+
 DEFAULT_IMAGE = os.getenv("SANDBOX_IMAGE", "python")
 DEFAULT_CPUS = int(os.getenv("SANDBOX_CPUS", "1"))
 DEFAULT_MEMORY_MB = int(os.getenv("SANDBOX_MEMORY_MB", "1024"))
@@ -49,6 +54,35 @@ DEFAULT_IDLE_TIMEOUT = int(_IDLE_TIMEOUT_ENV) if _IDLE_TIMEOUT_ENV else None
 DEFAULT_MAX_DURATION = int(_MAX_DURATION_ENV) if _MAX_DURATION_ENV else None
 
 
+def _kvm_functional(path: str = "/dev/kvm") -> bool:
+    """
+    True only if `path` is a real, usable KVM device node - not just a path
+    that happens to exist. This matters because docker-compose.yml's
+    `sandbox.devices` always binds *something* to /dev/kvm (defaulting to
+    /dev/null via KVM_DEVICE_PATH when unset, e.g. local dev on a Mac) so
+    Compose doesn't hard-fail on hosts without real KVM. A plain
+    os.path.exists() check would then incorrectly return True for that
+    dummy device too.
+
+    Mirrors the standard kvm-ok check: open the device and issue
+    KVM_GET_API_VERSION, which only a real KVM device answers with 12.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return False
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        return fcntl.ioctl(fd, _KVM_GET_API_VERSION, 0) == 12
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
 def microsandbox_available() -> bool:
     """Best-effort check for whether the microsandbox runtime can be used here."""
     try:
@@ -57,7 +91,7 @@ def microsandbox_available() -> bool:
         return False
 
     # microsandbox needs KVM (or WHP on Windows) on the host to boot microVMs.
-    if os.name == "posix" and os.path.exists("/dev/kvm"):
+    if os.name == "posix" and _kvm_functional("/dev/kvm"):
         return True
 
     # Allow an explicit override for environments where the check above is

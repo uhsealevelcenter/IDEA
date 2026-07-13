@@ -51,6 +51,7 @@ services:
     depends_on:
       - web
       - frontend
+      - openwebui
       
   redis:
     image: redis:alpine

@@ -16,8 +16,9 @@ RUN apt-get update && apt-get install -y \
 
 # Install the microsandbox (msb) runtime used for per-user isolated microVM
 # execution (msb_sandbox.py). Requires /dev/kvm to be passed through to this
-# container (see docker-compose.prod.yml `devices:`) - falls back to a plain
-# local shell automatically if KVM isn't available at runtime.
+# container (see docker-compose.yml's `sandbox.devices` / KVM_DEVICE_PATH) -
+# falls back to a plain local shell automatically if KVM isn't available at
+# runtime.
 RUN curl -fsSL https://install.microsandbox.dev | sh
 ENV PATH="/root/.microsandbox/bin:/root/.local/bin:${PATH}"
 

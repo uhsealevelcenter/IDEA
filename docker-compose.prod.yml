@@ -1,18 +1,15 @@
 version: '3.8'
 
-# Production-only overlay. Apply on top of the base docker-compose.yml, e.g.:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-#
-# Kept separate from docker-compose.yml (rather than added there directly)
-# because docker-compose.override.yml is auto-merged on top of the base file
-# for local dev (see local_start.sh), and /dev/kvm does not exist on most
-# local dev machines (e.g. Macs) - so this must not leak into that path.
+# NOTE: superseded - the `sandbox.devices` /dev/kvm passthrough this file
+# used to add now lives directly in the base docker-compose.yml, gated
+# behind the KVM_DEVICE_PATH env var (defaults to the always-safe /dev/null,
+# set to /dev/kvm in .env only on hosts that actually have it). That base
+# file is included by both local_start.sh and the actual CI deploy path
+# (DEPLOY_CMD), so a separate -f docker-compose.prod.yml overlay is no
+# longer necessary for that. production_start.sh (below) still references
+# this file, so it's kept as an empty overlay rather than deleted; set
+# KVM_DEVICE_PATH=/dev/kvm in that host's .env instead of relying on this
+# file - see docker-compose.yml's `sandbox.devices` comment for details.
 
 services:
-  sandbox:
-    devices:
-      # Passes host KVM through so microsandbox (sandbox_service/msb_sandbox.py)
-      # can boot per-user microVMs. The sandbox backend auto-detects this at
-      # runtime and falls back to a plain local shell if unavailable, but
-      # the device still needs to exist for microsandbox to work at all.
-      - /dev/kvm:/dev/kvm
+  sandbox: {}
