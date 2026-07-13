@@ -1462,6 +1462,7 @@ function processChunk(chunk) {
         }
 
         let message = null;
+        let contentAlreadyApplied = false;
 
         if (chunk.start) {
             const newMessage = normalizeStdStreamMessage({
@@ -1478,6 +1479,7 @@ function processChunk(chunk) {
             appendMessage(newMessage);
             setActiveMessageId(chunk, newMessage.id);
             message = newMessage;
+            contentAlreadyApplied = true;
         } else if (chunk.error) {
             const errorMessage = chunk.error.message || chunk.error;
             appendSystemMessage(errorMessage, { persist: true });
@@ -1503,6 +1505,7 @@ function processChunk(chunk) {
                 appendMessage(newMessage);
                 setActiveMessageId(chunk, newMessage.id);
                 message = newMessage;
+                contentAlreadyApplied = false;
             }
 
             if (chunk.end) {
@@ -1517,7 +1520,9 @@ function processChunk(chunk) {
 
             message.format = chunk.format || message.format || undefined;
             message.recipient = chunk.recipient || message.recipient || undefined;
-            message.content += chunk.content || '';
+            if (!contentAlreadyApplied) {
+                message.content += chunk.content || '';
+            }
 
             updateMessageContent(message.id, message.content);
         }

@@ -1,0 +1,15 @@
+version: '3.8'
+
+# NOTE: superseded - the `sandbox.devices` /dev/kvm passthrough this file
+# used to add now lives directly in the base docker-compose.yml, gated
+# behind the KVM_DEVICE_PATH env var (defaults to the always-safe /dev/null,
+# set to /dev/kvm in .env only on hosts that actually have it). That base
+# file is included by both local_start.sh and the actual CI deploy path
+# (DEPLOY_CMD), so a separate -f docker-compose.prod.yml overlay is no
+# longer necessary for that. production_start.sh (below) still references
+# this file, so it's kept as an empty overlay rather than deleted; set
+# KVM_DEVICE_PATH=/dev/kvm in that host's .env instead of relying on this
+# file - see docker-compose.yml's `sandbox.devices` comment for details.
+
+services:
+  sandbox: {}

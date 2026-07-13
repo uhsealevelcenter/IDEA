@@ -1,0 +1,12 @@
+requests
+pandas
+numpy
+matplotlib
+seaborn
+langchain-core
+langchain-openai
+litellm==1.83.14
+beautifulsoup4==4.12.3
+nest-asyncio==1.6.0
+paper-qa==2026.1.5
+paper-qa-pymupdf==2026.1.5

@@ -212,3 +212,11 @@ local_scripts/
 .codex/
 !.codex/config.toml
 !.codex/AGENTS.md
+
+.ideaenv
+
+/langgraph/output
+/langgraph/tmp
+
+# SSH keys - never commit
+.ssh/

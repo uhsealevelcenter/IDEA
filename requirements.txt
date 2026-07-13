@@ -1352,3 +1352,7 @@ zipp==3.20.2
     # via
     #   idea
     #   importlib-metadata
+orjson==3.10.17
+    # via
+    #   idea
+    #   langsmith
