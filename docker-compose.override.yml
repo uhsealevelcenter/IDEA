@@ -28,7 +28,8 @@ services:
       - "127.0.0.1:5434:5432" # direct DB access for dev, but localhost-only on a public VM
   
   frontend:
-      image: python:3.11-alpine
+      # Pinned by digest (was floating :3.11-alpine).
+      image: python@sha256:cf0253107a1e77e63c814a05428308965a47eb44a2d62fc828564c4a8c839fab
       ports:
         - "127.0.0.1:8003:8000"  # Changed from expose to ports for direct access if needed; localhost-only on a public VM
       volumes:
@@ -41,7 +42,9 @@ services:
         - web
 
   nginx:
-    image: nginx:alpine
+    # Pinned by digest (was floating :alpine) - currently resolves to
+    # nginx 1.31.2. Re-pin deliberately when you want to move forward.
+    image: nginx@sha256:1a8724a52d432501548a8d8681bb1554c2d09778f8b9ed0882fc3442549980b7
     ports:
       - "0.0.0.0:80:80"
     volumes:
@@ -54,7 +57,9 @@ services:
       - openwebui
       
   redis:
-    image: redis:alpine
+    # Pinned by digest (was floating :alpine) - currently resolves to
+    # Redis 8.8.0. Re-pin deliberately when you want to move forward.
+    image: redis@sha256:9eb6a7ba3d344e1958c7e1589fa3dee90373a934e8159c634562a91d622759a0
     ports:
       - "127.0.0.1:6380:6379" # localhost-only so Redis isn't public (containers reach it over the docker network)
     volumes:

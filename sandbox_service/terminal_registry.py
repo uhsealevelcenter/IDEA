@@ -224,6 +224,26 @@ def _get_terminal(sandbox_id: str):
         return _terminals[sandbox_id]
 
 
+def stop_all_terminals() -> int:
+    """
+    Gracefully stop every cached terminal - called from main.py's shutdown
+    hook so a container stop/restart cleanly unmounts each microVM's disk
+    overlay first, instead of the runtime SIGKILLing it mid-write. An
+    unclean kill can leave upper.ext4 (see msb_sandbox.py) in a state the
+    runtime won't resume from on next start, silently losing that
+    sandbox's files even with persistent storage mounted.
+
+    Returns the number of terminals stopped.
+    """
+    with _registry_lock:
+        sandbox_ids = list(_terminals.keys())
+    count = 0
+    for sandbox_id in sandbox_ids:
+        if stop_terminal(sandbox_id):
+            count += 1
+    return count
+
+
 def stop_terminal(sandbox_id: str) -> bool:
     """
     Gracefully stop (state-preserving) and remove a sandbox_id's terminal
@@ -354,8 +374,5 @@ def file_exists(filepath: str, sandbox_id: str) -> bool:
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
         if isinstance(terminal, MicrosandboxTerminal):
-            try:
-                return terminal._run(terminal._sandbox.fs.exists(filepath))
-            except Exception:
-                return False
+            return terminal.file_exists(filepath)
         return os.path.isfile(filepath)

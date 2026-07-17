@@ -135,19 +135,77 @@ class MicrosandboxTerminal:
 
         self._connect_or_create()
 
-    def _run(self, coro, timeout: Optional[float] = None):
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+    def _run(self, coro_factory, timeout: Optional[float] = None):
+        """
+        Run `coro_factory()` (a zero-arg callable returning an awaitable) on
+        this instance's dedicated background loop/thread, and block the
+        calling thread for the result.
+
+        `coro_factory` must be a *callable*, not a pre-evaluated
+        coroutine/awaitable - the microsandbox SDK's async methods (e.g.
+        `.shell()`, `.fs.write()`) bind to whichever event loop is running
+        at the moment they're *called*, returning an already-scheduled
+        Future tied to that loop rather than a portable coroutine object.
+        Since this method is normally invoked from FastAPI's request
+        handler (running on uvicorn's own event loop, not self._loop),
+        evaluating e.g. `self._sandbox.shell(command)` eagerly at the call
+        site - then handing the result to `run_coroutine_threadsafe()`
+        targeting self._loop - raises "TypeError: A coroutine object is
+        required" (self._loop != uvicorn's loop). Wrapping the SDK call in
+        a lambda/callable defers it until it's actually executing inside
+        self._loop's thread, where `asyncio.get_running_loop()` correctly
+        resolves to self._loop.
+        """
+        async def _runner():
+            return await coro_factory()
+
+        future = asyncio.run_coroutine_threadsafe(_runner(), self._loop)
         return future.result(timeout=timeout)
+
+    def _exec(self, coro_factory, timeout: Optional[float] = None):
+        """
+        Like `_run()`, but resilient to the sandbox having been stopped out
+        from under us since we last connected/created it.
+
+        `self._sandbox` is a handle obtained once (in `_connect_or_create()`,
+        called only from `__init__`) and then cached for this
+        MicrosandboxTerminal's lifetime - but `terminal_registry.py` also
+        caches *this whole object* per sandbox_id for the life of the
+        service process. The microsandbox runtime itself can independently
+        stop the underlying microVM at any time via `idle_timeout`/
+        `max_duration` (see module docstring constants above) with no
+        callback to us, so a long-idle-then-resumed session hits a cached
+        handle pointing at a VM that's no longer running - surfacing as
+        "sandbox ... has no agent endpoint (is it running?)" from the SDK.
+        On that failure, reconnect (`Sandbox.start()` resumes a
+        stopped-but-not-removed sandbox with its filesystem intact - see
+        `_connect_or_create()`) and retry once before giving up.
+        """
+        try:
+            return self._run(coro_factory, timeout=timeout)
+        except Exception:
+            self._connect_or_create()
+            return self._run(coro_factory, timeout=timeout)
 
     def _connect_or_create(self):
         from microsandbox import Sandbox
+        from microsandbox.errors import SandboxNotFoundError
 
         async def _get_sandbox():
+            # Explicitly branch on the sandbox's actual current state
+            # instead of a blind try/except-fallback-to-create(): calling
+            # Sandbox.create() on a name that already exists (e.g. because
+            # Sandbox.start() raised for some *other* reason - already
+            # running, a transient RPC error, etc.) silently reprovisions
+            # it, wiping its filesystem. Sandbox.get() + status is a
+            # read-only check with no such side effect, so use it to
+            # decide which of create()/start()/connect() is actually safe.
             try:
-                # Resumes an existing stopped-but-not-removed sandbox of this
-                # name with its filesystem state intact, if one exists.
-                return await Sandbox.start(self.session_id, detached=True)
-            except Exception:
+                handle = await Sandbox.get(self.session_id)
+            except SandboxNotFoundError:
+                handle = None
+
+            if handle is None:
                 create_kwargs = dict(
                     image=self.image,
                     cpus=self.cpus,
@@ -160,7 +218,14 @@ class MicrosandboxTerminal:
                     create_kwargs["max_duration"] = self.max_duration
                 return await Sandbox.create(self.session_id, **create_kwargs)
 
-        self._sandbox = self._run(_get_sandbox())
+            await handle.refresh()
+            if handle.status == "running":
+                return await handle.connect()
+            # Resumes an existing stopped-but-not-removed sandbox of this
+            # name with its filesystem state intact.
+            return await Sandbox.start(self.session_id, detached=True)
+
+        self._sandbox = self._run(_get_sandbox)
 
     def run(self, command: str) -> tuple[bool, str, float]:
         """
@@ -171,7 +236,7 @@ class MicrosandboxTerminal:
         """
         start_time = time.time()
         try:
-            output = self._run(self._sandbox.shell(command), timeout=self._exec_timeout(command))
+            output = self._exec(lambda: self._sandbox.shell(command), timeout=self._exec_timeout(command))
         except Exception as e:
             elapsed_time = time.time() - start_time
             return False, f"Sandbox execution failed: {e}", elapsed_time
@@ -208,16 +273,16 @@ class MicrosandboxTerminal:
         """
         tmp_path = f"/tmp/.oi_kernel_code_{uuid.uuid4().hex}.py"
         try:
-            self._run(self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
-            output = self._run(
-                self._sandbox.shell(f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path}"),
+            self._exec(lambda: self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
+            output = self._exec(
+                lambda: self._sandbox.shell(f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path}"),
                 timeout=self._exec_timeout(code),
             )
         except Exception as e:
             return {"chunks": [{"type": "console", "format": "output", "content": f"Kernel exec failed: {e}"}]}
         finally:
             try:
-                self._run(self._sandbox.shell(f"rm -f {tmp_path}"))
+                self._exec(lambda: self._sandbox.shell(f"rm -f {tmp_path}"))
             except Exception:
                 pass
 
@@ -247,7 +312,7 @@ class MicrosandboxTerminal:
         last_error: Optional[Exception] = None
         for _ in range(retries):
             try:
-                data = self._run(self._sandbox.fs.read(OPEN_TERMINAL_KEY_PATH))
+                data = self._exec(lambda: self._sandbox.fs.read(OPEN_TERMINAL_KEY_PATH))
                 key = data.decode("utf-8").strip()
                 if key:
                     self._open_terminal_key = key
@@ -278,7 +343,7 @@ class MicrosandboxTerminal:
             "curl -s -w '\\n%{http_code}' "
             f"-H {shlex.quote('Authorization: Bearer ' + key)} {shlex.quote(url)}"
         )
-        output = self._run(self._sandbox.shell(cmd), timeout=60.0)
+        output = self._exec(lambda: self._sandbox.shell(cmd), timeout=60.0)
         text = output.stdout_text or ""
         body, _, status = text.rpartition("\n")
         try:
@@ -342,13 +407,20 @@ class MicrosandboxTerminal:
             # No native append API - emulate via shell so it stays atomic
             # inside the sandbox rather than round-tripping bytes twice.
             escaped = content.replace("'", "'\\''")
-            self._run(self._sandbox.shell(f"printf '%s' '{escaped}' >> {filepath}"))
+            self._exec(lambda: self._sandbox.shell(f"printf '%s' '{escaped}' >> {filepath}"))
         else:
-            self._run(self._sandbox.fs.write(filepath, data))
+            self._exec(lambda: self._sandbox.fs.write(filepath, data))
 
     def read_file(self, filepath: str) -> bytes:
         """Read raw bytes of a file from inside the sandbox (e.g. for image display)."""
-        return self._run(self._sandbox.fs.read(filepath))
+        return self._exec(lambda: self._sandbox.fs.read(filepath))
+
+    def file_exists(self, filepath: str) -> bool:
+        """Check whether filepath exists inside the sandbox."""
+        try:
+            return self._exec(lambda: self._sandbox.fs.exists(filepath))
+        except Exception:
+            return False
 
     def close(self):
         """
@@ -364,7 +436,7 @@ class MicrosandboxTerminal:
         """
         try:
             if self._sandbox is not None:
-                self._run(self._sandbox.stop())
+                self._run(self._sandbox.stop)
         except Exception:
             pass
         finally:
@@ -380,8 +452,8 @@ class MicrosandboxTerminal:
             from microsandbox import Sandbox
 
             if self._sandbox is not None:
-                self._run(self._sandbox.kill())
-            self._run(Sandbox.remove(self.session_id))
+                self._run(self._sandbox.kill)
+            self._run(lambda: Sandbox.remove(self.session_id))
         except Exception:
             pass
         finally:

@@ -1,4 +1,4 @@
-fastapi
-uvicorn[standard]
-pexpect
-microsandbox
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+pexpect==4.9.0
+microsandbox==0.6.6

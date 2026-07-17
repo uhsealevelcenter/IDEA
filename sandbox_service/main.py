@@ -19,6 +19,23 @@ import terminal_registry as registry
 
 app = FastAPI(title="Sandbox Service", version="1.0.0")
 
+
+@app.on_event("shutdown")
+def _stop_all_terminals_on_shutdown() -> None:
+    """
+    Cleanly stop every active sandbox before this process exits, so a
+    container stop/restart/redeploy doesn't SIGKILL a running microVM
+    mid-write - see terminal_registry.stop_all_terminals for why an
+    unclean kill can strand a sandbox's disk overlay in a state the
+    runtime won't resume from, even with /root/.microsandbox on a
+    persistent volume (see docker-compose.yml's sandbox service).
+    Uvicorn only runs this on a graceful shutdown (SIGTERM within Docker's
+    default stop grace period) - a SIGKILL still bypasses it entirely.
+    """
+    stopped = registry.stop_all_terminals()
+    print(f"Shutdown: gracefully stopped {stopped} sandbox terminal(s)")
+
+
 # Shared secret between this service's only caller (langgraph, via
 # langgraph/tools/persistent_terminal.py) and this service itself - not a
 # per-user credential. See langgraph/langgraph_service.py for the

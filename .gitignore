@@ -26,6 +26,7 @@ coverage.xml
 
 # FastAPI
 .env
+.env.old
 
 # IDEs and editors
 .idea/

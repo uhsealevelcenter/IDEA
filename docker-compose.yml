@@ -29,7 +29,9 @@ services:
       - db
 
   db:
-    image: pgvector/pgvector:pg17
+    # Pinned by digest (was floating :pg17) - currently resolves to
+    # PostgreSQL 17.10. Re-pin deliberately when you want to move forward.
+    image: pgvector/pgvector@sha256:be400b50812ab2cc908ed78593fda2e51e3b45fe774fa637f1c7b16e68531d95
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
@@ -48,7 +50,9 @@ services:
       - POSTGRES_DB=${POSTGRES_DB?Variable not set}
 
   redis:
-    image: redis:alpine
+    # Pinned by digest (was floating :alpine) - currently resolves to
+    # Redis 8.8.0. Re-pin deliberately when you want to move forward.
+    image: redis@sha256:9eb6a7ba3d344e1958c7e1589fa3dee90373a934e8159c634562a91d622759a0
     restart: unless-stopped
     ports:
       - "127.0.0.1:6380:6379" # so that we can have SEA and IDEA on the same machine; localhost-only so Redis isn't public (containers reach it over the docker network)
@@ -105,6 +109,19 @@ services:
     container_name: idea_sandbox
     # See the matching comment on `langgraph` above - no host ports here
     # either; dev-only exposure lives in docker-compose.override.yml.
+    volumes:
+      # Without this, ALL microsandbox state (its own internal SQLite
+      # tracking db at /root/.microsandbox/db/msb.db, cached VM images, and
+      # critically each sandbox's upper.ext4 disk overlay - i.e. every
+      # user's actual files) lives only in this container's throwaway
+      # writable layer and is wiped on every container recreate (e.g. a
+      # rebuild) - see the official microsandbox docs' "Persistent data"
+      # section. A plain container restart (no recreate) *should* survive
+      # without this volume too, but pair this with a graceful shutdown
+      # hook (stop active sandboxes before the container exits) since an
+      # unclean SIGKILL mid-write can still leave upper.ext4 in a state
+      # the runtime won't resume from.
+      - idea_microsandbox_data:/root/.microsandbox
     devices:
       # Passes host KVM through so microsandbox (sandbox_service/msb_sandbox.py)
       # can boot per-user microVMs. Gated behind KVM_DEVICE_PATH (set to
@@ -144,13 +161,17 @@ services:
   # `web`'s API routes (/api/, /idea-api/, /conversations/, /share/) are
   # untouched since other things may still depend on them.
   openwebui:
-    # TODO: pin to a specific released tag (e.g. ghcr.io/open-webui/
-    # open-webui:v0.x.y) instead of the floating :main once you've picked
-    # one to track - see the architecture doc's "OpenWebUI upgrade
-    # compatibility" section for why (upstream default-behavior changes,
-    # e.g. native tool-calling becoming the v0.10.0 default, shouldn't be
-    # able to reach this deployment via a routine `docker compose pull`).
-    image: ghcr.io/open-webui/open-webui:main
+    # Pinned by digest (was previously floating :main - see the
+    # architecture doc's "OpenWebUI upgrade compatibility" section for why
+    # that's dangerous: upstream default-behavior changes, e.g. native
+    # tool-calling becoming the v0.10.0 default, could otherwise reach this
+    # deployment via a routine `docker compose pull`). This digest is
+    # whatever :main resolved to as of 2026-07-15 (v0.10.2) - swap it out
+    # deliberately (and re-verify openwebui/functions/idea_pipe.py still
+    # works) whenever you want to move forward, rather than pulling
+    # unpinned. TODO: switch to a proper vX.Y.Z release tag once you've
+    # picked one to track long-term instead of a raw digest.
+    image: ghcr.io/open-webui/open-webui@sha256:a26effeb220e132482bf7e0560b3404843e7bc40d23051144e062960df8df6b0
     container_name: idea_openwebui
     restart: unless-stopped
     ports:
@@ -161,6 +182,32 @@ services:
       - WEBUI_NAME=IDEA
       - ENABLE_OLLAMA_API=false
       - LANGGRAPH_SERVICE_URL=http://langgraph:8010
+      # Default (40) is a concurrency *ceiling* for blocking/sync ops, not
+      # a thread/CPU count - too low for this deployment's usage (each
+      # sandbox output file synced into Open WebUI via terminal_agent.py's
+      # _sync_outputs_to_openwebui() competes with normal chat/API traffic
+      # for the same pool). Symptoms when exhausted: requests appear to
+      # "hang" for 10s-multiple minutes while CPU/RAM look fine - exactly
+      # what caused the repeated "Read timed out" sync failures and
+      # intermittent inability to reload a conversation. Raising this is
+      # NOT a contention risk per Open WebUI's own docs - do not lower it.
+      # We deliberately do NOT set UVICORN_WORKERS>1 here instead - this
+      # deployment uses the default local SQLite-backed ChromaDB, and
+      # multiple uvicorn workers fork()-sharing that same SQLite connection
+      # crashes workers on concurrent document upload (see Open WebUI's
+      # "Scaling & HA" troubleshooting doc, worker-crash section) - would
+      # trade a slow failure mode for a hard one.
+      - THREAD_POOL_SIZE=2000
+      # Throttles last_active_at presence writes to once per user per this
+      # many seconds instead of on every single request (the unset
+      # default) - see the THREAD_POOL_SIZE comment above and Open WebUI's
+      # own "Scaling & HA" troubleshooting doc ("Database Corruption /
+      # Locked Errors" section) for why a flood of these tiny UPDATE/COMMIT
+      # writes against the local SQLite file can hold up unrelated writes
+      # (e.g. the file-sync POSTs from terminal_agent.py's
+      # _sync_outputs_to_openwebui()) that happen to land in the same
+      # window of active chat usage.
+      - DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL=60
     volumes:
       - idea_openwebui_data:/app/backend/data
       # NOTE: this does NOT auto-register the Pipe function - Open WebUI
@@ -178,3 +225,4 @@ volumes:
   idea_redis_data:
   app-db-data:
   idea_openwebui_data:
+  idea_microsandbox_data:

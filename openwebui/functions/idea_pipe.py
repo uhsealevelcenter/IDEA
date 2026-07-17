@@ -140,6 +140,12 @@ class Pipe:
         elif chunk_type == "image" and content:
             ext = (fmt or "base64.png").split(".")[-1]
             yield f"\n\n![generated image](data:image/{ext};base64,{content})\n\n"
+        elif chunk_type == "heartbeat":
+            # Keeps bytes flowing over the wire during a long silent
+            # blocking tool call (see TerminalAgent._invoke_with_heartbeat)
+            # so nothing along the chain mistakes the connection for dead.
+            # Empty string is a no-op content delta for Open WebUI.
+            yield ""
         elif chunk_type == "file":
             # terminal_agent.py already uploaded this file to Open WebUI's own
             # Files API (see TerminalAgent._sync_outputs_to_openwebui) and

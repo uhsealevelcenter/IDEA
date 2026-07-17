@@ -9,7 +9,9 @@ import uuid
 import base64
 import hashlib
 import requests
-from typing import Dict, Any, Optional, Callable
+import threading
+import queue
+from typing import Dict, Any, Optional, Callable, Iterable, Iterator
 from pathlib import Path
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -17,7 +19,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files, run_python
+from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files
 from utils.tools import DATA_TOOLS
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
@@ -50,9 +52,19 @@ class TerminalAgent:
         # by the frontend on every page load - see assistant.js generateId).
         # This is what makes the sandbox a genuinely *dedicated-per-user*
         # environment that a user reconnects to instead of getting a fresh
-        # one every time. Falls back to session_id for callers that don't
-        # have a stable user_id (e.g. run_agent_task's one-off CLI usage).
-        self.sandbox_id = str(user_id) if user_id else session_id
+        # one every time. A missing user_id used to silently fall back to
+        # session_id (e.g. for run_agent_task's one-off CLI usage) - now a
+        # hard error instead, since a silent fallback here is exactly the
+        # kind of gap that can cause multiple callers to collide on a
+        # shared sandbox (see idea_pipe.py's own "anonymous" fallback for
+        # a related, separate collision case on the caller side).
+        if not user_id:
+            raise ValueError(
+                "TerminalAgent requires a non-empty user_id - refusing to "
+                "fall back to session_id, which is not guaranteed unique "
+                "per user and would risk multiple callers sharing a sandbox."
+            )
+        self.sandbox_id = str(user_id)
         
         # Terminal/filesystem tools bound to this user's own sandbox (or
         # local shell, if sandboxing is unavailable) - never shared with
@@ -61,22 +73,19 @@ class TerminalAgent:
             self.run_terminal_tool,
             self.write_file_tool,
             self.show_image_tool,
-            self.run_python_tool,
-            self.grep_search_tool,
-            self.glob_search_tool,
+            # run_python_tool/grep_search_tool/glob_search_tool are unpacked
+            # but deliberately left out of self.all_tools below - they all
+            # require the oi-kernel/Open Terminal image (SANDBOX_IMAGE),
+            # which isn't what's currently deployed (bare "python"), so the
+            # LLM would only get errors back if it tried to call them.
+            _run_python_tool,
+            _grep_search_tool,
+            _glob_search_tool,
         ) = make_agent_tools(self.sandbox_id)
-        # grep_search_tool/glob_search_tool need no special-case streaming
-        # (unlike run_terminal_tool/write_file_tool/show_image_tool/
-        # run_python_tool above) - they're simple text-in/text-out calls,
-        # so they go through the generic tools_by_name dispatch below,
-        # same as DATA_TOOLS.
         self.all_tools = [
             self.run_terminal_tool,
             self.write_file_tool,
             self.show_image_tool,
-            self.run_python_tool,
-            self.grep_search_tool,
-            self.glob_search_tool,
             *DATA_TOOLS,
         ]
         self.tools_by_name = {t.name: t for t in self.all_tools}
@@ -121,6 +130,13 @@ class TerminalAgent:
         Returns a list of {'filename', 'openwebui_file_id'} dicts for
         successfully synced files.
         """
+        # TODO: re-enable once sync latency/timeouts (blocking `run()` for
+        # up to 60s per file on a slow/unreachable Open WebUI, sometimes
+        # stalling the whole turn) are addressed - see msb_sandbox.py sync
+        # investigation. Disabled outright rather than gating on
+        # OPENWEBUI_API_KEY so it's a one-line flip to restore.
+        return []
+
         if not OPENWEBUI_API_KEY:
             return []
 
@@ -146,6 +162,100 @@ class TerminalAgent:
                 continue
 
         return synced
+
+    @staticmethod
+    def _invoke_with_heartbeat(
+        fn: Callable[[], Any],
+        stream_callback: Optional[Callable[[dict], None]],
+        interval: float = 3.0,
+    ) -> Any:
+        """
+        Run `fn()` (a zero-arg blocking call) on a background thread, and
+        stream a harmless 'heartbeat' chunk every `interval` seconds while
+        it's in flight.
+
+        This exists because a single tool call (e.g. write_file_tool on a
+        very large file) can legitimately block for a long time with no
+        stream_callback activity in between - and that silence, not any one
+        fixed numeric timeout, was what caused Open WebUI's frontend to
+        report "reconnecting" and then hang (see nginx.conf / docker logs
+        investigation - no single proxy/read timeout matched the observed
+        <5-minute stall). Emitting *something* over the wire periodically
+        defeats any idle-based disconnect detection anywhere in the chain
+        (nginx, Open WebUI's own socket handling, the browser) regardless of
+        exactly where it lives, without changing the substance of the
+        response - idea_pipe.py's _translate_chunk turns 'heartbeat' chunks
+        into an empty string.
+        """
+        result_box: Dict[str, Any] = {}
+        error_box: Dict[str, Exception] = {}
+
+        def _target():
+            try:
+                result_box['value'] = fn()
+            except Exception as e:
+                error_box['error'] = e
+
+        thread = threading.Thread(target=_target, daemon=True)
+        thread.start()
+        while thread.is_alive():
+            thread.join(timeout=interval)
+            if thread.is_alive() and stream_callback:
+                stream_callback({'role': 'computer', 'type': 'heartbeat'})
+
+        if 'error' in error_box:
+            raise error_box['error']
+        return result_box.get('value')
+
+    @staticmethod
+    def _iter_with_heartbeat(
+        iterable: Iterable,
+        stream_callback: Optional[Callable[[dict], None]],
+        interval: float = 3.0,
+    ) -> Iterator:
+        """
+        Like _invoke_with_heartbeat, but for a blocking *iterable* (e.g.
+        self.llm.stream(messages)) instead of a single blocking call.
+
+        Drains `iterable` on a background thread into a queue; the calling
+        thread yields each item as it arrives, or emits a heartbeat via
+        stream_callback if `interval` seconds pass with no new item. This is
+        needed in addition to _invoke_with_heartbeat because a streaming LLM
+        response can go quiet for a long time between chunks that have
+        actual text content (e.g. while it's emitting a large tool-call
+        argument token by token with no visible .content per chunk - see the
+        Iteration 3 stall this was added for, where 2690 chunks arrived with
+        response_content length 0, so the existing per-chunk
+        stream_callback(chunk.content) call in run() never fired even once).
+        """
+        _SENTINEL = object()
+        q: "queue.Queue" = queue.Queue()
+        error_box: Dict[str, Exception] = {}
+
+        def _drain():
+            try:
+                for item in iterable:
+                    q.put(item)
+            except Exception as e:
+                error_box['error'] = e
+            finally:
+                q.put(_SENTINEL)
+
+        thread = threading.Thread(target=_drain, daemon=True)
+        thread.start()
+        while True:
+            try:
+                item = q.get(timeout=interval)
+            except queue.Empty:
+                if stream_callback:
+                    stream_callback({'role': 'computer', 'type': 'heartbeat'})
+                continue
+            if item is _SENTINEL:
+                break
+            yield item
+
+        if 'error' in error_box:
+            raise error_box['error']
 
     def reset_terminal(self):
         """Gracefully stop (state-preserving) this user's sandbox/terminal."""
@@ -212,7 +322,7 @@ class TerminalAgent:
                 response_content = ""
                 aggregated_chunks = None
                 chunk_count = 0
-                for chunk in self.llm.stream(messages):
+                for chunk in self._iter_with_heartbeat(self.llm.stream(messages), stream_callback):
                     chunk_count += 1
                     if hasattr(chunk, 'content') and chunk.content:
                         response_content += chunk.content
@@ -357,7 +467,10 @@ class TerminalAgent:
                                 'end': True
                             })
                         
-                        result = self.write_file_tool.invoke(tool_call['args'])
+                        result = self._invoke_with_heartbeat(
+                            lambda: self.write_file_tool.invoke(tool_call['args']),
+                            stream_callback,
+                        )
                         
                         # Stream result status
                         if stream_callback:
@@ -414,74 +527,6 @@ class TerminalAgent:
                                 'start': True,
                                 'end': True
                             })
-
-                    elif tool_name == 'run_python_tool':
-                        code = tool_call['args']['code']
-                        print(f"\n🐍 Python code to execute (persistent kernel):")
-                        print(f"{'─'*60}")
-                        print(code)
-                        print(f"{'─'*60}")
-
-                        if stream_callback:
-                            stream_callback({
-                                'role': 'computer',
-                                'type': 'code',
-                                'format': 'python',
-                                'content': code,
-                                'start': True,
-                                'end': True
-                            })
-
-                        # Calls the sandbox once directly (not via
-                        # self.run_python_tool.invoke) so the raw chunks
-                        # are available to stream images/console output
-                        # individually, the same way show_image_tool's
-                        # branch below pulls raw bytes separately from the
-                        # tool's own text result - invoking the tool here
-                        # too would execute the code a second time.
-                        chunks = run_python(code, session_id=self.sandbox_id)
-                        console_texts = []
-                        for chunk in chunks:
-                            ctype = chunk.get('type')
-                            if ctype == 'console':
-                                content = chunk.get('content', '')
-                                if not content:
-                                    continue
-                                console_texts.append(content)
-                                if stream_callback:
-                                    stream_callback({
-                                        'role': 'computer',
-                                        'type': 'console',
-                                        'format': 'output',
-                                        'content': content,
-                                        'start': True,
-                                        'end': True
-                                    })
-                            elif ctype == 'image':
-                                b64_content = chunk.get('content', '')
-                                img_format = (chunk.get('format') or 'base64.png').split('.')[-1]
-                                content_hash = hashlib.sha256(b64_content.encode('utf-8')).hexdigest()
-                                if content_hash in self._shown_image_hashes:
-                                    continue
-                                self._shown_image_hashes.add(content_hash)
-                                console_texts.append(f"[image generated: {img_format}]")
-                                if stream_callback:
-                                    stream_callback({
-                                        'role': 'assistant',
-                                        'type': 'image',
-                                        'format': f'base64.{img_format}',
-                                        'content': '',
-                                        'start': True
-                                    })
-                                    stream_callback({
-                                        'role': 'assistant',
-                                        'type': 'image',
-                                        'format': f'base64.{img_format}',
-                                        'content': b64_content,
-                                        'end': True
-                                    })
-
-                        result = "\n".join(t for t in console_texts if t.strip()) or "(no output)"
 
                     elif tool_name in self.tools_by_name:
                         # Generic dispatch for data tools (datetime, station, climate, web search, knowledge base)
