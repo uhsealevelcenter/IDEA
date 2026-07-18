@@ -10,21 +10,116 @@ still gets its own isolated terminal, just resolved server-side by
 sandbox_service instead of in this process.
 """
 
+import json
 import os
+import time
+import uuid
 from typing import Optional
 import httpx
 from langchain_core.tools import tool
 
-# Base URL of the sandbox_service (see docker-compose.yml). A generous
-# read timeout is used since commands can legitimately run for a long time
-# (sandbox_service's own per-command ceiling is 1800s).
-SANDBOX_SERVICE_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox:8020").rstrip("/")
-_HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=1800.0, write=60.0, pool=10.0)
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from config import (
+    SANDBOX_SERVICE_URL,
+    SANDBOX_HTTP_CONNECT_TIMEOUT_SECONDS,
+    SANDBOX_HTTP_READ_TIMEOUT_SECONDS,
+    SANDBOX_HTTP_WRITE_TIMEOUT_SECONDS,
+    SANDBOX_HTTP_POOL_TIMEOUT_SECONDS,
+    INTERNAL_SERVICE_TOKEN as _INTERNAL_SERVICE_TOKEN,
+    OUTPUT_HEAD_TAIL_LINES,
+    MAX_OUTPUT_TOKENS,
+    TEMP_OUTPUT_DIR as _TEMP_OUTPUT_DIR,
+)
 
-# Must match sandbox_service/main.py's INTERNAL_SERVICE_TOKEN (same .env
-# value, injected into both containers - see docker-compose.yml). Sent on
-# every request; sandbox_service no-ops the check if its own copy is unset.
-_INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+_HTTP_TIMEOUT = httpx.Timeout(
+    connect=SANDBOX_HTTP_CONNECT_TIMEOUT_SECONDS,
+    read=SANDBOX_HTTP_READ_TIMEOUT_SECONDS,
+    write=SANDBOX_HTTP_WRITE_TIMEOUT_SECONDS,
+    pool=SANDBOX_HTTP_POOL_TIMEOUT_SECONDS,
+)
+
+try:
+    import tiktoken
+    _ENCODER = tiktoken.get_encoding("cl100k_base")
+except Exception:
+    _ENCODER = None
+
+
+def _count_tokens(text: str) -> int:
+    """Best-effort token count - uses tiktoken if available, else a ~4 chars/token heuristic."""
+    if not text:
+        return 0
+    if _ENCODER is not None:
+        try:
+            return len(_ENCODER.encode(text))
+        except Exception:
+            pass
+    return max(1, len(text) // 4)
+
+
+def _guess_output_extension(output: str) -> str:
+    """Best-effort guess at an appropriate file extension for raw command output."""
+    stripped = output.strip()
+    if not stripped:
+        return "log"
+    if stripped[0] in "{[":
+        try:
+            json.loads(stripped)
+            return "json"
+        except Exception:
+            pass
+    lines = stripped.splitlines()
+    if len(lines) > 1:
+        comma_counts = {line.count(",") for line in lines[:20] if line.strip()}
+        if len(comma_counts) == 1 and comma_counts.pop() > 0:
+            return "csv"
+    if stripped.startswith("<"):
+        return "html" if "<html" in stripped.lower() else "xml"
+    return "log"
+
+
+def _truncate_output(
+    output: str,
+    n_lines: int = OUTPUT_HEAD_TAIL_LINES,
+    max_tokens: int = MAX_OUTPUT_TOKENS,
+) -> str:
+    """
+    Truncate `output` to at most its first/last `n_lines` lines, then
+    further enforce a hard `max_tokens` cap (trimming evenly from the
+    head/tail blocks if needed, e.g. for a handful of extremely long
+    lines) so a single command's output can never blow out the LLM's
+    context window. The caller is responsible for saving the full,
+    untruncated output elsewhere (see run_terminal's temp-file save).
+    """
+    lines = output.splitlines()
+    if len(lines) > 2 * n_lines:
+        head = "\n".join(lines[:n_lines])
+        tail = "\n".join(lines[-n_lines:])
+        omitted = len(lines) - 2 * n_lines
+        truncated = f"{head}\n\n... [{omitted} line(s) omitted] ...\n\n{tail}"
+    else:
+        truncated = output
+
+    if _count_tokens(truncated) <= max_tokens:
+        return truncated
+
+    # Still over budget (e.g. a few very long lines) - trim characters
+    # evenly from the head/tail instead.
+    chars_per_token = max(1, len(truncated) // max(1, _count_tokens(truncated)))
+    max_chars = max_tokens * chars_per_token
+    if len(truncated) <= max_chars:
+        return truncated
+    half = max_chars // 2
+    return (
+        f"{truncated[:half]}\n\n... [truncated to fit {max_tokens}-token limit] ...\n\n{truncated[-half:]}"
+    )
+
+# _INTERNAL_SERVICE_TOKEN imported from config.py above - must match
+# sandbox_service/main.py's own INTERNAL_SERVICE_TOKEN (same .env value,
+# injected into both containers - see docker-compose.yml). Sent on every
+# request; sandbox_service no-ops the check if its own copy is unset.
 _default_headers = (
     {"Authorization": f"Bearer {_INTERNAL_SERVICE_TOKEN}"} if _INTERNAL_SERVICE_TOKEN else {}
 )
@@ -67,7 +162,10 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
         session_id: Identifier for the persistent shell session (default: 'default')
         
     Returns:
-        The output from running the command (stdout/stderr)
+        The output from running the command (stdout/stderr), truncated to
+        its first/last OUTPUT_HEAD_TAIL_LINES lines and MAX_OUTPUT_TOKENS
+        tokens - the full output is saved to a temp file in the sandbox
+        (see read_output_range for paging through it).
     """
     try:
         response = _client.post(f"/sandboxes/{session_id}/exec", json={"command": command})
@@ -82,11 +180,38 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
 
     mins, secs = divmod(int(elapsed_time), 60)
     time_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+    status_line = (
+        f"✓ Command executed successfully in {time_str}."
+        if success else f"✗ Command failed after {time_str}."
+    )
 
-    if success:
-        return f"✓ Command executed successfully in {time_str}.\nOutput:\n{output if output else '(no output)'}"
+    if not output:
+        return f"{status_line}\nOutput:\n(no output)"
+
+    ext = _guess_output_extension(output)
+    output_filepath = f"{_TEMP_OUTPUT_DIR}/output_{int(time.time())}_{uuid.uuid4().hex[:8]}.{ext}"
+    write_result = write_file(output_filepath, output, session_id=session_id)
+    saved_ok = write_result.startswith("✓")
+
+    truncated_output = _truncate_output(output)
+    was_truncated = truncated_output != output
+
+    parts = [status_line, "Output:", truncated_output]
+    if was_truncated:
+        parts.append(
+            f"\n(Output truncated to first/last {OUTPUT_HEAD_TAIL_LINES} lines, "
+            f"max {MAX_OUTPUT_TOKENS} tokens.)"
+        )
+    if saved_ok:
+        parts.append(f"\nFull output saved to: {output_filepath}")
+        parts.append(
+            "Use read_output_range_tool(filepath, offset, n_limit) to read "
+            "specific character ranges of this file if you need more detail."
+        )
     else:
-        return f"✗ Command failed after {time_str}.\nOutput:\n{output}"
+        parts.append(f"\n(Failed to save full output to a temp file: {write_result})")
+
+    return "\n".join(parts)
 
 
 def write_file(filepath: str, content: str, session_id: str, append: bool = False) -> str:
@@ -118,6 +243,34 @@ def read_file_bytes(filepath: str, session_id: str) -> bytes:
     response = _client.get(f"/sandboxes/{session_id}/files/content", params={"filepath": filepath})
     response.raise_for_status()
     return response.content
+
+
+def read_output_range(filepath: str, session_id: str, offset: int = 0, n_limit: int = 2000) -> str:
+    """
+    Read a slice of a text file's content, starting at character `offset`
+    and returning up to `n_limit` characters - lets a caller page through a
+    large file (e.g. the full output saved by run_terminal) without pulling
+    the whole thing into context at once.
+    """
+    try:
+        data = read_file_bytes(filepath, session_id=session_id)
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("detail", str(e)) if e.response is not None else str(e)
+        return f"✗ {detail}"
+    except httpx.HTTPError as e:
+        return f"✗ Failed to reach sandbox service: {e}"
+
+    text = data.decode("utf-8", errors="replace")
+    total_len = len(text)
+
+    if offset < 0:
+        offset = max(0, total_len + offset)
+    if offset >= total_len:
+        return f"(offset {offset} is at/past end of file - total length is {total_len} characters)"
+
+    chunk = text[offset:offset + n_limit]
+    end = offset + len(chunk)
+    return f"Characters {offset}-{end} of {total_len} total in {filepath}:\n\n{chunk}"
 
 
 def file_exists(filepath: str, session_id: str) -> bool:
@@ -238,8 +391,9 @@ def glob_search(
 
 def make_agent_tools(session_id: str):
     """
-    Build a run_terminal_tool / write_file_tool / show_image_tool set bound to
-    one specific session's terminal (local shell or microsandbox microVM).
+    Build a run_terminal_tool / write_file_tool / show_image_tool /
+    read_output_range_tool set bound to one specific session's terminal
+    (local shell or microsandbox microVM).
 
     Every TerminalAgent must build its own set via this factory instead of
     sharing module-level tool instances, so concurrent users never end up
@@ -281,6 +435,26 @@ def make_agent_tools(session_id: str):
             - write_file_tool("data.txt", "new line\\n", append=True)
         """
         return write_file(filepath, content, session_id=session_id, append=append)
+
+    @tool
+    def read_output_range_tool(filepath: str, offset: int = 0, n_limit: int = 2000) -> str:
+        """
+        Read a slice of a (typically large) file's text content - e.g. the
+        full command output saved by run_terminal_tool when its result was
+        truncated ("Full output saved to: ..."). Lets you page through the
+        file incrementally instead of loading it all at once.
+
+        Args:
+            filepath: Path to the file (e.g. the "Full output saved to:"
+                      path returned by run_terminal_tool).
+            offset: Character index to start reading from (0-based, default 0).
+            n_limit: Maximum number of characters to return (default 2000).
+
+        Returns:
+            The requested character range, prefixed with its position and
+            the file's total length, or an error message.
+        """
+        return read_output_range(filepath, session_id=session_id, offset=offset, n_limit=n_limit)
 
     @tool
     def run_python_tool(code: str) -> str:
@@ -432,6 +606,7 @@ def make_agent_tools(session_id: str):
         run_terminal_tool,
         write_file_tool,
         show_image_tool,
+        read_output_range_tool,
         run_python_tool,
         grep_search_tool,
         glob_search_tool,

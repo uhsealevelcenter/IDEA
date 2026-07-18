@@ -73,6 +73,7 @@ class TerminalAgent:
             self.run_terminal_tool,
             self.write_file_tool,
             self.show_image_tool,
+            self.read_output_range_tool,
             # run_python_tool/grep_search_tool/glob_search_tool are unpacked
             # but deliberately left out of self.all_tools below - they all
             # require the oi-kernel/Open Terminal image (SANDBOX_IMAGE),
@@ -86,6 +87,7 @@ class TerminalAgent:
             self.run_terminal_tool,
             self.write_file_tool,
             self.show_image_tool,
+            self.read_output_range_tool,
             *DATA_TOOLS,
         ]
         self.tools_by_name = {t.name: t for t in self.all_tools}
