@@ -796,10 +796,31 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
         # Also DO NOT emit again when the function_call item completes
         if t == "response.output_item.done":
             item = _get(ev, "item")
-            if _get(item, "type") == "function_call":
+            item_type = _get(item, "type")
+            if hasattr(item_type, "value"):
+                item_type = item_type.value
+            if item_type == "function_call":
                 # We've already streamed the incremental arguments pieces.
                 # Emitting again here would double-append. Do nothing.
                 pass
+            elif item_type == "compaction":
+                item_id = _get(item, "id") or _get(ev, "item_id")
+                logger.info(
+                    "Server-side conversation compaction completed "
+                    "(response_id=%s, item_id=%s)",
+                    pending_response_id,
+                    item_id,
+                )
+                yield {
+                    "choices": [{
+                        "delta": {
+                            "compaction": {
+                                "status": "completed",
+                                "item_id": item_id,
+                            }
+                        }
+                    }]
+                }
             continue
 
         # ── Completion / error ─────────────────────────────────────────────────

@@ -276,6 +276,14 @@ def run_tool_calling_llm(llm, request_params):
                 raise RuntimeError("Model returned an error finish.")
             continue
 
+        if delta.get("compaction"):
+            yield {
+                "type": "message",
+                "format": "compaction_status",
+                "content": "Conversation compacted",
+            }
+            continue
+
         # Chat Completions-style tool_calls → function_call (kept for judge/code streaming)
         if "tool_calls" in delta and delta["tool_calls"]:
             function_call_detected = True

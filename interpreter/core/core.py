@@ -315,6 +315,8 @@ class OpenInterpreter:
                 return True
             if "format" in chunk and chunk["format"] == "execution_status":
                 return True
+            if "format" in chunk and chunk["format"] == "compaction_status":
+                return True
             if chunk["type"] == "review":
                 return True
             return False
