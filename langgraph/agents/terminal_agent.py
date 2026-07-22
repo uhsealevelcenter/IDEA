@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files
 from utils.tools import DATA_TOOLS
+from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
 
@@ -39,9 +40,13 @@ class TerminalAgent:
     The LLM can write code to files, run scripts, install packages, and solve tasks iteratively.
     """
     
-    def __init__(self, session_id: str, user_id: Optional[str] = None, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
+    def __init__(self, session_id: str, user_id: Optional[str] = None, user_email: Optional[str] = None, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
         self.session_id = session_id
         self.user_id = user_id
+        # Used only for LiteLLM per-end-user spend tracking (see
+        # LITELLM_END_USER_HEADER below) - the sandbox/session identity
+        # above is still keyed off user_id, not this.
+        self.user_email = user_email
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
@@ -93,16 +98,26 @@ class TerminalAgent:
         self.tools_by_name = {t.name: t for t in self.all_tools}
         
         # Initialize LLM with tools
-        # Azure AI Foundry OpenAI-compatible endpoint: OPENAI_API_KEY and
-        # OPENAI_BASE_URL (e.g. https://<resource>.services.ai.azure.com/openai/v1)
-        # are read from the environment and passed explicitly to ChatOpenAI.
+        # Routed through the LiteLLM proxy (see litellm/ and
+        # docker-compose.yml's `litellm` service) rather than hitting the
+        # Azure AI Foundry endpoint directly - LITELLM_VIRTUAL_KEY is one
+        # key shared by every user (a $50 total budget, not per-user), and
+        # LITELLM_END_USER_HEADER carries this user's email so LiteLLM can
+        # still attribute spend/usage per end user despite the shared key.
         # Reasoning models (e.g., gpt-5.5) only support the provider default
         # temperature - omit the kwarg entirely when temperature is None.
+        if not LITELLM_VIRTUAL_KEY:
+            raise RuntimeError(
+                "LITELLM_VIRTUAL_KEY is not set - see example.env for how to "
+                "generate the shared virtual key from the litellm service."
+            )
+        end_user_id = (self.user_email or self.user_id or "anonymous").strip()
         llm_kwargs: Dict[str, Any] = {
             "model": model,
             "streaming": True,
-            "api_key": os.getenv("OPENAI_API_KEY"),
-            "base_url": os.getenv("OPENAI_BASE_URL"),
+            "api_key": LITELLM_VIRTUAL_KEY,
+            "base_url": LITELLM_PROXY_URL,
+            "default_headers": {LITELLM_END_USER_HEADER: end_user_id},
         }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature

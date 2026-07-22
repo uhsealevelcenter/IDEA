@@ -2657,6 +2657,7 @@ async def chat_runs_langgraph_endpoint(request: Request, token: str = Depends(ge
         payload = {
             "session_id": session_id,
             "user_id": str(user.id),
+            "user_email": user.email,
             "is_guest": is_guest,
             "messages": messages,
             "model": IDEA_GUEST_MODEL if is_guest else IDEA_DEFAULT_MODEL,
@@ -2768,6 +2769,7 @@ async def chat_langgraph_endpoint(request: Request, background_tasks: Background
         payload = {
             "session_key": session_key,
             "user_id": str(user.id),
+            "user_email": user.email,
             "is_guest": is_guest,
             "message": last_message,
             "model": IDEA_GUEST_MODEL if is_guest else IDEA_DEFAULT_MODEL,

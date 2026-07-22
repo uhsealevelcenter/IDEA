@@ -54,3 +54,28 @@ MAX_OUTPUT_TOKENS = 5000
 # untruncated output is saved as a temp file - readable afterward via
 # read_output_range_tool(filepath, offset, n_limit).
 TEMP_OUTPUT_DIR = "/tmp/idea_command_outputs"
+
+# --- LiteLLM proxy ---
+# Originally defined in: agents/terminal_agent.py
+# All LLM calls are routed through the LiteLLM proxy (see litellm/ and
+# docker-compose.yml's `litellm` service) instead of hitting the Azure AI
+# Foundry endpoint directly - this is what makes per-user spend tracking
+# (via LITELLM_END_USER_HEADER below) and the shared $50 budget on
+# LITELLM_VIRTUAL_KEY possible. "http://litellm:8080" is this service's
+# hostname on the docker network (see docker-compose.yml), not a host
+# port - LITELLM_PROXY_URL only needs overriding for local, non-Docker
+# development.
+LITELLM_PROXY_URL = os.getenv("LITELLM_PROXY_URL", "http://litellm:8080").rstrip("/")
+
+# Single virtual key shared by every user (not one key per user) - see
+# example.env for how to generate it (POST /key/generate with max_budget:
+# 50). Per-user attribution instead comes from LITELLM_END_USER_HEADER
+# below, which LiteLLM records against the *end user*, not the key.
+LITELLM_VIRTUAL_KEY = os.getenv("LITELLM_VIRTUAL_KEY", "")
+
+# HTTP header LiteLLM proxy uses to attribute spend/usage to an individual
+# end user despite every request sharing the one LITELLM_VIRTUAL_KEY above
+# - see https://docs.litellm.ai/docs/proxy/users. Set to the user's email
+# (see terminal_agent.py) rather than their Open WebUI user id, per
+# product requirements.
+LITELLM_END_USER_HEADER = "x-litellm-end-user-id"

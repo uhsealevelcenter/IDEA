@@ -4,7 +4,12 @@
 echo "Stopping Docker Compose stack..."
 docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 
-# Step 2: Bring up the Docker Compose stack in detached mode
+# Step 2: Ensure the LiteLLM proxy's dedicated Postgres role/schema exists
+# on the `db` service (idempotent, safe to re-run every time).
+echo "Setting up LiteLLM database role/schema..."
+./litellm/setup_litellm_db.sh
+
+# Step 3: Bring up the Docker Compose stack in detached mode
 echo "Starting Docker Compose stack..."
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
