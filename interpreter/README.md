@@ -31,6 +31,11 @@ Keeping the interpreter in the IDEA repository lets us:
 
 The active model path uses LiteLLM's Responses API adapter. It records the prior
 Responses `response.id` and sends it as `previous_response_id` on the next turn.
+Every Responses request also enables OpenAI server-side compaction through
+`context_management`, using IDEA's configured compaction threshold. This lets
+the provider compact the rendered context in-stream, including during tool-call
+continuations that occur within one user turn. IDEA's explicit standalone
+compaction path remains as a fallback for local and restored conversation state.
 When the model calls IDEA's `execute` tool, the interpreter preserves the
 Responses `call_id` and converts console, image, or other execution output into
 `function_call_output` items before continuing the model turn.

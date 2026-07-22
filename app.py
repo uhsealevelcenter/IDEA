@@ -1791,6 +1791,13 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         interpreter.llm.context_window = GPT55_CONTEXT_WINDOW # GPT-5.5 max context window
         interpreter.llm.max_input_tokens = MAX_INPUT_TOKEN_THRESHOLD # Keep request input below long-context pricing guardrail
         interpreter.llm.max_tokens = MAX_COMPLETION_TOKENS # Responses max_output_tokens
+        # OpenAI server-side compaction runs in-stream using rendered token count.
+        interpreter.llm.context_management = [
+            {
+                "type": "compaction",
+                "compact_threshold": COMPACTION_INPUT_TOKEN_THRESHOLD,
+            }
+        ]
 
         # # Intelligence models (e.g., GPT4.1)
         # interpreter.llm.temperature = 0.2 # Temperature (0-2, float) --> fairly deterministic

@@ -71,6 +71,7 @@ class Llm:
         self.context_window = None
         self.max_input_tokens = None
         self.max_tokens = None
+        self.context_management = None
         self.api_base = None
         self.api_key = None
         self.api_version = None
@@ -534,6 +535,8 @@ class Llm:
         if self.max_tokens:
             #params["max_tokens"] = self.max_tokens # Chat completions param
             params["max_output_tokens"] = self.max_tokens # Responses param      
+        if self.context_management:
+            params["context_management"] = self.context_management
         if self.temperature is not None and _allows_sampling_knobs(model):
             # Only add temperature if the model allows it
             params["temperature"] = self.temperature
