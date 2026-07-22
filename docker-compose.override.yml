@@ -91,5 +91,14 @@ services:
       - PYTHONUNBUFFERED=1
     command: uvicorn main:app --host 0.0.0.0 --port 8020
 
+  litellm:
+    # Dev-only direct access for debugging (curl localhost:8030/health,
+    # the admin UI at /ui, etc.) - not present in the base
+    # docker-compose.yml so production_start.sh never publishes this port.
+    # Host port 8030 (not the container's own 8080) to avoid clashing with
+    # unrelated services already bound to 8080 on this host.
+    ports:
+      - "8030:8080"
+
 volumes:
   redis_data:

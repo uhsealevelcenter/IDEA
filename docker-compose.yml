@@ -100,6 +100,7 @@ services:
     depends_on:
       - redis
       - sandbox
+      - litellm
 
   sandbox:
     build:
@@ -154,6 +155,41 @@ services:
       # this must be listed explicitly to reach the container at all.
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
 
+  # LiteLLM proxy - fronts the same Azure AI Foundry OpenAI-compatible
+  # endpoint langgraph/ already talks to directly, exposing only gpt-5.5
+  # (see litellm/litellm_config.yaml). Uses a dedicated Postgres
+  # role+schema on the existing `db` service rather than its own database
+  # container - see litellm/init_litellm_db.sql / setup_litellm_db.sh,
+  # which must be run once (idempotent, safe to re-run) before this
+  # service can start successfully.
+  litellm:
+    build:
+      context: ./litellm
+      dockerfile: ./Dockerfile
+    image: idea-litellm
+    container_name: idea_litellm
+    restart: unless-stopped
+    # No host ports here either - dev-only exposure lives in
+    # docker-compose.override.yml, matching langgraph/sandbox above.
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # Assembled here (not in .env) since env_file values are injected
+      # literally, not variable-expanded - see example.env's LiteLLM
+      # section and litellm/init_litellm_db.sql for how the `litellm`
+      # role/schema this points at get created.
+      - LITELLM_DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}?schema=litellm
+    volumes:
+      # Lets the config be edited without rebuilding the image.
+      - ./litellm/litellm_config.yaml:/app/litellm_config.yaml:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
   # Open WebUI frontend, talking to the existing langgraph service via the
   # Pipe function in ./openwebui/functions/idea_pipe.py. Replaces the old
   # static `frontend` at the root domain - see nginx.conf's `location /`
@@ -171,7 +207,7 @@ services:
     # works) whenever you want to move forward, rather than pulling
     # unpinned. TODO: switch to a proper vX.Y.Z release tag once you've
     # picked one to track long-term instead of a raw digest.
-    image: ghcr.io/open-webui/open-webui@sha256:a26effeb220e132482bf7e0560b3404843e7bc40d23051144e062960df8df6b0
+    image: ghcr.io/uhsealevelcenter/idea-open-webui:d8a7ea308@sha256:1b299b743f67df87c8bf8a6e2b131ccf9ab7a5f387961f0a246078a73e869c9d
     container_name: idea_openwebui
     restart: unless-stopped
     ports:

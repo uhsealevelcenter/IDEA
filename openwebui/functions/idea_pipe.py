@@ -67,6 +67,10 @@ class Pipe:
         # langgraph_service.py + sandbox_service key everything off of - see
         # IMPLEMENTATION_STATUS.md "Stage 1 - Dedicated per-user sandbox".
         user_id = str(user.get("id") or "anonymous")
+        # Used only for LiteLLM per-end-user spend tracking (see
+        # agents/terminal_agent.py's LITELLM_END_USER_HEADER) - not used
+        # for sandbox/session identity, which stays keyed off user_id above.
+        user_email = user.get("email") or None
         # Open WebUI's per-conversation chat_id keeps history scoped per chat
         # the same way the existing frontend's browser_session_id does.
         session_id = str(body.get("chat_id") or "default")
@@ -78,6 +82,7 @@ class Pipe:
         payload = {
             "session_key": f"{user_id}:{session_id}",
             "user_id": user_id,
+            "user_email": user_email,
             "is_guest": is_guest,
             "message": user_content,
             "model": self.valves.MODEL,

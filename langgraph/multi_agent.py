@@ -53,9 +53,14 @@ class ConversationOrchestrator:
         db: Optional[Session] = None,
         model: str = "gpt-5.5",
         temperature: Optional[float] = None,
-        max_iterations: int = 20
+        max_iterations: int = 20,
+        user_email: Optional[str] = None
     ):
         self.user_id = user_id
+        # Passed through to TerminalAgent for LiteLLM per-end-user spend
+        # tracking only (see agents/terminal_agent.py) - not used for
+        # sandbox/session identity, which stays keyed off user_id.
+        self.user_email = user_email
         self.session_id = session_id
         self.is_guest = is_guest
         self.db = db
@@ -136,6 +141,7 @@ class ConversationOrchestrator:
             self._agent = TerminalAgent(
                 session_id=self.session_id,
                 user_id=self.user_id,
+                user_email=self.user_email,
                 model=self.model,
                 temperature=self.temperature,
                 max_iterations=self.max_iterations

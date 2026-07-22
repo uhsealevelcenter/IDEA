@@ -1,0 +1,74 @@
+# LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
+# `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
+# endpoint that langgraph/ already talks to directly (see
+# langgraph/agents/terminal_agent.py) - only gpt-5.5 is exposed here.
+
+model_list:
+  - model_name: gpt-5.5
+    litellm_params:
+      # "openai/" provider (not "azure/") since OPENAI_BASE_URL is the
+      # unified Azure AI Foundry OpenAI-compatible endpoint (e.g.
+      # https://<resource>.services.ai.azure.com/openai/v1), not the
+      # legacy Azure OpenAI SDK endpoint that needs api_version/deployment
+      # IDs - same convention langgraph's ChatOpenAI usage relies on.
+      model: openai/gpt-5.5
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
+general_settings:
+  # Admin/virtual-key auth for this proxy - see example.env's
+  # LITELLM_MASTER_KEY (distinct from INTERNAL_SERVICE_TOKEN, which guards
+  # langgraph<->sandbox instead).
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+  # Dedicated `litellm` Postgres role + schema on the existing `db`
+  # service's database - see litellm/init_litellm_db.sql and
+  # docker-compose.yml's `litellm` service (LITELLM_DATABASE_URL is
+  # assembled there from LITELLM_DB_PASSWORD, since env_file values in
+  # .env are not variable-expanded).
+  database_url: os.environ/LITELLM_DATABASE_URL
+
+  # Don't re-display the master key through API surfaces (e.g. GET
+  # /user/info) after initial setup.
+  disable_master_key_return: true
+
+  # If the DB is unreachable, do not fall back to "best effort" traffic
+  # without normal DB-backed checks - keep virtual-key validation and
+  # spend tracking intact rather than risking untracked LLM calls.
+  allow_requests_on_db_unavailable: false
+
+  # Persist prompts/completions in the spend-logs table (DB).
+  store_prompts_in_spend_logs: true
+
+  proxy_batch_write_at: 60 # Batch-write spend updates every 60s.
+  database_connection_pool_limit: 10 # Per worker process; total = limit x workers x instances.
+
+  # --- Abuse / capacity guardrails ---
+  # Generous enough for normal LLM traffic, but catches runaway
+  # requests/misconfigurations before they consume excess proxy memory or
+  # provider tokens. Adjust to actual workload if this ever gets busy.
+  max_response_size_mb: 32
+  max_parallel_requests: 50
+  global_max_parallel_requests: 250
+
+litellm_settings:
+  set_verbose: false # Disable debug logging in production.
+  json_logs: true # Structured (JSON) logs.
+  request_timeout: 600 # Seconds to wait on the upstream LLM API call.
+
+  # Cache responses in the existing `redis` service (see
+  # docker-compose.yml) - same instance langgraph_service.py already uses
+  # for conversation history. No password since that instance has none.
+  cache: true
+  cache_params:
+    type: redis
+    host: os.environ/REDIS_HOST
+    port: os.environ/REDIS_PORT
+    ttl: 3600 # 1 hour
+
+  # Redact virtual-key/team identifiers from logging callbacks (not
+  # applicable here yet, but harmless to leave on); does not affect
+  # store_prompts_in_spend_logs above.
+  redact_user_api_key_info: true

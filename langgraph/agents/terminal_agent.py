@@ -19,8 +19,9 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files
+from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files, run_python
 from utils.tools import DATA_TOOLS
+from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
 
@@ -39,9 +40,13 @@ class TerminalAgent:
     The LLM can write code to files, run scripts, install packages, and solve tasks iteratively.
     """
     
-    def __init__(self, session_id: str, user_id: Optional[str] = None, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
+    def __init__(self, session_id: str, user_id: Optional[str] = None, user_email: Optional[str] = None, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
         self.session_id = session_id
         self.user_id = user_id
+        # Used only for LiteLLM per-end-user spend tracking (see
+        # LITELLM_END_USER_HEADER below) - the sandbox/session identity
+        # above is still keyed off user_id, not this.
+        self.user_email = user_email
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
@@ -73,12 +78,21 @@ class TerminalAgent:
             self.run_terminal_tool,
             self.write_file_tool,
             self.show_image_tool,
-            # run_python_tool/grep_search_tool/glob_search_tool are unpacked
-            # but deliberately left out of self.all_tools below - they all
-            # require the oi-kernel/Open Terminal image (SANDBOX_IMAGE),
-            # which isn't what's currently deployed (bare "python"), so the
-            # LLM would only get errors back if it tried to call them.
-            _run_python_tool,
+            self.read_output_range_tool,
+            # run_python_tool now requires the oi-kernel image
+            # (SANDBOX_IMAGE=idea/oi-kernel:slim or similar) - it degrades
+            # gracefully (a clear error chunk, not a crash) on sandboxes
+            # still running the bare "python" image, so it's safe to
+            # expose even before every user's sandbox has been recreated
+            # on the new image. See sandbox_service/terminal_registry.py's
+            # run_python() and msb_sandbox.py's run_python().
+            self.run_python_tool,
+            # grep_search_tool/glob_search_tool are unpacked but still left
+            # out of self.all_tools below - unlike run_python_tool, they
+            # raise (not a clean error chunk) on the local/bare-"python"
+            # backend (see terminal_registry.grep_search/glob_search), so
+            # enabling them needs every sandbox already on the oi-kernel
+            # image first.
             _grep_search_tool,
             _glob_search_tool,
         ) = make_agent_tools(self.sandbox_id)
@@ -86,21 +100,33 @@ class TerminalAgent:
             self.run_terminal_tool,
             self.write_file_tool,
             self.show_image_tool,
+            self.read_output_range_tool,
+            self.run_python_tool,
             *DATA_TOOLS,
         ]
         self.tools_by_name = {t.name: t for t in self.all_tools}
         
         # Initialize LLM with tools
-        # Azure AI Foundry OpenAI-compatible endpoint: OPENAI_API_KEY and
-        # OPENAI_BASE_URL (e.g. https://<resource>.services.ai.azure.com/openai/v1)
-        # are read from the environment and passed explicitly to ChatOpenAI.
+        # Routed through the LiteLLM proxy (see litellm/ and
+        # docker-compose.yml's `litellm` service) rather than hitting the
+        # Azure AI Foundry endpoint directly - LITELLM_VIRTUAL_KEY is one
+        # key shared by every user (a $50 total budget, not per-user), and
+        # LITELLM_END_USER_HEADER carries this user's email so LiteLLM can
+        # still attribute spend/usage per end user despite the shared key.
         # Reasoning models (e.g., gpt-5.5) only support the provider default
         # temperature - omit the kwarg entirely when temperature is None.
+        if not LITELLM_VIRTUAL_KEY:
+            raise RuntimeError(
+                "LITELLM_VIRTUAL_KEY is not set - see example.env for how to "
+                "generate the shared virtual key from the litellm service."
+            )
+        end_user_id = (self.user_email or self.user_id or "anonymous").strip()
         llm_kwargs: Dict[str, Any] = {
             "model": model,
             "streaming": True,
-            "api_key": os.getenv("OPENAI_API_KEY"),
-            "base_url": os.getenv("OPENAI_BASE_URL"),
+            "api_key": LITELLM_VIRTUAL_KEY,
+            "base_url": LITELLM_PROXY_URL,
+            "default_headers": {LITELLM_END_USER_HEADER: end_user_id},
         }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
@@ -527,6 +553,80 @@ class TerminalAgent:
                                 'start': True,
                                 'end': True
                             })
+
+                    elif tool_name == 'run_python_tool':
+                        code = tool_call['args']['code']
+                        print(f"\n🐍 Python code to execute (persistent kernel):")
+                        print(f"{'─'*60}")
+                        print(code)
+                        print(f"{'─'*60}")
+
+                        if stream_callback:
+                            stream_callback({
+                                'role': 'computer',
+                                'type': 'code',
+                                'format': 'python',
+                                'content': code,
+                                'start': True,
+                                'end': True
+                            })
+
+                        # Call tools.persistent_terminal.run_python() directly
+                        # (not self.run_python_tool) to get the raw Open
+                        # Interpreter chunk list, so console output and
+                        # images can be streamed to the frontend as they're
+                        # produced, instead of only the flattened text
+                        # summary run_python_tool's own wrapper returns.
+                        chunks = self._invoke_with_heartbeat(
+                            lambda: run_python(code, session_id=self.sandbox_id),
+                            stream_callback,
+                        )
+
+                        console_texts = []
+                        image_count = 0
+                        for chunk in chunks:
+                            chunk_type = chunk.get('type')
+                            if chunk_type == 'console' and chunk.get('format') != 'active_line':
+                                content = chunk.get('content', '')
+                                if content:
+                                    console_texts.append(content)
+                                    if stream_callback:
+                                        stream_callback({
+                                            'role': 'computer',
+                                            'type': 'console',
+                                            'format': 'output',
+                                            'content': content,
+                                            'start': True,
+                                            'end': True
+                                        })
+                            elif chunk_type == 'image':
+                                b64_content = chunk.get('content', '')
+                                img_format = chunk.get('format', 'base64.png').split('.', 1)[-1]
+                                content_hash = hashlib.sha256(b64_content.encode('utf-8')).hexdigest()
+                                if content_hash in self._shown_image_hashes:
+                                    continue
+                                self._shown_image_hashes.add(content_hash)
+                                image_count += 1
+                                if stream_callback:
+                                    stream_callback({
+                                        'role': 'assistant',
+                                        'type': 'image',
+                                        'format': f'base64.{img_format}',
+                                        'content': '',
+                                        'start': True
+                                    })
+                                    stream_callback({
+                                        'role': 'assistant',
+                                        'type': 'image',
+                                        'format': f'base64.{img_format}',
+                                        'content': b64_content,
+                                        'end': True
+                                    })
+
+                        result = "\n".join(console_texts).strip()
+                        if image_count:
+                            result = (result + f"\n[{image_count} image(s) generated and shown to the user]").strip()
+                        result = result or "(no output)"
 
                     elif tool_name in self.tools_by_name:
                         # Generic dispatch for data tools (datetime, station, climate, web search, knowledge base)

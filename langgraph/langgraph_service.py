@@ -125,6 +125,10 @@ def _list_chat_run_events(run_id: str, after: int = 0) -> list[dict[str, Any]]:
 class ChatRequest(BaseModel):
     session_key: str
     user_id: str
+    # Used only for LiteLLM per-end-user spend tracking (see
+    # agents/terminal_agent.py) - optional so older callers without it
+    # still work (falls back to user_id there).
+    user_email: Optional[str] = None
     is_guest: bool
     message: str
     model: Optional[str] = "gpt-5.5"
@@ -136,6 +140,7 @@ class ChatRequest(BaseModel):
 class ChatRunRequest(BaseModel):
     session_id: str
     user_id: str
+    user_email: Optional[str] = None
     is_guest: bool
     messages: list[dict[str, Any]]
     model: Optional[str] = "gpt-5.5"
@@ -153,6 +158,7 @@ def _run_chat_job(
     is_guest: bool,
     messages: list[dict[str, Any]],
     model: str,
+    user_email: Optional[str] = None,
 ):
     """Background job to execute chat and stream events to Redis"""
     session_key = f"{user_id}:{session_id}"
@@ -175,7 +181,8 @@ def _run_chat_job(
             db=None,
             model=model,
             temperature=None,
-            max_iterations=20
+            max_iterations=20,
+            user_email=user_email
         )
         
         stored_messages = redis_client.get(f"langgraph_messages:{session_key}")
@@ -250,6 +257,7 @@ async def start_chat_run(request: ChatRunRequest):
             "run_id": run_id,
             "session_id": request.session_id,
             "user_id": request.user_id,
+            "user_email": request.user_email,
             "is_guest": request.is_guest,
             "messages": request.messages,
             "model": request.model,
@@ -309,7 +317,8 @@ async def chat_endpoint(request: ChatRequest):
             db=None,
             model=request.model,
             temperature=request.temperature,
-            max_iterations=request.max_iterations
+            max_iterations=request.max_iterations,
+            user_email=request.user_email
         )
         
         # Restore conversation history from Redis if requested

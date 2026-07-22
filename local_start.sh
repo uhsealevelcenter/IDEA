@@ -4,11 +4,16 @@
 echo "Stopping Docker Compose stack..."
 docker compose down
 
-# Step 2: Bring up the Docker Compose stack in detached mode
+# Step 2: Ensure the LiteLLM proxy's dedicated Postgres role/schema exists
+# on the `db` service (idempotent, safe to re-run every time).
+echo "Setting up LiteLLM database role/schema..."
+./litellm/setup_litellm_db.sh
+
+# Step 3: Bring up the Docker Compose stack in detached mode
 echo "Starting Docker Compose stack..."
 docker compose up -d --build
 
-# Step 3: Tail the logs for a specific container
+# Step 4: Tail the logs for a specific container
 # Replace 'IDEA_web' with your actual image or service name from the docker-compose.yml
 container_id=$(docker ps -qf "name=idea_container")
 
