@@ -177,7 +177,7 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 3); do
-            response=$(curl -fsS "http://${{ vars.VM_HOST }}:8002/idea-api/health" 2>/dev/null) || { echo "Waiting for app to come up ($i/3)..."; sleep 30; continue; }
+            response=$(curl -fsS "http://${{ vars.VM_HOST }}/idea-api/health" 2>/dev/null) || { echo "Waiting for app to come up ($i/3)..."; sleep 30; continue; }
             if echo "${response}" | grep -q '"${{ github.sha }}"'; then
               echo "Healthy. SHA verified: ${{ github.sha }}"; exit 0
             fi
