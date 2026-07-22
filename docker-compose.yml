@@ -207,7 +207,7 @@ services:
     # works) whenever you want to move forward, rather than pulling
     # unpinned. TODO: switch to a proper vX.Y.Z release tag once you've
     # picked one to track long-term instead of a raw digest.
-    image: ghcr.io/open-webui/open-webui@sha256:a26effeb220e132482bf7e0560b3404843e7bc40d23051144e062960df8df6b0
+    image: ghcr.io/uhsealevelcenter/idea-open-webui:d8a7ea308@sha256:1b299b743f67df87c8bf8a6e2b131ccf9ab7a5f387961f0a246078a73e869c9d
     container_name: idea_openwebui
     restart: unless-stopped
     ports:
