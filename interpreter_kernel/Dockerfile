@@ -60,6 +60,44 @@ COPY interpreter_kernel/daemon.py interpreter_kernel/client.py ./
 COPY interpreter_kernel/entrypoint.sh /opt/oi_kernel/entrypoint.sh
 RUN chmod +x /opt/oi_kernel/entrypoint.sh
 
+# Optional dependency module (mirrored from the repo root's pyproject.toml)
+# - see interpreter_kernel/modules/. Lets run_python_tool sessions `import`
+# those packages directly instead of installing them on demand mid-session
+# via run_terminal_tool. Toggle/select via ACTIVE_MODULE in
+# interpreter_kernel/config.env - "original" (the full pyproject.toml list)
+# is enabled by default.
+# Note: this is a much larger/slower layer than the minimal baseline above
+# (adds cartopy/rasterio/selenium/etc., not all of which the kernel daemon
+# itself ever imports - see daemon.py's module docstring).
+#
+# The "original" module needs GDAL/GEOS/PROJ headers to build rasterio/
+# cartopy/geopandas from source (this base image has none of them
+# preinstalled) - same system packages as the root Dockerfile's builder
+# stage.
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gdal-bin \
+    libgdal-dev \
+    libproj-dev \
+    libgeos-dev \
+    libspatialite-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+ENV GDAL_CONFIG=/usr/bin/gdal-config
+ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
+ENV C_INCLUDE_PATH=/usr/include/gdal
+
+COPY interpreter_kernel/config.env config.env
+COPY interpreter_kernel/modules/ modules/
+RUN . ./config.env \
+    && if [ "$ACTIVE_MODULE" != "none" ] && [ -f "modules/$ACTIVE_MODULE/requirements.txt" ]; then \
+         python3 -m pip install --no-cache-dir wheel setuptools cython numpy \
+         && python3 -m pip install --no-cache-dir rasterio==1.4.3 \
+         && python3 -m pip install --no-cache-dir -r "modules/$ACTIVE_MODULE/requirements.txt"; \
+       else \
+         echo "Skipping dependency module (ACTIVE_MODULE=$ACTIVE_MODULE in config.env)"; \
+       fi
+
 ENV PYTHONUNBUFFERED=1
 ENV OI_KERNEL_PORT=8721
 

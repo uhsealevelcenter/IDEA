@@ -74,6 +74,25 @@ of the bare `python` image. `run_terminal_tool`/`write_file_tool` work
 against any image; `run_python_tool`/`grep_search_tool`/`glob_search_tool`
 specifically require this one (or one built on top of it).
 
+## Dependency modules (`modules/`)
+
+`modules/` holds optional, swappable dependency sets, each a subfolder with
+its own `requirements.txt`. `config.env`'s `ACTIVE_MODULE` selects which one
+the Dockerfile installs at build time - `original` (mirroring the repo
+root's `pyproject.toml` `[project.dependencies]`, kept in sync manually -
+there is no automated sync) is enabled by default. This lets
+`run_python_tool` sessions `import` those packages directly instead of the
+agent installing them on demand mid-session via `run_terminal_tool`. Set
+`ACTIVE_MODULE=none` in `config.env` to skip the layer entirely and fall
+back to the minimal baseline above.
+
+The `original` module is a much heavier, slower-to-build layer than the
+minimal baseline (adds `cartopy`, `rasterio`, `selenium`, `paper-qa`, etc.)
+and some of these packages have system-level (e.g. GDAL/GEOS) dependencies
+that `ghcr.io/open-webui/open-terminal:slim`'s base image may not provide -
+verify the image still builds after changing this list, and add any missing
+`apt-get` packages to the Dockerfile if a wheel build fails.
+
 ## Private registry auth
 
 If this image is pushed to a *private* package (e.g.
