@@ -224,7 +224,7 @@ services:
     env_file:
       - .env
     environment:
-      - WEBUI_NAME=IDEA
+      - WEBUI_NAME=
       - ENABLE_OLLAMA_API=false
       - LANGGRAPH_SERVICE_URL=http://langgraph:8010
       # Default (40) is a concurrency *ceiling* for blocking/sync ops, not
