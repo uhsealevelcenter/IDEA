@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [dev, staging, main]
+    branches: [dev, staging, prod]
   # Manual trigger for redeploys / rollbacks without a new commit.
   workflow_dispatch:
     inputs:
@@ -31,7 +31,7 @@ jobs:
           case "${GITHUB_REF_NAME}" in
             dev)     echo "environment=dev"     >> "$GITHUB_OUTPUT" ;;
             staging) echo "environment=staging" >> "$GITHUB_OUTPUT" ;;
-            main)    echo "environment=prod"    >> "$GITHUB_OUTPUT" ;;
+            prod)    echo "environment=prod"    >> "$GITHUB_OUTPUT" ;;
             *)
               echo "::error::Branch '${GITHUB_REF_NAME}' is not mapped to an environment."
               exit 1
@@ -101,7 +101,7 @@ jobs:
         with:
           package-name: idea
           package-type: container
-          min-versions-to-keep: 5
+          min-versions-to-keep: 10
           delete-only-untagged-versions: false
 
   deploy:
@@ -177,7 +177,7 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 3); do
-            response=$(curl -fsS "http://${{ vars.VM_HOST }}:8002/idea-api/health" 2>/dev/null) || { echo "Waiting for app to come up ($i/3)..."; sleep 30; continue; }
+            response=$(curl -fsS "http://${{ vars.VM_HOST }}/idea-api/health" 2>/dev/null) || { echo "Waiting for app to come up ($i/3)..."; sleep 30; continue; }
             if echo "${response}" | grep -q '"${{ github.sha }}"'; then
               echo "Healthy. SHA verified: ${{ github.sha }}"; exit 0
             fi
