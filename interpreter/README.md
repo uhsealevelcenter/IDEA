@@ -31,14 +31,24 @@ Keeping the interpreter in the IDEA repository lets us:
 
 The active model path uses LiteLLM's Responses API adapter. It records the prior
 Responses `response.id` and sends it as `previous_response_id` on the next turn.
-Every Responses request also enables OpenAI server-side compaction through
-`context_management`, using IDEA's configured compaction threshold. This lets
-the provider compact the rendered context in-stream, including during tool-call
-continuations that occur within one user turn. IDEA's explicit standalone
-compaction path remains as a fallback for local and restored conversation state.
+Conversation compaction is selected with `IDEA_COMPACTION_MODE`: `server` (the
+default) enables OpenAI server-side compaction through `context_management`,
+`standalone` enables IDEA's explicit pre-request compact endpoint workflow, and
+`off` disables both. These modes are mutually exclusive. Server mode lets the
+provider compact the rendered context in-stream, including during tool-call
+continuations within one user turn. The standalone implementation remains
+available for fallback use and targeted testing without running alongside
+server-side compaction.
 When the model calls IDEA's `execute` tool, the interpreter preserves the
 Responses `call_id` and converts console, image, or other execution output into
 `function_call_output` items before continuing the model turn.
+
+Stateful Responses continuations must not fall back to replaying the complete
+local transcript. If IDEA's local message cursor drifts, it sends only the newest
+user message with `previous_response_id`. If a pending tool output was omitted by
+the cursor, IDEA reconstructs only that `function_call_output`; if reconstruction
+is impossible, the request fails instead of silently creating a long-context
+request.
 
 For mixed outputs from one code execution, such as text, then a plot, then more
 text, the converter aggregates all console STDOUT/STDERR chunks for the same

@@ -406,7 +406,9 @@ class OpenInterpreter:
                     # )
                     continue
 
-                # Check if the chunk's role, type, and format (if present) match the last_flag_base
+                # Non-console stream groups must have exactly the same format.
+                # Otherwise a late status event can overwrite an active assistant
+                # answer in the UI (for example, compaction_status after text).
                 if (
                     last_flag_base
                     and "role" in chunk
@@ -414,11 +416,8 @@ class OpenInterpreter:
                     and last_flag_base["role"] == chunk["role"]
                     and last_flag_base["type"] == chunk["type"]
                     and (
-                        "format" not in last_flag_base
-                        or (
-                            "format" in chunk
-                            and chunk["format"] == last_flag_base["format"]
-                        )
+                        chunk["type"] == "console"
+                        or last_flag_base.get("format") == chunk.get("format")
                     )
                 ):
                     # If they match, append the chunk's content to the current message's content

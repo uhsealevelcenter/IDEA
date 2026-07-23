@@ -476,6 +476,9 @@ async function loadConversationIntoInterpreter(messages) {
         
         const result = await response.json();
         console.log(`Loaded ${result.message_count} messages into interpreter context`);
+        if (typeof window.resetContextUsageState === 'function') {
+            window.resetContextUsageState();
+        }
         
     } catch (error) {
         console.error('Error loading conversation into interpreter:', error);

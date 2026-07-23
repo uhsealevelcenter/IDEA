@@ -91,6 +91,9 @@ class Llm:
         self.pending_tool_call_id = None
         self.compacted_input_items = []
         self.compaction_developer_message = None
+        # Exact provider-reported usage from the most recently completed
+        # Responses API call. This is populated from response.completed.
+        self.last_response_usage = None
 
     def reset_response_continuation(self):
         """Clear provider-side Responses continuation metadata."""
@@ -333,20 +336,38 @@ class Llm:
                     for m in recent_messages
                 ):
                     logger.warning(
-                        "Responses continuation would omit latest user message; replaying local history. "
+                        "Responses continuation cursor would omit the latest user message; "
+                        "sending only that message. "
                         "previous_response_id=%s previous_response_message_count=%s local_message_count=%s",
                         self.previous_response_id,
                         self.previous_response_message_count,
                         len(conversation_messages),
                     )
-                    self.reset_response_continuation()
+                    messages = [system_msg, latest_message]
                 else:
                     messages = [system_msg] + recent_messages
             else:
-                # Local history no longer matches the provider-side thread.
-                # Replay local history without previous_response_id instead of
-                # sending duplicate history into the existing Responses thread.
-                self.reset_response_continuation()
+                # A stale local cursor must never turn a stateful continuation
+                # into an expensive full-history replay. The provider already
+                # has the prior response, so recover with only the newest user
+                # message. Pending tool output is recovered below.
+                latest_message = conversation_messages[-1] if conversation_messages else None
+                if (
+                    isinstance(latest_message, dict)
+                    and latest_message.get("role") == "user"
+                    and latest_message.get("type", "message") == "message"
+                ):
+                    logger.warning(
+                        "Responses continuation cursor exceeds local history; "
+                        "sending only the latest user message. "
+                        "previous_response_id=%s previous_response_message_count=%s local_message_count=%s",
+                        self.previous_response_id,
+                        self.previous_response_message_count,
+                        len(conversation_messages),
+                    )
+                    messages = [system_msg, latest_message]
+                else:
+                    messages = [system_msg]
 
         # 1) Pull out the system message (string) for trimming.
         assert messages and messages[0].get("role") == "system", "First message must be system"
@@ -468,21 +489,56 @@ class Llm:
         if self.previous_response_id and self.pending_tool_call_id:
             output_ids = _function_call_output_ids(messages)
             if self.pending_tool_call_id not in output_ids:
-                logger.warning(
-                    "Responses continuation missing function_call_output; "
-                    "resetting continuation and replaying local history. "
-                    "previous_response_id=%s pending_tool_call_id=%s output_ids=%s recent_messages=%s",
-                    self.previous_response_id,
-                    self.pending_tool_call_id,
-                    sorted(output_ids),
-                    _recent_message_summary(),
+                pending_output_messages = [
+                    message
+                    for message in self.interpreter.messages
+                    if isinstance(message, dict)
+                    and message.get("call_id") == self.pending_tool_call_id
+                    and message.get("role") in ("computer", "tool", "function")
+                    and (
+                        message.get("type") in ("image", "file")
+                        or (
+                            message.get("type") == "console"
+                            and message.get("format") == "output"
+                        )
+                    )
+                ]
+                recovered_items = convert_to_openai_responses_messages(
+                    pending_output_messages,
+                    shrink_images=self.interpreter.shrink_images,
+                    interpreter=self.interpreter,
                 )
-                self.reset_response_continuation()
-                return (yield from self.run(
-                    [{"role": "system", "type": "message", "content": raw_system_message}]
-                    + self.interpreter.messages
-                ))
-            else:
+                recovered_items = [
+                    self._ensure_responses_message_shape(item)
+                    for item in recovered_items
+                ]
+                recovered_output_ids = _function_call_output_ids(recovered_items)
+                if self.pending_tool_call_id in recovered_output_ids:
+                    messages.extend(recovered_items)
+                    output_ids = _function_call_output_ids(messages)
+                    logger.warning(
+                        "Recovered pending function_call_output without replaying local history. "
+                        "previous_response_id=%s pending_tool_call_id=%s recovered_item_count=%s",
+                        self.previous_response_id,
+                        self.pending_tool_call_id,
+                        len(recovered_items),
+                    )
+                else:
+                    logger.error(
+                        "Responses continuation is missing the pending function_call_output and "
+                        "local recovery failed. Refusing to replay local history. "
+                        "previous_response_id=%s pending_tool_call_id=%s output_ids=%s recent_messages=%s",
+                        self.previous_response_id,
+                        self.pending_tool_call_id,
+                        sorted(output_ids),
+                        _recent_message_summary(),
+                    )
+                    raise RuntimeError(
+                        "Unable to continue the model response because its pending tool output "
+                        "could not be recovered. Please retry the message."
+                    )
+
+            if self.pending_tool_call_id in output_ids:
                 logger.debug(
                     "Responses continuation includes function_call_output. previous_response_id=%s "
                     "pending_tool_call_id=%s output_ids=%s recent_messages=%s",
@@ -698,6 +754,7 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
     # Track in-flight function calls by item_id
     func_calls = {}  # item_id -> {"name": str|None, "args": str}
     pending_response_id = None
+    announced_compaction_items = set()
 
     def _etype(ev):
         """
@@ -717,6 +774,47 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
         if isinstance(obj, dict):
             return obj.get(key, default)
         return getattr(obj, key, default)
+
+    def _usage_dict(usage):
+        """Normalize the Responses usage object without estimating any values."""
+        if usage is None:
+            return None
+
+        def _integer(obj, *keys):
+            for key in keys:
+                value = _get(obj, key)
+                if value is not None:
+                    try:
+                        return int(value)
+                    except (TypeError, ValueError):
+                        return value
+            return 0
+
+        input_details = (
+            _get(usage, "input_tokens_details")
+            or _get(usage, "input_token_details")
+            or {}
+        )
+        output_details = (
+            _get(usage, "output_tokens_details")
+            or _get(usage, "output_token_details")
+            or {}
+        )
+        return {
+            "input_tokens": _integer(usage, "input_tokens", "prompt_tokens"),
+            "cached_input_tokens": _integer(
+                input_details,
+                "cached_tokens",
+                "input_cached_tokens",
+            ),
+            "output_tokens": _integer(
+                usage,
+                "output_tokens",
+                "completion_tokens",
+            ),
+            "reasoning_tokens": _integer(output_details, "reasoning_tokens"),
+            "total_tokens": _integer(usage, "total_tokens"),
+        }
 
     for ev in events_iter:
         # print("[events] ev:", ev, flush=True)
@@ -744,7 +842,10 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
         # ── Function-call lifecycle ────────────────────────────────────────────
         if t == "response.output_item.added":
             item = _get(ev, "item")
-            if _get(item, "type") == "function_call":
+            item_type = _get(item, "type")
+            if hasattr(item_type, "value"):
+                item_type = item_type.value
+            if item_type == "function_call":
                 fid = _get(item, "id")
                 call_id = _get(item, "call_id") or fid
                 name = _get(item, "name")
@@ -761,6 +862,28 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
                             }
                         }]
                     }
+            elif item_type == "compaction":
+                item_id = _get(item, "id") or _get(ev, "item_id")
+                if item_id and item_id in announced_compaction_items:
+                    continue
+                if item_id:
+                    announced_compaction_items.add(item_id)
+                logger.info(
+                    "Server-side conversation compaction started "
+                    "(response_id=%s, item_id=%s)",
+                    pending_response_id,
+                    item_id,
+                )
+                yield {
+                    "choices": [{
+                        "delta": {
+                            "compaction": {
+                                "status": "started",
+                                "item_id": item_id,
+                            }
+                        }
+                    }]
+                }
             continue
 
         # Incremental JSON argument text
@@ -825,6 +948,9 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
 
         # ── Completion / error ─────────────────────────────────────────────────
         if (t == "response.completed") or t.endswith("response_completed"):
+            usage = _usage_dict(
+                _get(response, "usage") or _get(ev, "usage")
+            )
             if pending_response_id and llm is not None:
                 llm.previous_response_id = pending_response_id
                 llm.previous_response_message_count = len(llm.interpreter.messages)
@@ -832,6 +958,20 @@ def _responses_events_to_chat_deltas(events_iter, llm=None):
                 llm.compaction_developer_message = None
                 if not func_calls:
                     llm.pending_tool_call_id = None
+            if usage and llm is not None:
+                usage["response_id"] = pending_response_id
+                llm.last_response_usage = usage
+                logger.info(
+                    "OpenAI response usage response_id=%s input_tokens=%s "
+                    "cached_input_tokens=%s output_tokens=%s reasoning_tokens=%s "
+                    "total_tokens=%s",
+                    pending_response_id,
+                    usage["input_tokens"],
+                    usage["cached_input_tokens"],
+                    usage["output_tokens"],
+                    usage["reasoning_tokens"],
+                    usage["total_tokens"],
+                )
             yield {"choices": [{"finish_reason": "stop"}]}
             break
         if (t == "response.error") or t.endswith("response_error"):
