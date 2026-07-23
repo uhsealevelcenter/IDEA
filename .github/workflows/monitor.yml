@@ -37,7 +37,7 @@ jobs:
         timeout-minutes: 2
         run: |
           set -uo pipefail
-          if curl -fsS --connect-timeout 5 --max-time 10 "http://${{ vars.VM_HOST }}:8002/idea-api/health" > /dev/null 2>&1; then
+          if curl -fsS --connect-timeout 5 --max-time 10 "http://${{ vars.VM_HOST }}/idea-api/health" > /dev/null 2>&1; then
             echo "healthy=true" >> "$GITHUB_OUTPUT"
           else
             echo "healthy=false" >> "$GITHUB_OUTPUT"
@@ -153,5 +153,5 @@ jobs:
       - name: Fail job if this run introduced a new health-check outage
         if: always() && !cancelled() && steps.health.outputs.healthy == 'false' && steps.status.outputs.state != steps.compare.outputs.previous
         run: |
-          echo "::error::Health check failed against http://${{ vars.VM_HOST }}:8002/idea-api/health"
+          echo "::error::Health check failed against http://${{ vars.VM_HOST }}/idea-api/health"
           exit 1
