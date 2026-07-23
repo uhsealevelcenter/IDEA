@@ -74,6 +74,41 @@ of the bare `python` image. `run_terminal_tool`/`write_file_tool` work
 against any image; `run_python_tool`/`grep_search_tool`/`glob_search_tool`
 specifically require this one (or one built on top of it).
 
+## Updating the deployed image
+
+When pushing a rebuilt image to the registry (e.g.
+`ghcr.io/uhsealevelcenter/idea-oi-kernel:slim`), two things matter:
+
+1. **Build for the deploy host's actual architecture(s).** `msb pull`
+   resolves a single platform out of the pushed manifest index and fails
+   outright (`no entry found in image index manifest matching client's
+   default platform`) if that platform isn't present - it does not fall
+   back to another architecture. Build multi-arch explicitly, e.g.:
+   ```bash
+   docker buildx build --platform linux/amd64,linux/arm64 \
+     -f interpreter_kernel/Dockerfile \
+     -t ghcr.io/uhsealevelcenter/idea-oi-kernel:slim --push .
+   ```
+   Building on Apple Silicon without `--platform linux/amd64` will silently
+   produce an arm64-only image, which fails to pull on a typical amd64
+   deploy host.
+
+2. **Existing sandboxes don't pick up a new image on their own.**
+   `MicrosandboxTerminal._connect_or_create()`
+   (`sandbox_service/msb_sandbox.py`) only applies `SANDBOX_IMAGE` when a
+   sandbox_id is created for the first time - an existing (running or
+   stopped-but-resumable) VM just reconnects/resumes, regardless of what
+   `SANDBOX_IMAGE` is set to now. To roll a newly-pushed image out to every
+   currently-existing microVM, run:
+   ```bash
+   ./interpreter_kernel/refresh_sandboxes.sh
+   ```
+   This pulls the current `SANDBOX_IMAGE` into the `sandbox` service's
+   `msb` cache, then removes and immediately recreates every existing
+   sandbox from it. This **wipes each sandbox's filesystem state**
+   (installed packages, any files not yet synced to `/outputs`) - only run
+   it once the new image is confirmed pushed and ready.
+
 ## Dependency modules (`modules/`)
 
 `modules/` holds optional, swappable dependency sets, each a subfolder with
