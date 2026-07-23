@@ -62,6 +62,46 @@ only the final state at the end of the turn gets synced.
 `.env`. Without it, syncing silently no-ops (files stay in the sandbox only,
 same as before this feature existed).
 
+## Environment variables (`.env`)
+
+These are read via `docker-compose.yml`'s `env_file: .env` on the `openwebui`
+service (`WEBUI_SECRET_KEY`, `ENABLE_SIGNUP`) and passed explicitly to
+`langgraph` (`OPENWEBUI_BASE_URL`, `OPENWEBUI_API_KEY`) - see `example.env`
+for the canonical template with these same keys.
+
+- **`WEBUI_SECRET_KEY`** - signs Open WebUI's session/auth JWTs. Generate a
+  random value once per deployment and keep it stable (changing it
+  invalidates every existing login session):
+  ```bash
+  openssl rand -hex 32
+  ```
+  Paste the output as `WEBUI_SECRET_KEY=...` in `.env`.
+
+- **`ENABLE_SIGNUP`** - `true`/`false`, no generation needed. Controls
+  whether Open WebUI's own sign-up page accepts new accounts. Leave `true`
+  for the first deploy (the first account created becomes admin - see
+  "Running it" above), then set to `false` afterward to stop further
+  self-service sign-ups if this instance isn't meant to be open to anyone.
+
+- **`OPENWEBUI_BASE_URL`** - no generation needed for the default setup.
+  This is `langgraph`'s address for reaching `openwebui` over the Docker
+  Compose network, already defaulted to `http://openwebui:8080` in
+  `docker-compose.yml` (see line ~93) - only set this in `.env` if
+  `openwebui` is proxied/renamed/run on a different host than the default
+  compose network.
+
+- **`OPENWEBUI_API_KEY`** - a real Open WebUI account's static API key, used
+  by `TerminalAgent._sync_outputs_to_openwebui`
+  (`langgraph/agents/terminal_agent.py`) to push `/outputs` files into Open
+  WebUI's Files storage (see "Automatic file sync" above). To create one:
+  1. Sign up / log in to Open WebUI (`http://localhost:3001`) with the
+     account you want file syncs to be uploaded as.
+  2. Go to **Settings > Account > API Keys** and generate a new key.
+  3. Copy it into `.env` as `OPENWEBUI_API_KEY=...` and restart the
+     `langgraph` service (`docker compose up -d langgraph`) to pick it up.
+  4. Leave it unset to disable syncing entirely (falls back to a silent
+     no-op, same as before this feature existed).
+
 ## Status
 
 This runs *alongside* the existing custom frontend (`frontend/`, `nginx`,
