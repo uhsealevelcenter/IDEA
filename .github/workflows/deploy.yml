@@ -160,17 +160,23 @@ jobs:
             echo "==> Deployed commit:"
             git --no-pager log -1 --oneline
 
-            echo "==> Logging in to ghcr.io (ephemeral, run-scoped token) to pull the private image"
+            echo "==> Logging in to ghcr.io (ephemeral, run-scoped token) to pull the private image(s)"
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
             echo "==> Pulling image tag ${IMAGE_TAG}"
             IMAGE_TAG="${IMAGE_TAG}" docker compose pull web
 
-            # Remove the credential from the VM right away; the token also expires when the run ends.
-            docker logout ghcr.io
-
             echo "==> Running: ${DEPLOY_CMD}"
+            # Login stays active through DEPLOY_CMD (not just the `web` pull
+            # above) - DEPLOY_CMD's own `docker compose up` also needs to
+            # pull other private ghcr.io images (e.g. `openwebui` -
+            # ghcr.io/uhsealevelcenter/idea-open-webui). Logging out before
+            # this ran used to break that pull with "unauthorized".
             IMAGE_TAG="${IMAGE_TAG}" bash -c "${DEPLOY_CMD}"
+
+            # Remove the credential from the VM now that all pulls are done;
+            # the token also expires when the run ends regardless.
+            docker logout ghcr.io
           REMOTE
 
       - name: Smoke check

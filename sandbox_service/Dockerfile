@@ -40,9 +40,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY msb_sandbox.py .
 COPY terminal_registry.py .
 COPY main.py .
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8020
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8020"]
+# See entrypoint.sh - configures microsandbox's registry auth for a private
+# SANDBOX_IMAGE (from GHCR_USERNAME/GHCR_PAT) before starting the app.
+CMD ["./entrypoint.sh"]
