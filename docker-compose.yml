@@ -139,12 +139,21 @@ services:
       # "auto" | "microsandbox" | "local" - see sandbox_service/terminal_registry.py
       - SANDBOX_BACKEND=${SANDBOX_BACKEND:-auto}
       # OCI image booted for each new microsandbox VM - see msb_sandbox.py.
-      # Set to a published build of interpreter_kernel/ (e.g.
-      # idea/oi-kernel:slim) to give sandboxes the persistent Python kernel
-      # (run_python_tool) and Open Terminal-backed grep_search_tool/
-      # glob_search_tool; defaults to the bare "python" image, which only
-      # supports run_terminal_tool/write_file_tool.
-      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-python}
+      # Published build of interpreter_kernel/ (see that directory's
+      # README for how it's built/pushed) - gives sandboxes the persistent
+      # Python kernel (run_python_tool) and Open Terminal-backed
+      # grep_search_tool/glob_search_tool. Override via .env (SANDBOX_IMAGE)
+      # to pin a different tag/digest, or fall back to the bare "python"
+      # image (only run_terminal_tool/write_file_tool) if needed.
+      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-ghcr.io/uhsealevelcenter/idea-oi-kernel:slim}
+      # Only needed if the ghcr.io package above is private - see
+      # entrypoint.sh and interpreter_kernel/README.md's "Private registry
+      # auth" section for how these configure microsandbox's own pull
+      # credentials (a plain `docker login ghcr.io` doesn't cover this -
+      # msb pulls images itself, independent of the Docker daemon). Leave
+      # both unset if the package is public.
+      - GHCR_USERNAME=${GHCR_USERNAME:-}
+      - GHCR_PAT=${GHCR_PAT:-}
       # Idle sandboxes auto-drain (stop, not delete) after this many seconds
       # of inactivity; empty SANDBOX_MAX_DURATION_SECONDS disables the hard
       # lifetime cap. See sandbox_service/msb_sandbox.py.

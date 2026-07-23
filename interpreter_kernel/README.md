@@ -74,6 +74,53 @@ of the bare `python` image. `run_terminal_tool`/`write_file_tool` work
 against any image; `run_python_tool`/`grep_search_tool`/`glob_search_tool`
 specifically require this one (or one built on top of it).
 
+## Private registry auth
+
+If this image is pushed to a *private* package (e.g.
+`ghcr.io/uhsealevelcenter/idea-oi-kernel`), the `sandbox` container needs
+its own credentials to pull it - and this is **not** the same thing as
+`docker login ghcr.io` on the host: `sandbox_service` runs `msb` (the
+microsandbox CLI/runtime) directly inside its own container
+(`sandbox_service/Dockerfile`), and `msb` pulls OCI images itself,
+independent of the host's Docker daemon and its credential store.
+
+The CLI-documented way to authenticate is `msb registry login`, but that
+stores secrets in an OS credential store (Keychain / Credential Manager /
+Secret Service - see
+[microsandbox's docs](https://docs.microsandbox.dev/cli/image-commands)) -
+none of which exist in the `python:3.11-slim` base this service runs on.
+The documented headless alternative is a `password_env` entry in
+`~/.microsandbox/config.json`, which is what
+`sandbox_service/entrypoint.sh` generates automatically on container start,
+if credentials are supplied:
+
+1. Create a GitHub Personal Access Token (classic) scoped to
+   `read:packages`, with SSO-authorization for `uhsealevelcenter` if the
+   org requires it.
+2. Set `GHCR_USERNAME` (your GitHub username) and `GHCR_PAT` (the token)
+   in the deploy host's `.env`.
+3. Redeploy/restart the `sandbox` service. `entrypoint.sh` writes
+   `/root/.microsandbox/config.json` (on the persistent
+   `idea_microsandbox_data` volume) with:
+   ```json
+   {
+     "registries": {
+       "hosts": {
+         "ghcr.io": {
+           "auth": { "username": "<GHCR_USERNAME>", "password_env": "GHCR_PAT" }
+         }
+       }
+     }
+   }
+   ```
+   `microsandbox` then resolves `GHCR_PAT` from its own process
+   environment (already set via `docker-compose.yml`) at pull time.
+
+Simplest alternative: make the package **public**. It contains no secrets
+(OS packages, this repo's own `daemon.py`/`client.py`) - if there's no
+reason to keep it private, doing so avoids this setup entirely and
+`microsandbox` falls back to an anonymous pull.
+
 ## Why not just use Open Terminal's `/execute` for everything?
 
 Its `/execute` endpoint runs a shell command as a new background process
