@@ -125,6 +125,7 @@ class MicrosandboxTerminal:
         self.max_duration = max_duration
         self._sandbox = None
         self._open_terminal_key: Optional[str] = None
+        self._cwd: Optional[str] = None
 
         # Dedicated event loop + thread so the SDK's connection(s) persist
         # across calls instead of being torn down/recreated each time
@@ -400,8 +401,39 @@ class MicrosandboxTerminal:
             params["exclude"] = exclude
         return self._open_terminal_get("/files/glob", params)
 
+    def _get_cwd(self) -> str:
+        """
+        Absolute working directory `shell()`/`run_python()` commands run
+        from inside this VM - baked into the guest image's `WORKDIR` (e.g.
+        `/opt/oi_kernel` for the oi-kernel image; `/` for the bare `python`
+        image). Cached after the first lookup since it's stable for the
+        VM's lifetime.
+        """
+        if self._cwd is None:
+            output = self._exec(lambda: self._sandbox.shell("pwd"))
+            self._cwd = (output.stdout_text or "/").strip() or "/"
+        return self._cwd
+
+    def _resolve_path(self, filepath: str) -> str:
+        """
+        Joins a relative filepath against this VM's shell working directory
+        (see `_get_cwd()`). `fs.write()`/`fs.read()`/`fs.exists()` below are
+        a separate microsandbox API that resolves relative paths against the
+        VM's filesystem root by default, regardless of the image's
+        `WORKDIR` - without this, a relative path written via write_file()
+        and the same relative path referenced from a `shell()`/
+        `run_python()` command (e.g. `python3 script.py`) would silently
+        resolve to two different files whenever the image's `WORKDIR` isn't
+        `/` (e.g. writing to `/script.py` but shell looking in
+        `/opt/oi_kernel/script.py`).
+        """
+        if filepath.startswith("/"):
+            return filepath
+        return f"{self._get_cwd().rstrip('/')}/{filepath}"
+
     def write_file(self, filepath: str, content: str, append: bool = False) -> None:
         """Write content to a file inside the sandbox's filesystem."""
+        filepath = self._resolve_path(filepath)
         data = content.encode("utf-8")
         if append:
             # No native append API - emulate via shell so it stays atomic
@@ -413,12 +445,12 @@ class MicrosandboxTerminal:
 
     def read_file(self, filepath: str) -> bytes:
         """Read raw bytes of a file from inside the sandbox (e.g. for image display)."""
-        return self._exec(lambda: self._sandbox.fs.read(filepath))
+        return self._exec(lambda: self._sandbox.fs.read(self._resolve_path(filepath)))
 
     def file_exists(self, filepath: str) -> bool:
         """Check whether filepath exists inside the sandbox."""
         try:
-            return self._exec(lambda: self._sandbox.fs.exists(filepath))
+            return self._exec(lambda: self._sandbox.fs.exists(self._resolve_path(filepath)))
         except Exception:
             return False
 

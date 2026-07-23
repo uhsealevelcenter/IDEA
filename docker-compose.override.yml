@@ -82,14 +82,16 @@ services:
     command: uvicorn langgraph_service:app --host 0.0.0.0 --port 8010
 
   sandbox:
-    # See the matching comment on `langgraph` above.
+    # See the matching comment on `langgraph` above. No `command:` override
+    # here (unlike langgraph) - the base image's CMD (["./entrypoint.sh"])
+    # must run so it can configure microsandbox's GHCR registry auth (see
+    # sandbox_service/entrypoint.sh) before it execs the same uvicorn command.
     ports:
       - "8020:8020"
     volumes:
       - ./sandbox_service:/app
     environment:
       - PYTHONUNBUFFERED=1
-    command: uvicorn main:app --host 0.0.0.0 --port 8020
 
   litellm:
     # Dev-only direct access for debugging (curl localhost:8030/health,
