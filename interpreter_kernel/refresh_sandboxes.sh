@@ -34,7 +34,27 @@ fi
 
 SANDBOX_IMAGE="$(docker exec "${CONTAINER}" printenv SANDBOX_IMAGE)"
 echo "==> Pulling latest '${SANDBOX_IMAGE}' into msb's image cache..."
-docker exec "${CONTAINER}" msb pull -f "${SANDBOX_IMAGE}"
+# KNOWN BUG (msb 0.6.6): `msb pull -f` (force re-download) can fail with
+#   error: cache error at .../cache/layers/sha256_<digest>.tar.gz: No such
+#   file or directory (os error 2)
+# This has been observed specifically on very small (e.g. 32-byte, "empty
+# diff") OCI layers - msb's forced-redownload path appears to mishandle
+# re-creating/locking that layer's cache entry. A plain `msb pull` (no
+# `-f`) against the same reference does NOT hit this bug and correctly
+# resolves to the newly-pushed digest (verify with `msb images`), so we
+# fall back to it automatically below rather than failing the whole
+# refresh.
+#
+# If both the forced and non-forced pulls fail, or the resolved digest
+# still doesn't match what you just pushed, manually clear the corrupt
+# layer's cache entry (both files - a stray/incomplete `.lock` can also
+# confuse this) inside the sandbox container and retry:
+#   docker exec <container> rm -f /root/.microsandbox/cache/layers/sha256_<digest>.tar.gz*
+#   docker exec <container> msb pull "${SANDBOX_IMAGE}"
+if ! docker exec "${CONTAINER}" msb pull -f "${SANDBOX_IMAGE}"; then
+  echo "==> 'msb pull -f' failed (see known cache bug note above) - retrying without -f..." >&2
+  docker exec "${CONTAINER}" msb pull "${SANDBOX_IMAGE}"
+fi
 
 echo "==> Listing existing sandboxes..."
 mapfile -t NAMES < <(docker exec "${CONTAINER}" msb list 2>/dev/null | tail -n +2 | awk '{print $1}')
