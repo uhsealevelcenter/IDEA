@@ -12,15 +12,16 @@
 #      this was built from for the reasoning.
 #   2. This repo's own persistent Python kernel daemon (daemon.py), reusing
 #      Open Interpreter's *execution engine only* (interpreter/core/
-#      computer/terminal/languages/python.py - never interpreter/core/
-#      core.py, Open Interpreter's own agent loop) - gives run_python_tool
+#      computer/terminal/languages/python.py - Open Interpreter's own
+#      agent loop was never vendored here) - gives run_python_tool
 #      real stateful-kernel semantics that Open Terminal's own /execute
 #      (a fresh background process per call - see its main.py) does not
 #      provide.
 #
-# Must be built from the repo root so the COPY below can reach
-# interpreter/core/computer:
-#   docker build -f interpreter_kernel/Dockerfile -t idea/oi-kernel:slim .
+# Self-contained build context - the vendored interpreter/core/computer/
+# tree lives inside this directory, so build from here directly:
+#   docker build -f interpreter_kernel/Dockerfile -t idea/oi-kernel:slim interpreter_kernel
+# (or `cd interpreter_kernel && docker build -t idea/oi-kernel:slim .`)
 #
 # TODO: pin to a specific released tag/digest instead of :slim once you've
 # picked one to track, same reasoning as the openwebui image in
@@ -56,24 +57,21 @@ RUN mkdir -p vendor/interpreter/core
 COPY interpreter/core/computer vendor/interpreter/core/computer
 RUN touch vendor/interpreter/__init__.py vendor/interpreter/core/__init__.py
 
-COPY interpreter_kernel/daemon.py interpreter_kernel/client.py ./
-COPY interpreter_kernel/entrypoint.sh /opt/oi_kernel/entrypoint.sh
+COPY daemon.py client.py ./
+COPY entrypoint.sh /opt/oi_kernel/entrypoint.sh
 RUN chmod +x /opt/oi_kernel/entrypoint.sh
 
-# Optional dependency module (mirrored from the repo root's pyproject.toml)
-# - see interpreter_kernel/modules/. Lets run_python_tool sessions `import`
-# those packages directly instead of installing them on demand mid-session
-# via run_terminal_tool. Toggle/select via ACTIVE_MODULE in
-# interpreter_kernel/config.env - "original" (the full pyproject.toml list)
-# is enabled by default.
+# Optional dependency module - see modules/. Lets run_python_tool sessions
+# `import` those packages directly instead of installing them on demand
+# mid-session via run_terminal_tool. Toggle/select via ACTIVE_MODULE in
+# config.env - "original" (the full dependency list) is enabled by default.
 # Note: this is a much larger/slower layer than the minimal baseline above
 # (adds cartopy/rasterio/selenium/etc., not all of which the kernel daemon
 # itself ever imports - see daemon.py's module docstring).
 #
 # The "original" module needs GDAL/GEOS/PROJ headers to build rasterio/
 # cartopy/geopandas from source (this base image has none of them
-# preinstalled) - same system packages as the root Dockerfile's builder
-# stage.
+# preinstalled).
 RUN apt-get update && apt-get install -y \
     build-essential \
     gdal-bin \
@@ -87,8 +85,8 @@ ENV GDAL_CONFIG=/usr/bin/gdal-config
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 
-COPY interpreter_kernel/config.env config.env
-COPY interpreter_kernel/modules/ modules/
+COPY config.env config.env
+COPY modules/ modules/
 RUN . ./config.env \
     && if [ "$ACTIVE_MODULE" != "none" ] && [ -f "modules/$ACTIVE_MODULE/requirements.txt" ]; then \
          python3 -m pip install --no-cache-dir wheel setuptools cython numpy \

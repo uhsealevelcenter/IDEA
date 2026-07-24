@@ -1,33 +1,6 @@
 version: '3.8'
 
 services:
-  web:
-    image: ghcr.io/uhsealevelcenter/idea:${IMAGE_TAG}
-    container_name: idea_container
-    restart: unless-stopped
-    shm_size: "2gb" # increase shared memory size to prevent potential issues with large models or data processing
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-    ports:
-      - "8002:8001" # so that we can have SEA and IDEA on the same machine
-    env_file:
-      - .env
-    volumes:
-      - idea_persistent_data:/app/data
-      - ./.codex:/app/.codex # CODEX_HOME: for Codex CLI authentication, config, and agent working agreements
-    environment:
-      - PYTHONUNBUFFERED=1
-      - LOCAL_DEV=0
-      - PQA_HOME=/app/data
-      - PROMPT_DIRECTORY=/app/data/prompts
-      - CODEX_HOME=/app/.codex
-    command: uvicorn app:app --host 0.0.0.0 --port 8001
-    depends_on:
-      - redis
-      - db
-
   db:
     # Pinned by digest (was floating :pg17) - currently resolves to
     # PostgreSQL 17.10. Re-pin deliberately when you want to move forward.
