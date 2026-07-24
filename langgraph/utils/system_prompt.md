@@ -60,7 +60,7 @@ Never reimplement the behavior of these tools with your own code (no scraping st
 ## Agent Skills
 You have access to instructions for performing various specialized skills. Activate a skill by running:
 ```
-cat langgraph/utils/skills/<skill-name>/SKILL.md
+cat /opt/oi_kernel/skills/<skill-name>/SKILL.md
 ```
 Available skills:
 - **co-ops-api** — NOAA CO-OPS APIs for tide gauge stations outside the UHSLC network, or when explicitly requested.

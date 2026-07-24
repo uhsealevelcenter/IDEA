@@ -435,6 +435,13 @@ class MicrosandboxTerminal:
         """Write content to a file inside the sandbox's filesystem."""
         filepath = self._resolve_path(filepath)
         data = content.encode("utf-8")
+        # fs.write()/fs.exists() (unlike shell's `>`/`>>` redirection) does
+        # not create missing parent directories on its own, so a first
+        # write into a not-yet-existing directory (e.g. TEMP_OUTPUT_DIR in
+        # langgraph/tools/persistent_terminal.py) fails with ENOENT.
+        dirpath = os.path.dirname(filepath)
+        if dirpath and dirpath != "/":
+            self._exec(lambda: self._sandbox.shell(f"mkdir -p {shlex.quote(dirpath)}"))
         if append:
             # No native append API - emulate via shell so it stays atomic
             # inside the sandbox rather than round-tripping bytes twice.

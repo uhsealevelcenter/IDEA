@@ -60,6 +60,13 @@ COPY interpreter_kernel/daemon.py interpreter_kernel/client.py ./
 COPY interpreter_kernel/entrypoint.sh /opt/oi_kernel/entrypoint.sh
 RUN chmod +x /opt/oi_kernel/entrypoint.sh
 
+# Agent Skills (SKILL.md files) - see langgraph/utils/system_prompt.md's
+# "Agent Skills" section, which tells the model to `cat` these from inside
+# the sandbox. Baked in at a fixed absolute path (independent of the
+# sandbox's shell WORKDIR) since the model's cwd inside the VM is never the
+# repo root this image was built from.
+COPY langgraph/utils/skills /opt/oi_kernel/skills
+
 # Optional dependency module (mirrored from the repo root's pyproject.toml)
 # - see interpreter_kernel/modules/. Lets run_python_tool sessions `import`
 # those packages directly instead of installing them on demand mid-session
