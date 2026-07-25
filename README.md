@@ -139,6 +139,7 @@ Open WebUI Functions live in its own database, not on disk, so the Pipe function
 
 1. Open http://localhost, sign up (the first account created becomes admin).
 2. Go to **Settings > Account > API Keys** and generate a key for this admin account.
+https://docs.openwebui.com/features/authentication-access/api-keys/
 3. Register the pipe function using that key:
    ```bash
    OPENWEBUI_API_KEY=<the key from step 2> ./openwebui/register_idea_pipe.sh
