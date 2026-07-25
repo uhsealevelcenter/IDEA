@@ -108,7 +108,7 @@ POSTGRES_PASSWORD=change_this
 # Open WebUI (generate with: openssl rand -hex 32)
 WEBUI_SECRET_KEY=change_this
 
-# LiteLLM proxy (generate with: openssl rand -hex 20 / openssl rand -hex 32)
+# LiteLLM proxy (DB: openssl rand -hex 20; master: printf 'sk-'; openssl rand -hex 32)
 LITELLM_DB_PASSWORD=change_this
 LITELLM_MASTER_KEY=change_this
 ```

@@ -40,7 +40,7 @@ class TerminalAgent:
     The LLM can write code to files, run scripts, install packages, and solve tasks iteratively.
     """
     
-    def __init__(self, session_id: str, user_id: Optional[str] = None, user_email: Optional[str] = None, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
+    def __init__(self, session_id: str, user_id: Optional[str] = None, user_email: Optional[str] = None, model: str = "gpt-5.6-sol", temperature: Optional[float] = None, max_iterations: int = 20):
         self.session_id = session_id
         self.user_id = user_id
         # Used only for LiteLLM per-end-user spend tracking (see
@@ -113,7 +113,7 @@ class TerminalAgent:
         # key shared by every user (a $50 total budget, not per-user), and
         # LITELLM_END_USER_HEADER carries this user's email so LiteLLM can
         # still attribute spend/usage per end user despite the shared key.
-        # Reasoning models (e.g., gpt-5.5) only support the provider default
+        # Reasoning models (e.g., gpt-5.6-sol) only support the provider default
         # temperature - omit the kwarg entirely when temperature is None.
         if not LITELLM_VIRTUAL_KEY:
             raise RuntimeError(

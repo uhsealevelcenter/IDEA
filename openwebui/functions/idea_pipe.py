@@ -24,7 +24,7 @@ class Pipe:
             description="Base URL of the langgraph_service.py microservice.",
         )
         MODEL: str = Field(
-            default="gpt-5.5",
+            default="gpt-5.6-sol",
             description="Model name passed through to ConversationOrchestrator.",
         )
         REQUEST_TIMEOUT_SECONDS: int = Field(

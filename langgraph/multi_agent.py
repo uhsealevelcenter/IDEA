@@ -51,7 +51,7 @@ class ConversationOrchestrator:
         session_id: str,
         is_guest: bool,
         db: Optional[Session] = None,
-        model: str = "gpt-5.5",
+        model: str = "gpt-5.6-sol",
         temperature: Optional[float] = None,
         max_iterations: int = 20,
         user_email: Optional[str] = None
@@ -286,7 +286,7 @@ class ConversationOrchestrator:
 def run_agent_task(
     prompt: str,
     session_id: Optional[str] = None,
-    model: str = "gpt-5.5",
+    model: str = "gpt-5.6-sol",
     temperature: Optional[float] = None,
     max_iterations: int = 20,
     stream_callback: Optional[Callable[[str], None]] = None
@@ -325,7 +325,7 @@ if __name__ == "__main__":
         prompt="Create a Python script that prints 'Hello from Terminal Agent!' and run it.",
         max_iterations=10,
         stream_callback=stream_output,
-        model="gpt-5.5"
+        model="gpt-5.6-sol"
     )
     
     print(f"\n{'='*80}")

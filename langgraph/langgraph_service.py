@@ -131,7 +131,7 @@ class ChatRequest(BaseModel):
     user_email: Optional[str] = None
     is_guest: bool
     message: str
-    model: Optional[str] = "gpt-5.5"
+    model: Optional[str] = "gpt-5.6-sol"
     temperature: Optional[float] = None
     max_iterations: Optional[int] = 20
     restore_history: Optional[bool] = True
@@ -143,7 +143,7 @@ class ChatRunRequest(BaseModel):
     user_email: Optional[str] = None
     is_guest: bool
     messages: list[dict[str, Any]]
-    model: Optional[str] = "gpt-5.5"
+    model: Optional[str] = "gpt-5.6-sol"
 
 
 class HealthResponse(BaseModel):
