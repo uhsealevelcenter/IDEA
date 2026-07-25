@@ -2,9 +2,9 @@
 """Reconcile IDEA-owned Open WebUI settings after deployment.
 
 This intentionally leaves Open WebUI's persistent configuration enabled.
-Only the LiteLLM task-model connection, the hidden task-model metadata, and
-TASK_MODEL_EXTERNAL are managed here; other Admin Panel changes remain
-database-backed and editable.
+Only the LiteLLM task-model connection, hidden task-model metadata, external
+task model, context-compaction settings, and title-generation prompt are
+managed here; other Admin Panel changes remain database-backed and editable.
 """
 
 from __future__ import annotations
@@ -25,7 +25,24 @@ from urllib.request import Request, urlopen
 DEFAULT_OPENWEBUI_URL = "http://localhost:3001"
 DEFAULT_LITELLM_URL = "http://litellm:8080/v1"
 DEFAULT_TASK_MODEL = "gpt-5.6-luna"
+DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD = 136_000
 LEGACY_LITELLM_URLS = {"http://litellm:4000/v1"}
+TITLE_GENERATION_PROMPT = """### Task:
+Generate a concise 3–5 word title summarizing the chat history.
+
+### Guidelines:
+- Do not include emoji, symbols, quotation marks, or special formatting.
+- Clearly represent the main subject of the conversation.
+- Write in the chat's primary language.
+- Return only a raw JSON object.
+
+### Output:
+{ "title": "your concise title here" }
+
+### Chat History:
+<chat_history>
+{{MESSAGES:END:2}}
+</chat_history>"""
 PUBLIC_READ_GRANT = {
     "principal_type": "user",
     "principal_id": "*",
@@ -57,6 +74,20 @@ def load_env_file(path: Path) -> None:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
         os.environ.setdefault(key, value)
+
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(
+        f"{name} must be one of true/false, yes/no, on/off, or 1/0"
+    )
 
 
 class OpenWebUIClient:
@@ -317,20 +348,50 @@ def hide_task_model(
         client.post("/api/v1/models/create", payload)
 
 
-def configure_external_task_model(
+def configure_task_settings(
     client: OpenWebUIClient,
     task_model: str,
+    title_prompt: str,
 ) -> None:
     config = client.get("/api/v1/tasks/config")
     config["TASK_MODEL_EXTERNAL"] = task_model
+    config["TITLE_GENERATION_PROMPT_TEMPLATE"] = title_prompt
     client.post("/api/v1/tasks/config/update", config)
 
     verified = client.get("/api/v1/tasks/config")
-    actual = verified.get("TASK_MODEL_EXTERNAL")
-    if actual != task_model:
+    actual_model = verified.get("TASK_MODEL_EXTERNAL")
+    if actual_model != task_model:
         raise RuntimeError(
             f"External Task Model verification failed: expected {task_model!r}, "
-            f"received {actual!r}"
+            f"received {actual_model!r}"
+        )
+    actual_prompt = verified.get("TITLE_GENERATION_PROMPT_TEMPLATE")
+    if actual_prompt != title_prompt:
+        raise RuntimeError("Title Generation Prompt verification failed")
+
+
+def configure_context_compaction(
+    client: OpenWebUIClient,
+    enabled: bool,
+    token_threshold: int,
+) -> None:
+    if token_threshold < 1:
+        raise RuntimeError("CONTEXT_COMPACTION_TOKEN_THRESHOLD must be positive")
+
+    config = client.get("/api/v1/chats/config")
+    config["ENABLE_CONTEXT_COMPACTION"] = enabled
+    config["CONTEXT_COMPACTION_TOKEN_THRESHOLD"] = token_threshold
+    # Preserve the independently editable compaction prompt template.
+    client.post("/api/v1/chats/config", config)
+
+    verified = client.get("/api/v1/chats/config")
+    if verified.get("ENABLE_CONTEXT_COMPACTION") is not enabled:
+        raise RuntimeError("Context Compaction enabled-state verification failed")
+    if verified.get("CONTEXT_COMPACTION_TOKEN_THRESHOLD") != token_threshold:
+        raise RuntimeError(
+            "Context Compaction threshold verification failed: expected "
+            f"{token_threshold!r}, received "
+            f"{verified.get('CONTEXT_COMPACTION_TOKEN_THRESHOLD')!r}"
         )
 
 
@@ -345,6 +406,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", help="Host-reachable Open WebUI URL")
     parser.add_argument("--litellm-url", help="Open WebUI-reachable LiteLLM /v1 URL")
     parser.add_argument("--task-model", help="External task model ID")
+    parser.add_argument(
+        "--compaction-threshold",
+        type=int,
+        help=(
+            "Context-compaction token threshold "
+            f"(default: {DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD})"
+        ),
+    )
     parser.add_argument(
         "--wait-seconds",
         type=int,
@@ -369,6 +438,17 @@ def main() -> int:
         or os.getenv("TASK_MODEL_EXTERNAL")
         or DEFAULT_TASK_MODEL
     )
+    compaction_enabled = env_bool("ENABLE_CONTEXT_COMPACTION", True)
+    compaction_threshold = (
+        args.compaction_threshold
+        if args.compaction_threshold is not None
+        else int(
+            os.getenv(
+                "CONTEXT_COMPACTION_TOKEN_THRESHOLD",
+                str(DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD),
+            )
+        )
+    )
     litellm_key = os.getenv("LITELLM_MASTER_KEY", "")
     if not litellm_key:
         raise RuntimeError("LITELLM_MASTER_KEY is required")
@@ -381,9 +461,16 @@ def main() -> int:
     configure_litellm_connection(client, litellm_url, litellm_key, task_model)
     catalog_model = wait_for_model(client, task_model, args.wait_seconds)
     hide_task_model(client, task_model, catalog_model)
-    configure_external_task_model(client, task_model)
+    configure_task_settings(client, task_model, TITLE_GENERATION_PROMPT)
+    configure_context_compaction(
+        client,
+        compaction_enabled,
+        compaction_threshold,
+    )
     print(
-        f"Done: {task_model!r} is the hidden External Task Model. "
+        f"Done: {task_model!r} is the hidden External Task Model; "
+        f"context compaction is {'enabled' if compaction_enabled else 'disabled'} "
+        f"at {compaction_threshold} tokens; the title prompt is configured. "
         "Other Admin Panel settings remain persistent and editable."
     )
     return 0

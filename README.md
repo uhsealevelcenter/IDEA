@@ -151,15 +151,19 @@ https://docs.openwebui.com/features/authentication-access/api-keys/
    ```
    This idempotent deployment step adds the internal LiteLLM connection,
    keeps `gpt-5.6-luna` hidden from the chat model selector, and persists it
-   as Open WebUI's **External Task Model**. It reads
+   as Open WebUI's **External Task Model**. It also enables context
+   compaction at 136,000 tokens (matching legacy IDEA's 50%-of-272,000
+   policy) and installs IDEA's title-generation prompt. It reads
    `OPENWEBUI_API_KEY`, `LITELLM_MASTER_KEY`, and
-   `TASK_MODEL_EXTERNAL` from `.env`. It does **not** disable Open WebUI's
-   persistent configuration, so unrelated changes made in the Admin Panel
-   remain editable and survive restarts. Run it again after deployments to
-   reconcile the IDEA-owned settings. If `OPENWEBUI_API_KEY` is unavailable
-   or rejected, an interactive run securely prompts for the Open WebUI admin
-   login and uses a temporary JWT; non-interactive deployments can provide
-   `WEBUI_ADMIN_EMAIL` and `WEBUI_ADMIN_PASSWORD` through their secret store.
+   `TASK_MODEL_EXTERNAL`, `ENABLE_CONTEXT_COMPACTION`, and
+   `CONTEXT_COMPACTION_TOKEN_THRESHOLD` from `.env`. It does **not** disable
+   Open WebUI's persistent configuration, so unrelated changes made in the
+   Admin Panel remain editable and survive restarts. Run it again after
+   deployments to reconcile the IDEA-owned settings. If
+   `OPENWEBUI_API_KEY` is unavailable or rejected, an interactive run
+   securely prompts for the Open WebUI admin login and uses a temporary JWT;
+   non-interactive deployments can provide `WEBUI_ADMIN_EMAIL` and
+   `WEBUI_ADMIN_PASSWORD` through their secret store.
 5. Start a new chat and select **"IDEA Terminal Agent"** from the model dropdown.
 
 #### Optional: `OPENWEBUI_API_KEY` and `INTERNAL_SERVICE_TOKEN`

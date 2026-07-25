@@ -150,11 +150,12 @@ class ConfigureOpenWebUITests(unittest.TestCase):
         )
         self.assertEqual(len(grants), 2)
 
-    def test_task_update_preserves_other_task_settings(self):
+    def test_task_update_sets_model_and_title_prompt_preserving_other_settings(self):
         current = {
             "TASK_MODEL": "",
             "TASK_MODEL_EXTERNAL": "",
             "ENABLE_TITLE_GENERATION": False,
+            "TITLE_GENERATION_PROMPT_TEMPLATE": "",
         }
         client = FakeClient(
             {
@@ -162,15 +163,67 @@ class ConfigureOpenWebUITests(unittest.TestCase):
             }
         )
 
-        configure_openwebui.configure_external_task_model(
+        configure_openwebui.configure_task_settings(
             client,
             "gpt-5.6-luna",
+            configure_openwebui.TITLE_GENERATION_PROMPT,
         )
 
         path, payload = client.posts[0]
         self.assertEqual(path, "/api/v1/tasks/config/update")
         self.assertEqual(payload["TASK_MODEL_EXTERNAL"], "gpt-5.6-luna")
+        self.assertEqual(
+            payload["TITLE_GENERATION_PROMPT_TEMPLATE"],
+            configure_openwebui.TITLE_GENERATION_PROMPT,
+        )
         self.assertFalse(payload["ENABLE_TITLE_GENERATION"])
+
+    def test_context_compaction_uses_legacy_threshold_and_preserves_prompt(self):
+        current = {
+            "ENABLE_CONTEXT_COMPACTION": False,
+            "CONTEXT_COMPACTION_TOKEN_THRESHOLD": 80_000,
+            "CONTEXT_COMPACTION_PROMPT_TEMPLATE": "Keep this custom prompt",
+        }
+        client = FakeClient({"/api/v1/chats/config": current})
+
+        configure_openwebui.configure_context_compaction(
+            client,
+            True,
+            configure_openwebui.DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD,
+        )
+
+        path, payload = client.posts[0]
+        self.assertEqual(path, "/api/v1/chats/config")
+        self.assertTrue(payload["ENABLE_CONTEXT_COMPACTION"])
+        self.assertEqual(
+            payload["CONTEXT_COMPACTION_TOKEN_THRESHOLD"],
+            136_000,
+        )
+        self.assertEqual(
+            payload["CONTEXT_COMPACTION_PROMPT_TEMPLATE"],
+            "Keep this custom prompt",
+        )
+
+    def test_title_prompt_matches_requested_template(self):
+        self.assertEqual(
+            configure_openwebui.TITLE_GENERATION_PROMPT,
+            """### Task:
+Generate a concise 3–5 word title summarizing the chat history.
+
+### Guidelines:
+- Do not include emoji, symbols, quotation marks, or special formatting.
+- Clearly represent the main subject of the conversation.
+- Write in the chat's primary language.
+- Return only a raw JSON object.
+
+### Output:
+{ "title": "your concise title here" }
+
+### Chat History:
+<chat_history>
+{{MESSAGES:END:2}}
+</chat_history>""",
+        )
 
     def test_missing_workspace_model_is_created_hidden_and_public(self):
         client = MissingModelClient()

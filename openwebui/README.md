@@ -65,9 +65,14 @@ After Open WebUI and LiteLLM are running, apply the configuration with:
 ```
 
 The script reads `.env`, authenticates with the admin
-`OPENWEBUI_API_KEY`, and idempotently reconciles only the internal LiteLLM
-connection, Luna's hidden/public model metadata, and
-`TASK_MODEL_EXTERNAL`. It deliberately leaves
+`OPENWEBUI_API_KEY`, and idempotently reconciles the internal LiteLLM
+connection, Luna's hidden/public model metadata, `TASK_MODEL_EXTERNAL`,
+context compaction, and the title-generation prompt. Context compaction is
+enabled at 136,000 tokens by default, matching legacy IDEA's production
+policy of compacting at 50% of its 272,000-token long-context threshold.
+The existing compaction prompt remains independently editable.
+
+The configurator deliberately leaves
 `ENABLE_PERSISTENT_CONFIG` at its default (`true`), so other Admin Panel
 changes remain persistent and editable. `WEBUI_ADMIN_EMAIL` and
 `WEBUI_ADMIN_PASSWORD` may be supplied as a fallback if no admin API key
