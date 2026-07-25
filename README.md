@@ -145,7 +145,22 @@ https://docs.openwebui.com/features/authentication-access/api-keys/
    OPENWEBUI_API_KEY=<the key from step 2> ./openwebui/register_idea_pipe.sh
    ```
    This POSTs `openwebui/functions/idea_pipe.py` to Open WebUI's `/api/v1/functions` admin API (create-or-update + enable), so you don't have to manually copy/paste the file into **Admin Panel > Functions** every time it changes. Re-run it any time `idea_pipe.py` is edited. (You can still do this manually via **Admin Panel > Functions > "+"** if you prefer.)
-4. Start a new chat and select **"IDEA Terminal Agent"** from the model dropdown.
+4. Configure Open WebUI's hidden external task model:
+   ```bash
+   ./openwebui/configure_openwebui.py
+   ```
+   This idempotent deployment step adds the internal LiteLLM connection,
+   keeps `gpt-5.6-luna` hidden from the chat model selector, and persists it
+   as Open WebUI's **External Task Model**. It reads
+   `OPENWEBUI_API_KEY`, `LITELLM_MASTER_KEY`, and
+   `TASK_MODEL_EXTERNAL` from `.env`. It does **not** disable Open WebUI's
+   persistent configuration, so unrelated changes made in the Admin Panel
+   remain editable and survive restarts. Run it again after deployments to
+   reconcile the IDEA-owned settings. If `OPENWEBUI_API_KEY` is unavailable
+   or rejected, an interactive run securely prompts for the Open WebUI admin
+   login and uses a temporary JWT; non-interactive deployments can provide
+   `WEBUI_ADMIN_EMAIL` and `WEBUI_ADMIN_PASSWORD` through their secret store.
+5. Start a new chat and select **"IDEA Terminal Agent"** from the model dropdown.
 
 #### Optional: `OPENWEBUI_API_KEY` and `INTERNAL_SERVICE_TOKEN`
 

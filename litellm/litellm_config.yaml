@@ -1,7 +1,8 @@
 # LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
 # `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
 # endpoint that langgraph/ already talks to directly (see
-# langgraph/agents/terminal_agent.py) - only gpt-5.6-sol is exposed here.
+# langgraph/agents/terminal_agent.py). gpt-5.6-sol serves the IDEA agent;
+# gpt-5.6-luna is available to Open WebUI for background task generation.
 
 model_list:
   - model_name: gpt-5.6-sol
@@ -12,6 +13,14 @@ model_list:
       # legacy Azure OpenAI SDK endpoint that needs api_version/deployment
       # IDs - same convention langgraph's ChatOpenAI usage relies on.
       model: openai/gpt-5.6-sol
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
+  - model_name: gpt-5.6-luna
+    litellm_params:
+      model: openai/gpt-5.6-luna
       api_base: os.environ/OPENAI_BASE_URL
       api_key: os.environ/OPENAI_API_KEY
     model_info:

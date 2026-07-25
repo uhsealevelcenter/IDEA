@@ -46,6 +46,34 @@ auto-discovery - they live in its own database):**
    Models, which only manages Ollama/OpenAI connections, unrelated to Pipe
    Functions.
 
+## External task model (`gpt-5.6-luna`)
+
+Open WebUI uses an external task model for auxiliary work such as titles,
+tags, follow-up suggestions, and search queries. IDEA keeps this separate
+from the user-facing Pipe model:
+
+- `IDEA Terminal Agent` remains the only visible chat model and continues
+  to use `gpt-5.6-sol` through LangGraph.
+- `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
+  Open WebUI, and marked hidden so it remains available to backend tasks
+  without appearing in the chat model selector.
+
+After Open WebUI and LiteLLM are running, apply the configuration with:
+
+```bash
+./openwebui/configure_openwebui.py
+```
+
+The script reads `.env`, authenticates with the admin
+`OPENWEBUI_API_KEY`, and idempotently reconciles only the internal LiteLLM
+connection, Luna's hidden/public model metadata, and
+`TASK_MODEL_EXTERNAL`. It deliberately leaves
+`ENABLE_PERSISTENT_CONFIG` at its default (`true`), so other Admin Panel
+changes remain persistent and editable. `WEBUI_ADMIN_EMAIL` and
+`WEBUI_ADMIN_PASSWORD` may be supplied as a fallback if no admin API key
+is available. When run interactively, the script instead prompts for any
+missing admin credentials and does not save the password.
+
 ## Automatic file sync (`/outputs` → Open WebUI Files)
 
 Any file the agent places under `/outputs` in its sandbox (see

@@ -138,7 +138,8 @@ services:
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
 
   # LiteLLM proxy - fronts the same Azure AI Foundry OpenAI-compatible
-  # endpoint langgraph/ already talks to directly, exposing only gpt-5.6-sol
+  # endpoint langgraph/ already talks to directly. It exposes gpt-5.6-sol
+  # to the IDEA agent and gpt-5.6-luna to Open WebUI for background tasks
   # (see litellm/litellm_config.yaml). Uses a dedicated Postgres
   # role+schema on the existing `db` service rather than its own database
   # container - see litellm/init_litellm_db.sql / setup_litellm_db.sh,
