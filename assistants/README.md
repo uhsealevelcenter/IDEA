@@ -4,10 +4,12 @@ This directory contains IDEA's three deployment-managed Open WebUI
 Assistants. Each Assistant wraps the visible `idea-terminal-agent` base model
 with a domain-specific system prompt and user-facing metadata.
 
-The three files under `prompts/` are the exact `content=` strings seeded by
-legacy IDEA's `utils/prompt_manager.py` on the `server-side-compaction`
-branch. Tests pin their lengths and SHA-256 hashes to prevent accidental
-modernization or formatting changes.
+The three files under `prompts/` are derived from the `content=` strings
+seeded by legacy IDEA's `utils/prompt_manager.py` on the
+`server-side-compaction` branch. SEA and Mars contain only the minor storage
+changes needed for IDEA-next's read-only shared `/app/data` mount and private
+per-user `/workspace`. Tests pin their lengths and SHA-256 hashes to prevent
+other accidental modernization or formatting changes.
 
 The manifest uses the readable Pipe sub-model ID `idea-terminal-agent`.
 Open WebUI currently qualifies that model in its live catalog as

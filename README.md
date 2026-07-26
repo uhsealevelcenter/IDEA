@@ -125,7 +125,26 @@ LiteLLM (the LLM proxy in `litellm/`) uses a dedicated Postgres role/schema on t
 ./litellm/setup_litellm_db.sh
 ```
 
-### 4. Start Local Services
+### 4. Seed Shared Scientific Data
+
+IDEA exposes a centrally maintained, read-only `/app/data` tree to every
+user's terminal. Import the allowlisted datasets from legacy IDEA before the
+first start:
+
+```bash
+docker compose run --rm --build \
+  --volume "$(realpath ../../IDEA/data):/source:ro" \
+  shared-data import /source
+
+docker compose run --rm shared-data status
+```
+
+Only metadata, benchmarks, altimetry, and InSight data are imported. Papers,
+HCDP, SJW, `.pqa`, prompts, and every other legacy path are excluded. See
+[`shared_data/README.md`](shared_data/README.md) for updates and migration
+details.
+
+### 5. Start Local Services
 
 ```bash
 docker compose up -d --build
@@ -133,7 +152,7 @@ docker compose up -d --build
 
 `docker compose` automatically merges `docker-compose.yml` with `docker-compose.override.yml` (dev-only ports for `langgraph`/`sandbox`/`litellm`, live source mounts, and the `nginx` service) since no `-f` flags are given.
 
-### 5. One-Time Open WebUI Setup
+### 6. One-Time Open WebUI Setup
 
 Open WebUI Functions live in its own database, not on disk, so the Pipe function that bridges chat to `langgraph` (`openwebui/functions/idea_pipe.py`) has to be registered once per Open WebUI instance:
 

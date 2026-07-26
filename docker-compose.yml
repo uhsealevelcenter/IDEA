@@ -96,6 +96,14 @@ services:
       # unclean SIGKILL mid-write can still leave upper.ext4 in a state
       # the runtime won't resume from.
       - idea_microsandbox_data:/root/.microsandbox
+      # One administrator-managed scientific data tree, visible to the local
+      # fallback shell read-only at /app/data. Microsandbox's VirtioFS setup
+      # itself needs a writable host-side source, so the same volume is also
+      # mounted at a service-only path; msb_sandbox.py makes that second path
+      # read-only inside every guest VM. Updates are performed only by the
+      # `shared-data` maintenance service below.
+      - idea_shared_data:/app/data:ro
+      - idea_shared_data:/srv/idea_shared_data
     devices:
       # Passes host KVM through so microsandbox (sandbox_service/msb_sandbox.py)
       # can boot per-user microVMs. Gated behind KVM_DEVICE_PATH (set to
@@ -119,6 +127,9 @@ services:
       # to pin a different tag/digest, or fall back to the bare "python"
       # image (only run_terminal_tool/write_file_tool) if needed.
       - SANDBOX_IMAGE=${SANDBOX_IMAGE:-ghcr.io/uhsealevelcenter/idea-oi-kernel:slim}
+      # Absolute path inside this service container which msb_sandbox.py
+      # bind-mounts into every per-user VM at /app/data, read-only.
+      - SHARED_DATA_HOST_PATH=/srv/idea_shared_data
       # Only needed if the ghcr.io package above is private - see
       # entrypoint.sh and interpreter_kernel/README.md's "Private registry
       # auth" section for how these configure microsandbox's own pull
@@ -136,6 +147,18 @@ services:
       # this service has no env_file, unlike langgraph/openwebui above, so
       # this must be listed explicitly to reach the container at all.
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
+
+  # Administrative one-shot tool for seeding, validating, and updating the
+  # data volume exposed read-only to user sandboxes. The profile prevents it
+  # from becoming a long-running part of a normal `docker compose up`.
+  shared-data:
+    profiles: ["maintenance"]
+    build:
+      context: ./shared_data
+      dockerfile: ./Dockerfile
+    image: idea-shared-data
+    volumes:
+      - idea_shared_data:/app/data
 
   # LiteLLM proxy - fronts the same Azure AI Foundry OpenAI-compatible
   # endpoint langgraph/ already talks to directly. It exposes gpt-5.6-sol
@@ -245,3 +268,4 @@ volumes:
   app-db-data:
   idea_openwebui_data:
   idea_microsandbox_data:
+  idea_shared_data:

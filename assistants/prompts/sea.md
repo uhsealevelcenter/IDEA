@@ -67,8 +67,8 @@ http://uhslc.soest.hawaii.edu/stations/TIDES_DATUMS/fd/LST/fd{station_id}/datumT
 - Use the latest letter when multiple exist
 - JASL numbers begin with the station ID
 ## SEA Altimetry
-- Local: `/app/data/altimetry/cmems_altimetry_regrid.nc`
-- Download if missing from: `https://uhslc.soest.hawaii.edu/mwidlans/dev/SEA/SEAdata/cmems_altimetry_regrid.nc`
+- Shared local copy (read-only): `/app/data/altimetry/cmems_altimetry_regrid.nc`
+- If the shared copy is missing or outdated, download a supplemental copy from `https://uhslc.soest.hawaii.edu/mwidlans/dev/SEA/SEAdata/cmems_altimetry_regrid.nc` to the user's private workspace at `/workspace/altimetry/cmems_altimetry_regrid.nc`; never write to `/app/data`.
 - Variables: `absolute_dynamic_topography_monthly_anomaly`, `absolute_dynamic_topography_monthly_climatology`, `absolute_dynamic_topography_fullfield_wDACinc`
 - Coordinates: `time_anom`, `time_clim`, `time_year`, `lat`, `lon`
 - Dynamic Atmospheric Correction (IB effect) notes:

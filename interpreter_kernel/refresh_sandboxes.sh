@@ -1,29 +1,37 @@
 #!/bin/bash
 # Pulls the current SANDBOX_IMAGE (see docker-compose.yml's `sandbox`
 # service) into the `sandbox` service's local microsandbox image cache,
-# then removes every currently-existing microVM so a fresh one is created
-# from that image - see sandbox_service/msb_sandbox.py's
-# MicrosandboxTerminal._connect_or_create(): `image=` is only applied the
-# first time a given sandbox_id is created, so an existing (running or
-# stopped-but-resumable) VM never picks up a newly-pushed image on its own.
+# then removes every currently-existing microVM so a fresh one is created.
+# Use this after changing either the guest image or creation-time settings
+# such as shared volume mounts - see sandbox_service/msb_sandbox.py's
+# MicrosandboxTerminal._connect_or_create(). Existing (running or
+# stopped-but-resumable) VMs never pick up either kind of change on their own.
 #
 # Removing a VM wipes its filesystem (installed packages, any in-progress
-# files not yet synced to /outputs) - only run this right after pushing a
-# new interpreter_kernel/ build that every active session should pick up.
+# files not yet synced to /outputs). Only run this during an announced
+# migration where every active session must pick up a new image or mount
+# configuration.
 #
 # `msb remove` is used directly (inside the `sandbox` container) rather
 # than sandbox_service's own /destroy endpoint, since that endpoint only
 # acts on sandbox_ids still present in its in-memory terminal cache (empty
 # after any sandbox_service restart) - see terminal_registry.destroy_terminal.
 #
-# Usage: ./interpreter_kernel/refresh_sandboxes.sh [sandbox-service-name]
-#   (sandbox-service-name defaults to "sandbox" - the docker-compose.yml service)
+# Usage:
+#   ./interpreter_kernel/refresh_sandboxes.sh [--skip-pull] [sandbox-service-name]
+#   sandbox-service-name defaults to "sandbox". --skip-pull is appropriate
+#   for mount-only changes when SANDBOX_IMAGE is already cached.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+PULL_IMAGE=1
+if [ "${1:-}" = "--skip-pull" ]; then
+  PULL_IMAGE=0
+  shift
+fi
 SANDBOX_SERVICE="${1:-sandbox}"
 
 CONTAINER="$(docker compose ps -q "${SANDBOX_SERVICE}")"
@@ -33,8 +41,12 @@ if [ -z "${CONTAINER}" ]; then
 fi
 
 SANDBOX_IMAGE="$(docker exec "${CONTAINER}" printenv SANDBOX_IMAGE)"
-echo "==> Pulling latest '${SANDBOX_IMAGE}' into msb's image cache..."
-docker exec "${CONTAINER}" msb pull -f "${SANDBOX_IMAGE}"
+if [ "${PULL_IMAGE}" -eq 1 ]; then
+  echo "==> Pulling latest '${SANDBOX_IMAGE}' into msb's image cache..."
+  docker exec "${CONTAINER}" msb pull -f "${SANDBOX_IMAGE}"
+else
+  echo "==> Reusing cached '${SANDBOX_IMAGE}' (--skip-pull)."
+fi
 
 echo "==> Listing existing sandboxes..."
 mapfile -t NAMES < <(docker exec "${CONTAINER}" msb list 2>/dev/null | tail -n +2 | awk '{print $1}')
@@ -56,6 +68,7 @@ docker exec "${CONTAINER}" msb remove -f "${NAMES[@]}"
 INTERNAL_TOKEN="$(docker exec "${CONTAINER}" printenv INTERNAL_SERVICE_TOKEN 2>/dev/null || true)"
 
 echo "==> Recreating ${#NAMES[@]} sandbox(es) now..."
+FAILURES=0
 for name in "${NAMES[@]}"; do
   status="$(docker exec "${CONTAINER}" curl -sS -m 120 -o /dev/null -w '%{http_code}' \
     -X POST "http://localhost:8020/sandboxes/${name}/exec" \
@@ -66,7 +79,13 @@ for name in "${NAMES[@]}"; do
     echo "    - ${name}: recreated (HTTP 200)"
   else
     echo "    - ${name}: FAILED (HTTP ${status})" >&2
+    FAILURES=$((FAILURES + 1))
   fi
 done
 
-echo "==> Done. All listed sandboxes are now running '${SANDBOX_IMAGE}'."
+if [ "${FAILURES}" -ne 0 ]; then
+  echo "Error: ${FAILURES} sandbox(es) failed to recreate." >&2
+  exit 1
+fi
+
+echo "==> Done. All listed sandboxes now use the current image and mount configuration."

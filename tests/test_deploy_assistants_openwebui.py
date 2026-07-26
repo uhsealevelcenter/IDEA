@@ -44,7 +44,7 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertEqual(self.manifest["base_model_id"], "idea-terminal-agent")
         self.assertEqual(self.manifest["base_model_logo"], "assets/idea.png")
 
-    def test_prompts_match_legacy_prompt_manager_exactly(self):
+    def test_official_prompts_match_pinned_repository_versions(self):
         expected = {
             "prompts/welcome.md": (
                 2372,
@@ -52,13 +52,13 @@ class DeployAssistantsTests(unittest.TestCase):
                 False,
             ),
             "prompts/sea.md": (
-                6469,
-                "3cffbbba2e86f3500dc48948f899776e5fb8cab0714d88ce2668105d119bf105",
+                6657,
+                "a5e562e4a02ac7b94c891eb5a2b2fdd810251cdef51c0a4e386274859b6804a0",
                 True,
             ),
             "prompts/mars.md": (
-                8735,
-                "029e637233b0657c5735c5ec11bd8a13ba0f97379898914470699812412b42d9",
+                8859,
+                "c5674535bfd2b2e067de2a6386841d94871386d30cb7e15905028b3fec5434ca",
                 False,
             ),
         }
@@ -147,6 +147,20 @@ class DeployAssistantsTests(unittest.TestCase):
             deploy.public_read_grants([])[0],
             payload["access_grants"],
         )
+
+    def test_sea_and_mars_use_private_workspace_for_new_downloads(self):
+        definitions = {
+            item["id"]: item for item in self.manifest["assistants"]
+        }
+        for assistant_id in ("sea", "mars-assistant"):
+            payload = deploy.official_assistant_payload(
+                self.manifest_path,
+                self.manifest["base_model_id"],
+                definitions[assistant_id],
+            )
+            prompt = payload["params"]["system"]
+            self.assertIn("/workspace", prompt)
+            self.assertIn("read-only", prompt)
 
     def test_seed_mode_preserves_an_existing_assistant(self):
         existing = {
