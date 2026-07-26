@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import unittest
 from pathlib import Path
@@ -41,6 +42,43 @@ class DeployAssistantsTests(unittest.TestCase):
             ["welcome-assistant", "sea", "mars-assistant"],
         )
         self.assertEqual(self.manifest["base_model_id"], "idea-terminal-agent")
+        self.assertEqual(self.manifest["base_model_logo"], "assets/idea.png")
+
+    def test_prompts_match_legacy_prompt_manager_exactly(self):
+        expected = {
+            "prompts/welcome.md": (
+                2372,
+                "24516eeb01a8c0f300545b1564c29c88b7facdcd18b94fe8902716d9b183b51d",
+                False,
+            ),
+            "prompts/sea.md": (
+                6469,
+                "3cffbbba2e86f3500dc48948f899776e5fb8cab0714d88ce2668105d119bf105",
+                True,
+            ),
+            "prompts/mars.md": (
+                8735,
+                "029e637233b0657c5735c5ec11bd8a13ba0f97379898914470699812412b42d9",
+                False,
+            ),
+        }
+
+        for relative_path, (
+            expected_length,
+            expected_hash,
+            ends_with_newline,
+        ) in expected.items():
+            prompt = deploy.read_relative_text(
+                self.manifest_path,
+                relative_path,
+                ends_with_newline,
+            )
+            self.assertEqual(len(prompt), expected_length, relative_path)
+            self.assertEqual(
+                hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                expected_hash,
+                relative_path,
+            )
 
     def test_resolves_function_qualified_pipe_model_id(self):
         client = FakeClient(
@@ -97,7 +135,11 @@ class DeployAssistantsTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["base_model_id"], "idea-terminal-agent")
-        self.assertIn("# Welcome Assistant", payload["params"]["system"])
+        self.assertTrue(
+            payload["params"]["system"].startswith(
+                "Welcome Assistant System Instructions for IDEA"
+            )
+        )
         self.assertTrue(
             payload["meta"]["profile_image_url"].startswith("data:image/png;base64,")
         )
@@ -185,6 +227,7 @@ class DeployAssistantsTests(unittest.TestCase):
             client,
             "idea-terminal-agent",
             {"id": "idea-terminal-agent", "name": "IDEA Terminal Agent"},
+            "data:image/png;base64,aWRlYQ==",
             dry_run=False,
         )
 
@@ -193,6 +236,10 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertEqual(path, "/api/v1/models/create")
         self.assertFalse(payload["meta"]["hidden"])
         self.assertNotIn("assistant_base_model", payload["meta"])
+        self.assertEqual(
+            payload["meta"]["profile_image_url"],
+            "data:image/png;base64,aWRlYQ==",
+        )
 
     def test_permissions_enable_private_assistant_creation_only(self):
         client = FakeClient(

@@ -1,0 +1,34 @@
+{
+  "base_model_id": "idea-terminal-agent",
+  "base_model_logo": "assets/idea.png",
+  "default_assistant_id": "welcome-assistant",
+  "assistants": [
+    {
+      "id": "welcome-assistant",
+      "name": "Welcome Assistant",
+      "description": "Introduces IDEA, explains its capabilities, and helps users get started.",
+      "prompt": "prompts/welcome.md",
+      "prompt_ends_with_newline": false,
+      "logo": "assets/idea.png",
+      "tags": ["IDEA", "Getting Started"]
+    },
+    {
+      "id": "sea",
+      "name": "SEA",
+      "description": "Analyzes UHSLC sea-level, tide, datum, benchmark, and coastal-flooding data.",
+      "prompt": "prompts/sea.md",
+      "prompt_ends_with_newline": true,
+      "logo": "assets/uhslc.png",
+      "tags": ["IDEA", "Sea Level", "UHSLC"]
+    },
+    {
+      "id": "mars-assistant",
+      "name": "Mars Assistant",
+      "description": "Explores NASA InSight atmospheric observations, Mars time, imagery, and mission science.",
+      "prompt": "prompts/mars.md",
+      "prompt_ends_with_newline": false,
+      "logo": "assets/mars.png",
+      "tags": ["IDEA", "Mars", "InSight"]
+    }
+  ]
+}

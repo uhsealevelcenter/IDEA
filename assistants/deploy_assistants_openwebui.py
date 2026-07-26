@@ -41,9 +41,12 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 def load_manifest(path: Path) -> dict[str, Any]:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     base_model_id = manifest.get("base_model_id")
+    base_model_logo = manifest.get("base_model_logo")
     assistants = manifest.get("assistants")
     if not isinstance(base_model_id, str) or not base_model_id:
         raise RuntimeError("Assistant manifest requires a non-empty base_model_id")
+    if not isinstance(base_model_logo, str) or not base_model_logo:
+        raise RuntimeError("Assistant manifest requires a non-empty base_model_logo")
     if not isinstance(assistants, list) or not assistants:
         raise RuntimeError("Assistant manifest requires a non-empty assistants list")
 
@@ -67,15 +70,23 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return manifest
 
 
-def read_relative_text(manifest_path: Path, relative_path: str) -> str:
+def read_relative_text(
+    manifest_path: Path,
+    relative_path: str,
+    ends_with_newline: bool = False,
+) -> str:
     path = (manifest_path.parent / relative_path).resolve()
     try:
         path.relative_to(manifest_path.parent.resolve())
     except ValueError as exc:
         raise RuntimeError(f"Assistant path escapes manifest directory: {relative_path}") from exc
-    text = path.read_text(encoding="utf-8").strip()
+    text = path.read_text(encoding="utf-8")
     if not text:
         raise RuntimeError(f"Assistant prompt is empty: {path}")
+    # Text files conventionally carry one final newline. The legacy SEA
+    # string intentionally includes it; Welcome and Mars do not.
+    if not ends_with_newline and text.endswith("\n"):
+        text = text[:-1]
     return text
 
 
@@ -164,7 +175,11 @@ def official_assistant_payload(
         }
     )
     params = dict((existing or {}).get("params") or {})
-    params["system"] = read_relative_text(manifest_path, definition["prompt"])
+    params["system"] = read_relative_text(
+        manifest_path,
+        definition["prompt"],
+        bool(definition.get("prompt_ends_with_newline")),
+    )
     return {
         "id": definition["id"],
         "base_model_id": base_model_id,
@@ -180,6 +195,7 @@ def configure_assistant_base_model(
     client: OpenWebUIClient,
     base_model_id: str,
     catalog_model: dict[str, Any],
+    profile_image_url: str,
     dry_run: bool,
 ) -> str:
     existing = get_workspace_model(client, base_model_id)
@@ -188,6 +204,7 @@ def configure_assistant_base_model(
     # directly in chat and in the stock Open WebUI Assistant base-model
     # picker without requiring a custom frontend publication.
     meta["hidden"] = False
+    meta["profile_image_url"] = profile_image_url
     meta.pop("assistant_base_model", None)
     payload = {
         "id": base_model_id,
@@ -293,6 +310,10 @@ def verify_assistants(
     base = get_workspace_model(client, manifest["base_model_id"])
     if not base or base.get("meta", {}).get("hidden") is not False:
         raise RuntimeError("Assistant base model visibility verification failed")
+    if not str(base.get("meta", {}).get("profile_image_url") or "").startswith(
+        "data:image/png;base64,"
+    ):
+        raise RuntimeError("Assistant base model IDEA logo verification failed")
 
     definitions = {
         item["id"]: item for item in manifest["assistants"] if item["id"] in expected_ids
@@ -384,6 +405,7 @@ def main() -> int:
         client,
         resolved_base_model_id,
         base_model,
+        png_data_uri(manifest_path, manifest["base_model_logo"]),
         args.dry_run,
     )
     configure_user_assistant_permissions(client, args.dry_run)
