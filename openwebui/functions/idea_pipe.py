@@ -17,6 +17,53 @@ from pydantic import BaseModel, Field
 from typing import Generator, Iterator, Union
 
 
+BASE_MODEL_ID = "idea_terminal_agent.idea-terminal-agent"
+BASE_MODEL_ALIASES = {BASE_MODEL_ID, "idea-terminal-agent"}
+
+
+def _message_content(message: dict) -> str:
+    """Return OpenAI message content as text, including multipart text."""
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") in {"text", "input_text"}
+            and part.get("text")
+        )
+    return str(content)
+
+
+def _latest_user_content(messages: list) -> str:
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("role") == "user":
+            return _message_content(message)
+    return ""
+
+
+def _assistant_system_prompt(messages: list) -> str | None:
+    """Collect system messages Open WebUI injected for the selected Assistant."""
+    prompts = [
+        _message_content(message).strip()
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "system"
+    ]
+    prompts = [prompt for prompt in prompts if prompt]
+    return "\n\n".join(prompts) or None
+
+
+def _selected_assistant_id(metadata: dict | None) -> str | None:
+    model = (metadata or {}).get("model")
+    if isinstance(model, dict):
+        model_id = model.get("id")
+        if isinstance(model_id, str) and model_id and model_id not in BASE_MODEL_ALIASES:
+            return model_id
+    return None
+
+
 class Pipe:
     class Valves(BaseModel):
         LANGGRAPH_SERVICE_URL: str = Field(
@@ -49,18 +96,20 @@ class Pipe:
         return [{"id": "idea-terminal-agent", "name": "IDEA Terminal Agent"}]
 
     def pipe(
-        self, body: dict, __user__: dict | None = None
+        self,
+        body: dict,
+        __user__: dict | None = None,
+        __metadata__: dict | None = None,
     ) -> Union[str, Generator, Iterator]:
         messages = body.get("messages", [])
         if not messages:
             return ""
 
-        last_message = messages[-1]
-        user_content = (
-            last_message.get("content", "")
-            if isinstance(last_message, dict)
-            else str(last_message)
-        )
+        user_content = _latest_user_content(messages)
+        if not user_content:
+            return ""
+        assistant_system_prompt = _assistant_system_prompt(messages)
+        assistant_id = _selected_assistant_id(__metadata__)
 
         user = __user__ or {}
         # Open WebUI's own user id becomes the sandbox/session identity that
@@ -73,19 +122,27 @@ class Pipe:
         user_email = user.get("email") or None
         # Open WebUI's per-conversation chat_id keeps history scoped per chat
         # the same way the existing frontend's browser_session_id does.
-        session_id = str(body.get("chat_id") or "default")
+        session_id = str(
+            body.get("chat_id")
+            or (__metadata__ or {}).get("chat_id")
+            or "default"
+        )
         # Open WebUI's built-in "pending" role covers users awaiting admin
         # approval; treat anyone without a full "user"/"admin" role as guest,
         # matching this repo's existing guest-vs-registered distinction.
         is_guest = user.get("role") not in ("user", "admin")
 
         payload = {
-            "session_key": f"{user_id}:{session_id}",
+            # Keep Redis conversation history separate when the same Open
+            # WebUI chat is deliberately switched to another Assistant.
+            "session_key": f"{user_id}:{session_id}:{assistant_id or BASE_MODEL_ID}",
             "user_id": user_id,
             "user_email": user_email,
             "is_guest": is_guest,
             "message": user_content,
             "model": self.valves.MODEL,
+            "assistant_id": assistant_id,
+            "assistant_system_prompt": assistant_system_prompt,
         }
 
         headers = (

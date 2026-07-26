@@ -135,6 +135,8 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = None
     max_iterations: Optional[int] = 20
     restore_history: Optional[bool] = True
+    assistant_id: Optional[str] = None
+    assistant_system_prompt: Optional[str] = None
 
 
 class ChatRunRequest(BaseModel):
@@ -144,6 +146,8 @@ class ChatRunRequest(BaseModel):
     is_guest: bool
     messages: list[dict[str, Any]]
     model: Optional[str] = "gpt-5.6-sol"
+    assistant_id: Optional[str] = None
+    assistant_system_prompt: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -159,6 +163,8 @@ def _run_chat_job(
     messages: list[dict[str, Any]],
     model: str,
     user_email: Optional[str] = None,
+    assistant_id: Optional[str] = None,
+    assistant_system_prompt: Optional[str] = None,
 ):
     """Background job to execute chat and stream events to Redis"""
     session_key = f"{user_id}:{session_id}"
@@ -182,7 +188,9 @@ def _run_chat_job(
             model=model,
             temperature=None,
             max_iterations=20,
-            user_email=user_email
+            user_email=user_email,
+            assistant_id=assistant_id,
+            assistant_system_prompt=assistant_system_prompt,
         )
         
         stored_messages = redis_client.get(f"langgraph_messages:{session_key}")
@@ -261,6 +269,8 @@ async def start_chat_run(request: ChatRunRequest):
             "is_guest": request.is_guest,
             "messages": request.messages,
             "model": request.model,
+            "assistant_id": request.assistant_id,
+            "assistant_system_prompt": request.assistant_system_prompt,
         },
         daemon=True,
     )
@@ -318,7 +328,9 @@ async def chat_endpoint(request: ChatRequest):
             model=request.model,
             temperature=request.temperature,
             max_iterations=request.max_iterations,
-            user_email=request.user_email
+            user_email=request.user_email,
+            assistant_id=request.assistant_id,
+            assistant_system_prompt=request.assistant_system_prompt,
         )
         
         # Restore conversation history from Redis if requested

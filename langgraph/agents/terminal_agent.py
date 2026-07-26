@@ -34,13 +34,41 @@ OPENWEBUI_BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "http://openwebui:8080").rs
 OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
 
 
+def compose_system_prompt(
+    base_prompt: str,
+    assistant_system_prompt: Optional[str] = None,
+) -> str:
+    """Append an Assistant specialization without replacing IDEA's base rules."""
+    specialization = (assistant_system_prompt or "").strip()
+    if not specialization:
+        return base_prompt
+    return (
+        f"{base_prompt.rstrip()}\n\n"
+        "# Selected Assistant specialization\n\n"
+        "Apply the following role and domain instructions when they are "
+        "compatible with the shared IDEA execution, security, sandbox, and "
+        "artifact rules above. The shared rules take precedence if they conflict.\n\n"
+        f"{specialization}\n"
+    )
+
+
 class TerminalAgent:
     """
     General-purpose terminal agent that gives the LLM access to a persistent terminal session.
     The LLM can write code to files, run scripts, install packages, and solve tasks iteratively.
     """
     
-    def __init__(self, session_id: str, user_id: Optional[str] = None, user_email: Optional[str] = None, model: str = "gpt-5.6-sol", temperature: Optional[float] = None, max_iterations: int = 20):
+    def __init__(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        model: str = "gpt-5.6-sol",
+        temperature: Optional[float] = None,
+        max_iterations: int = 20,
+        assistant_id: Optional[str] = None,
+        assistant_system_prompt: Optional[str] = None,
+    ):
         self.session_id = session_id
         self.user_id = user_id
         # Used only for LiteLLM per-end-user spend tracking (see
@@ -50,6 +78,8 @@ class TerminalAgent:
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
+        self.assistant_id = assistant_id
+        self.assistant_system_prompt = assistant_system_prompt
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
         # The sandbox/shell is keyed by user_id (stable across page reloads
@@ -307,7 +337,10 @@ class TerminalAgent:
         self._shown_image_hashes.clear()
         
         # Load system prompt from the consolidated markdown file
-        system_prompt = SYSTEM_PROMPT_PATH.read_text()
+        system_prompt = compose_system_prompt(
+            SYSTEM_PROMPT_PATH.read_text(),
+            self.assistant_system_prompt,
+        )
 
         user_prompt = prompt
         
@@ -322,6 +355,8 @@ class TerminalAgent:
         print("🚀 STARTING TERMINAL AGENT")
         print(f"{'='*80}")
         print(f"\n📋 SYSTEM PROMPT:")
+        if self.assistant_id:
+            print(f"Selected Assistant: {self.assistant_id}")
         print(f"{'─'*80}")
         print(system_prompt)
         print(f"{'─'*80}")

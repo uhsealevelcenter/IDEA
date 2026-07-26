@@ -54,7 +54,9 @@ class ConversationOrchestrator:
         model: str = "gpt-5.6-sol",
         temperature: Optional[float] = None,
         max_iterations: int = 20,
-        user_email: Optional[str] = None
+        user_email: Optional[str] = None,
+        assistant_id: Optional[str] = None,
+        assistant_system_prompt: Optional[str] = None,
     ):
         self.user_id = user_id
         # Passed through to TerminalAgent for LiteLLM per-end-user spend
@@ -67,6 +69,8 @@ class ConversationOrchestrator:
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
+        self.assistant_id = assistant_id
+        self.assistant_system_prompt = assistant_system_prompt
         
         # Conversation management
         self.conversation_history: list[dict] = []
@@ -76,7 +80,6 @@ class ConversationOrchestrator:
         
         # System prompt and instructions
         self.system_message = ""
-        self.custom_instructions = ""
         
         # NOTE: Conversation persistence is handled via Redis (like current system)
         # Database conversations are created manually via API endpoints
@@ -94,9 +97,6 @@ class ConversationOrchestrator:
         
         if self.system_message:
             context_parts.append(self.system_message)
-        
-        if self.custom_instructions:
-            context_parts.append(f"\nAdditional Instructions:\n{self.custom_instructions}")
         
         # Include relevant conversation history (last N messages for context)
         # TODO: Smart context selection (not all history, just relevant parts)
@@ -144,7 +144,9 @@ class ConversationOrchestrator:
                 user_email=self.user_email,
                 model=self.model,
                 temperature=self.temperature,
-                max_iterations=self.max_iterations
+                max_iterations=self.max_iterations,
+                assistant_id=self.assistant_id,
+                assistant_system_prompt=self.assistant_system_prompt,
             )
         
         # Stream agent execution in real time.

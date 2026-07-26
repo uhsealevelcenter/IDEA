@@ -164,7 +164,18 @@ https://docs.openwebui.com/features/authentication-access/api-keys/
    securely prompts for the Open WebUI admin login and uses a temporary JWT;
    non-interactive deployments can provide `WEBUI_ADMIN_EMAIL` and
    `WEBUI_ADMIN_PASSWORD` through their secret store.
-5. Start a new chat and select **"IDEA Terminal Agent"** from the model dropdown.
+5. Deploy the official Assistants:
+   ```bash
+   ./assistants/deploy_assistants_openwebui.py
+   ```
+   This seeds Welcome Assistant, SEA, and Mars Assistant on top of the visible
+   `idea-terminal-agent` base model. It enables private Assistant creation for
+   verified users without enabling user-to-user or public sharing. Normal seed
+   mode preserves subsequent Admin UI edits; use `--reconcile` to restore the
+   repository definitions. User-created Assistants are never modified.
+6. Start a new chat. **Welcome Assistant** is selected by default on a new
+   installation; SEA and Mars Assistant are available from the Assistant
+   selector.
 
 #### Optional: `OPENWEBUI_API_KEY` and `INTERNAL_SERVICE_TOKEN`
 
@@ -224,6 +235,7 @@ What this means in practice for local dev:
 ├── sandbox_service/               # Per-user microsandbox microVM execution service
 ├── interpreter_kernel/            # OCI image booted per microVM: Open Terminal + persistent Python kernel
 ├── litellm/                       # LiteLLM proxy config, Dockerfile, and DB setup script
+├── assistants/                    # Official Assistant prompts, logos, manifest, and deployment script
 └── openwebui/                     # Open WebUI Pipe function (idea_pipe.py) wiring the chat frontend to langgraph
     ├── functions/idea_pipe.py     # The Pipe function itself
     └── register_idea_pipe.sh      # Registers/updates idea_pipe.py in a running Open WebUI via its admin API
