@@ -1238,6 +1238,14 @@ async function startChatRun(params, signal) {
         signal,
     });
 
+    const contentType = response.headers.get('content-type') || '';
+    const isJson = contentType.toLowerCase().includes('application/json');
+    if (!isJson) {
+        throw new Error(
+            `Chat service returned an invalid response (status ${response.status}). Please try again.`
+        );
+    }
+
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         const detail = error.detail;

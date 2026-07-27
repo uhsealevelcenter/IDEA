@@ -858,6 +858,9 @@ interpreter_locks: Dict[str, threading.Lock] = {}
 chat_run_threads: Dict[str, threading.Thread] = {}
 CHAT_RUN_TTL_SECONDS = int(os.getenv("IDEA_CHAT_RUN_TTL_SECONDS", "86400"))
 CHAT_RUN_MAX_POLL_EVENTS = int(os.getenv("IDEA_CHAT_RUN_MAX_POLL_EVENTS", "200"))
+CHAT_MESSAGE_CHECKPOINT_SECONDS = float(
+    os.getenv("IDEA_CHAT_MESSAGE_CHECKPOINT_SECONDS", "30")
+)
 CHAT_RUN_PREFIX = "chat_run:"
 CHAT_RUN_EVENTS_PREFIX = "chat_run_events:"
 CHAT_RUN_SEQ_PREFIX = "chat_run_seq:"
@@ -2299,10 +2302,15 @@ async def _run_chat_job_async(
                 )
 
         interpreter.llm.last_response_usage = None
+        last_message_checkpoint = time()
         for result in interpreter.chat(messages[-1], stream=True):
             chunk = result if isinstance(result, dict) else {"role": "assistant", "type": "message", "content": str(result)}
-            if _is_persistable_interpreter_chunk(chunk):
+            checkpoint_due = (
+                time() - last_message_checkpoint >= CHAT_MESSAGE_CHECKPOINT_SECONDS
+            )
+            if _is_persistable_interpreter_chunk(chunk) and checkpoint_due:
                 _persist_interpreter_messages(session_key, interpreter)
+                last_message_checkpoint = time()
             _append_chat_run_event(run_id, chunk)
 
         _ensure_all_tool_calls_have_outputs(
@@ -2389,9 +2397,16 @@ async def start_chat_run_endpoint(request: Request, token: str = Depends(get_aut
         "created_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat(),
     }
-    _set_chat_run_status(run_id, status)
-    redis_client.delete(_chat_run_events_key(run_id))
-    redis_client.delete(_chat_run_seq_key(run_id))
+    try:
+        _set_chat_run_status(run_id, status)
+        redis_client.delete(_chat_run_events_key(run_id))
+        redis_client.delete(_chat_run_seq_key(run_id))
+    except redis.RedisError as exc:
+        logger.error("Redis unavailable while starting chat run: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Chat service storage is temporarily unavailable. Please try again.",
+        ) from exc
 
     thread = threading.Thread(
         target=_run_chat_job_thread,
