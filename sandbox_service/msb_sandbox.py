@@ -483,12 +483,23 @@ class MicrosandboxTerminal:
     def write_file(self, filepath: str, content: str, append: bool = False) -> None:
         """Write content to a file inside the sandbox's filesystem."""
         filepath = self._resolve_path(filepath)
+        parent = os.path.dirname(filepath)
+        if parent:
+            quoted_parent = shlex.quote(parent)
+            self._exec(
+                lambda: self._sandbox.shell(f"mkdir -p -- {quoted_parent}")
+            )
         data = content.encode("utf-8")
         if append:
             # No native append API - emulate via shell so it stays atomic
             # inside the sandbox rather than round-tripping bytes twice.
             escaped = content.replace("'", "'\\''")
-            self._exec(lambda: self._sandbox.shell(f"printf '%s' '{escaped}' >> {filepath}"))
+            quoted_filepath = shlex.quote(filepath)
+            self._exec(
+                lambda: self._sandbox.shell(
+                    f"printf '%s' '{escaped}' >> {quoted_filepath}"
+                )
+            )
         else:
             self._exec(lambda: self._sandbox.fs.write(filepath, data))
 

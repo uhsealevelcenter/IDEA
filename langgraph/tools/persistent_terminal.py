@@ -166,8 +166,8 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
     Returns:
         The output from running the command (stdout/stderr), truncated to
         its first/last OUTPUT_HEAD_TAIL_LINES lines and MAX_OUTPUT_TOKENS
-        tokens - the full output is saved to a temp file in the sandbox
-        (see read_output_range for paging through it).
+        tokens. When truncation occurs, the full output is saved to a temp
+        file in the sandbox (see read_output_range for paging through it).
     """
     try:
         response = _client.post(f"/sandboxes/{session_id}/exec", json={"command": command})
@@ -190,11 +190,6 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
     if not output:
         return f"{status_line}\nOutput:\n(no output)"
 
-    ext = _guess_output_extension(output)
-    output_filepath = f"{_TEMP_OUTPUT_DIR}/output_{int(time.time())}_{uuid.uuid4().hex[:8]}.{ext}"
-    write_result = write_file(output_filepath, output, session_id=session_id)
-    saved_ok = write_result.startswith("✓")
-
     truncated_output = _truncate_output(output)
     was_truncated = truncated_output != output
 
@@ -204,14 +199,24 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
             f"\n(Output truncated to first/last {OUTPUT_HEAD_TAIL_LINES} lines, "
             f"max {MAX_OUTPUT_TOKENS} tokens.)"
         )
-    if saved_ok:
-        parts.append(f"\nFull output saved to: {output_filepath}")
-        parts.append(
-            "Use read_output_range_tool(filepath, offset, n_limit) to read "
-            "specific character ranges of this file if you need more detail."
+        ext = _guess_output_extension(output)
+        output_filepath = (
+            f"{_TEMP_OUTPUT_DIR}/output_{int(time.time())}_"
+            f"{uuid.uuid4().hex[:8]}.{ext}"
         )
-    else:
-        parts.append(f"\n(Failed to save full output to a temp file: {write_result})")
+        write_result = write_file(
+            output_filepath, output, session_id=session_id
+        )
+        if write_result.startswith("✓"):
+            parts.append(f"\nFull output saved to: {output_filepath}")
+            parts.append(
+                "Use read_output_range_tool(filepath, offset, n_limit) to read "
+                "specific character ranges of this file if you need more detail."
+            )
+        else:
+            parts.append(
+                f"\n(Failed to save full output to a temp file: {write_result})"
+            )
 
     return "\n".join(parts)
 
