@@ -12,6 +12,7 @@ sandbox_service instead of in this process.
 
 import json
 import os
+import shlex
 import time
 import uuid
 from typing import Optional
@@ -21,6 +22,7 @@ from langchain_core.tools import tool
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
+from utils.output_sync import parse_file_metadata_output
 from config import (
     SANDBOX_SERVICE_URL,
     SANDBOX_HTTP_CONNECT_TIMEOUT_SECONDS,
@@ -238,9 +240,17 @@ def write_file(filepath: str, content: str, session_id: str, append: bool = Fals
     return f"✓ {action} {chars} characters ({lines} lines) to {filepath}"
 
 
-def read_file_bytes(filepath: str, session_id: str) -> bytes:
+def read_file_bytes(
+    filepath: str,
+    session_id: str,
+    timeout: httpx.Timeout | float | None = None,
+) -> bytes:
     """Read raw file bytes from inside the session's sandbox (via sandbox_service)."""
-    response = _client.get(f"/sandboxes/{session_id}/files/content", params={"filepath": filepath})
+    response = _client.get(
+        f"/sandboxes/{session_id}/files/content",
+        params={"filepath": filepath},
+        timeout=timeout or _HTTP_TIMEOUT,
+    )
     response.raise_for_status()
     return response.content
 
@@ -307,6 +317,39 @@ def list_files(directory: str, session_id: str) -> list[str]:
 
     output = result.get("output", "") or ""
     return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def list_file_metadata(
+    directory: str,
+    session_id: str,
+) -> dict[str, str] | None:
+    """
+    Snapshot regular files under `directory` as path -> size/mtime signature.
+
+    Returns None when the sandbox cannot be inspected, allowing callers to
+    distinguish a failed snapshot from a valid empty directory.
+    """
+    quoted_directory = shlex.quote(directory)
+    command = (
+        f"if [ -d {quoted_directory} ]; then "
+        f"find {quoted_directory} -type f "
+        r"-printf '%p\t%s\t%T@\n'; "
+        "fi"
+    )
+    try:
+        response = _client.post(
+            f"/sandboxes/{session_id}/exec",
+            json={"command": command},
+        )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPError:
+        return None
+
+    if not result.get("success", False):
+        return None
+
+    return parse_file_metadata_output(result.get("output", "") or "")
 
 
 def run_python(code: str, session_id: str) -> list[dict]:

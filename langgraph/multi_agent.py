@@ -57,6 +57,7 @@ class ConversationOrchestrator:
         user_email: Optional[str] = None,
         assistant_id: Optional[str] = None,
         assistant_system_prompt: Optional[str] = None,
+        openwebui_authorization: Optional[str] = None,
     ):
         self.user_id = user_id
         # Passed through to TerminalAgent for LiteLLM per-end-user spend
@@ -71,6 +72,7 @@ class ConversationOrchestrator:
         self.max_iterations = max_iterations
         self.assistant_id = assistant_id
         self.assistant_system_prompt = assistant_system_prompt
+        self.openwebui_authorization = openwebui_authorization
         
         # Conversation management
         self.conversation_history: list[dict] = []
@@ -147,6 +149,7 @@ class ConversationOrchestrator:
                 max_iterations=self.max_iterations,
                 assistant_id=self.assistant_id,
                 assistant_system_prompt=self.assistant_system_prompt,
+                openwebui_authorization=self.openwebui_authorization,
             )
         
         # Stream agent execution in real time.

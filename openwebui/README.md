@@ -81,26 +81,42 @@ missing admin credentials and does not save the password.
 
 ## Automatic file sync (`/outputs` → Open WebUI Files)
 
-Any file the agent places under `/outputs` in its sandbox (see
+Any file the agent creates or modifies under `/outputs` in its sandbox (see
 `langgraph/utils/system_prompt.md`) is automatically uploaded to Open
-WebUI's own Files storage at the end of each turn
+WebUI's own Files storage at the end of that turn
 (`TerminalAgent._sync_outputs_to_openwebui` in
-`langgraph/agents/terminal_agent.py`) and shown as a download link in the
-chat response - no extra tool call or user action needed. The model is free
-to reorganize/rename files under `/outputs` mid-turn (`run_terminal_tool`);
-only the final state at the end of the turn gets synced.
+`langgraph/agents/terminal_agent.py`) and shown as a filename-only link in
+the chat response - no extra tool call or user action needed. Open WebUI's
+Markdown renderer opens the link in a new tab. In local development, nginx's
+authenticated `/idea-file-preview/` route displays browser-safe formats
+(including PNG and HTML) inline; other formats retain the normal download
+behavior. Generated HTML is served with a sandbox Content Security Policy.
+The model is free to reorganize/rename files under `/outputs` mid-turn
+(`run_terminal_tool`); unchanged files from earlier turns are not attached
+again.
 
-**One-time setup required:** generate a static Open WebUI API key (log in,
-**Settings > Account > API Keys**) and set it as `OPENWEBUI_API_KEY` in
-`.env`. Without it, syncing silently no-ops (files stay in the sandbox only,
-same as before this feature existed).
+HTML outputs must be self-contained: generated images use `data:` URLs,
+CSS is placed in `<style>` blocks, and custom JavaScript is placed in
+`<script>` blocks. This is required because the browser security sandbox
+intentionally withholds the Open WebUI session from page subresource
+requests. Output sync uploads the HTML bytes unchanged and performs a
+non-mutating validation for local references in `src`, `srcset`, `href`,
+`poster`, and CSS `url(...)`; any remaining local dependency is logged as
+a warning. Large resources should remain separate downloadable outputs
+instead of being embedded.
+
+The Pipe forwards the current user's Open WebUI bearer/session credential
+only for the active internal chat request. LangGraph uses that credential
+for the final upload, so Open WebUI owns the generated files as that user
+and its normal `/api/v1/files/{id}/content` authorization succeeds. The
+credential is not included in model messages or Redis conversation history.
+Uploads are concurrent and bounded by `OUTPUT_SYNC_TIMEOUT_SECONDS` (30
+seconds by default), with at most `OUTPUT_SYNC_MAX_WORKERS` active uploads.
 
 ## Environment variables (`.env`)
 
-These are read via `docker-compose.yml`'s `env_file: .env` on the `openwebui`
-service (`WEBUI_SECRET_KEY`, `ENABLE_SIGNUP`) and passed explicitly to
-`langgraph` (`OPENWEBUI_BASE_URL`, `OPENWEBUI_API_KEY`) - see `example.env`
-for the canonical template with these same keys.
+These are read via `docker-compose.yml` and `.env`; see `example.env` for
+the canonical template.
 
 - **`WEBUI_SECRET_KEY`** - signs Open WebUI's session/auth JWTs. Generate a
   random value once per deployment and keep it stable (changing it
@@ -123,17 +139,15 @@ for the canonical template with these same keys.
   `openwebui` is proxied/renamed/run on a different host than the default
   compose network.
 
-- **`OPENWEBUI_API_KEY`** - a real Open WebUI account's static API key, used
-  by `TerminalAgent._sync_outputs_to_openwebui`
-  (`langgraph/agents/terminal_agent.py`) to push `/outputs` files into Open
-  WebUI's Files storage (see "Automatic file sync" above). To create one:
-  1. Sign up / log in to Open WebUI (`http://localhost:3001`) with the
-     account you want file syncs to be uploaded as.
-  2. Go to **Settings > Account > API Keys** and generate a new key.
-  3. Copy it into `.env` as `OPENWEBUI_API_KEY=...` and restart the
-     `langgraph` service (`docker compose up -d langgraph`) to pick it up.
-  4. Leave it unset to disable syncing entirely (falls back to a silent
-     no-op, same as before this feature existed).
+- **`OPENWEBUI_API_KEY`** - optional administrator API key used by
+  deployment/configuration scripts such as `configure_openwebui.py`. It is
+  not used for per-user output syncing.
+
+- **`OUTPUT_SYNC_TIMEOUT_SECONDS`** - whole-batch deadline for final output
+  uploads; defaults to 30 seconds.
+
+- **`OUTPUT_SYNC_MAX_WORKERS`** - maximum concurrent output uploads;
+  defaults to 4.
 
 ## Status
 

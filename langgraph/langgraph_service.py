@@ -137,6 +137,7 @@ class ChatRequest(BaseModel):
     restore_history: Optional[bool] = True
     assistant_id: Optional[str] = None
     assistant_system_prompt: Optional[str] = None
+    openwebui_authorization: Optional[str] = None
 
 
 class ChatRunRequest(BaseModel):
@@ -148,6 +149,7 @@ class ChatRunRequest(BaseModel):
     model: Optional[str] = "gpt-5.6-sol"
     assistant_id: Optional[str] = None
     assistant_system_prompt: Optional[str] = None
+    openwebui_authorization: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -165,6 +167,7 @@ def _run_chat_job(
     user_email: Optional[str] = None,
     assistant_id: Optional[str] = None,
     assistant_system_prompt: Optional[str] = None,
+    openwebui_authorization: Optional[str] = None,
 ):
     """Background job to execute chat and stream events to Redis"""
     session_key = f"{user_id}:{session_id}"
@@ -191,6 +194,7 @@ def _run_chat_job(
             user_email=user_email,
             assistant_id=assistant_id,
             assistant_system_prompt=assistant_system_prompt,
+            openwebui_authorization=openwebui_authorization,
         )
         
         stored_messages = redis_client.get(f"langgraph_messages:{session_key}")
@@ -271,6 +275,7 @@ async def start_chat_run(request: ChatRunRequest):
             "model": request.model,
             "assistant_id": request.assistant_id,
             "assistant_system_prompt": request.assistant_system_prompt,
+            "openwebui_authorization": request.openwebui_authorization,
         },
         daemon=True,
     )
@@ -331,6 +336,7 @@ async def chat_endpoint(request: ChatRequest):
             user_email=request.user_email,
             assistant_id=request.assistant_id,
             assistant_system_prompt=request.assistant_system_prompt,
+            openwebui_authorization=request.openwebui_authorization,
         )
         
         # Restore conversation history from Redis if requested

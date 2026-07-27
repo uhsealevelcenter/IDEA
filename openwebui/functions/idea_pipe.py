@@ -12,13 +12,37 @@ version: 0.1.0
 """
 
 import json
-import requests
+import re
+import httpx
 from pydantic import BaseModel, Field
-from typing import Generator, Iterator, Union
+from pathlib import PurePosixPath
+from typing import AsyncGenerator, Generator
+from urllib.parse import quote
 
 
 BASE_MODEL_ID = "idea_terminal_agent.idea-terminal-agent"
 BASE_MODEL_ALIASES = {BASE_MODEL_ID, "idea-terminal-agent"}
+SANDBOX_MARKDOWN_LINK_RE = re.compile(
+    r"\[([^\]]+)\]\((?:(?:sandbox|file):)?(/outputs/[^)\s]+)\)"
+)
+SANDBOX_URL_RE = re.compile(r"(?:sandbox|file):(/outputs/[^\s)]+)")
+INLINE_PREVIEW_EXTENSIONS = {
+    ".bmp",
+    ".csv",
+    ".gif",
+    ".htm",
+    ".html",
+    ".jpeg",
+    ".jpg",
+    ".json",
+    ".md",
+    ".pdf",
+    ".png",
+    ".svg",
+    ".txt",
+    ".webp",
+    ".xml",
+}
 
 
 def _message_content(message: dict) -> str:
@@ -64,6 +88,138 @@ def _selected_assistant_id(metadata: dict | None) -> str | None:
     return None
 
 
+def _request_authorization(request: object | None) -> str | None:
+    """Return the current Open WebUI user's bearer credential, if available."""
+    if request is None:
+        return None
+
+    headers = getattr(request, "headers", {}) or {}
+    authorization = headers.get("authorization")
+    if (
+        isinstance(authorization, str)
+        and authorization.lower().startswith("bearer ")
+        and authorization[7:].strip()
+    ):
+        return authorization
+
+    cookies = getattr(request, "cookies", {}) or {}
+    token = cookies.get("token")
+    if isinstance(token, str) and token.strip():
+        return f"Bearer {token.strip()}"
+    return None
+
+
+def _request_public_base_url(request: object | None) -> str:
+    """Return the browser-facing Open WebUI origin for absolute file links."""
+    if request is None:
+        return ""
+
+    headers = getattr(request, "headers", {}) or {}
+    forwarded_proto = (headers.get("x-forwarded-proto") or "").split(",", 1)[0]
+    scheme = forwarded_proto.strip().lower()
+    if scheme not in {"http", "https"}:
+        request_url = getattr(request, "url", None)
+        scheme = getattr(request_url, "scheme", "") or "http"
+
+    forwarded_host = (headers.get("x-forwarded-host") or "").split(",", 1)[0]
+    host = forwarded_host.strip() or (headers.get("host") or "").strip()
+    if host:
+        return f"{scheme}://{host}".rstrip("/")
+
+    base_url = str(getattr(request, "base_url", "") or "")
+    return base_url.rstrip("/")
+
+
+def _sanitize_sandbox_links(content: str) -> str:
+    """Render sandbox-only output paths as text; real attachments follow."""
+    content = SANDBOX_MARKDOWN_LINK_RE.sub(
+        lambda match: f"{match.group(1)}: `{match.group(2)}`",
+        content,
+    )
+    return SANDBOX_URL_RE.sub(
+        lambda match: f"`{match.group(1)}`",
+        content,
+    )
+
+
+def _download_url(file_id: str, public_base_url: str = "") -> str:
+    path = f"/api/v1/files/{file_id}/content?attachment=true"
+    return f"{public_base_url.rstrip('/')}{path}" if public_base_url else path
+
+
+def _preview_url(
+    file_id: str,
+    filename: str,
+    public_base_url: str = "",
+) -> str:
+    display_name = PurePosixPath(filename).name or "file"
+    path = f"/idea-file-preview/{quote(file_id, safe='')}/{quote(display_name)}"
+    return f"{public_base_url.rstrip('/')}{path}" if public_base_url else path
+
+
+def _file_url(
+    file_id: str,
+    filename: str,
+    public_base_url: str = "",
+) -> str:
+    if PurePosixPath(filename).suffix.lower() in INLINE_PREVIEW_EXTENSIONS:
+        return _preview_url(file_id, filename, public_base_url)
+    return _download_url(file_id, public_base_url)
+
+
+def _file_link(
+    file_id: str,
+    filename: str,
+    public_base_url: str = "",
+) -> str:
+    """Return a filename-only link that opens the output in a new tab."""
+    display_name = PurePosixPath(filename).name or "file"
+    url = _file_url(file_id, filename, public_base_url)
+    markdown_label = (
+        display_name.replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
+    # Open WebUI's MarkdownInlineTokens component renders Markdown links
+    # with target="_blank"; keeping this standard Markdown also avoids raw
+    # HTML sanitization differences across Open WebUI releases.
+    return f"[{markdown_label}]({url})"
+
+
+def _resolve_output_links(
+    content: str,
+    synced_files: list[dict],
+    public_base_url: str = "",
+) -> tuple[str, set[str]]:
+    """Replace sandbox output URLs with their real Open WebUI file URLs."""
+    files_by_path = {
+        item.get("filename"): item.get("openwebui_file_id")
+        for item in synced_files
+        if item.get("filename") and item.get("openwebui_file_id")
+    }
+    referenced_file_ids: set[str] = set()
+
+    def replace_markdown(match: re.Match) -> str:
+        _, filepath = match.groups()
+        file_id = files_by_path.get(filepath)
+        if not file_id:
+            return f"`{filepath}`"
+        referenced_file_ids.add(file_id)
+        return _file_link(file_id, filepath, public_base_url)
+
+    content = SANDBOX_MARKDOWN_LINK_RE.sub(replace_markdown, content)
+
+    def replace_url(match: re.Match) -> str:
+        filepath = match.group(1)
+        file_id = files_by_path.get(filepath)
+        if not file_id:
+            return f"`{filepath}`"
+        referenced_file_ids.add(file_id)
+        return _file_link(file_id, filepath, public_base_url)
+
+    return SANDBOX_URL_RE.sub(replace_url, content), referenced_file_ids
+
+
 class Pipe:
     class Valves(BaseModel):
         LANGGRAPH_SERVICE_URL: str = Field(
@@ -95,21 +251,23 @@ class Pipe:
         """Registers this as a single selectable model in Open WebUI's model dropdown."""
         return [{"id": "idea-terminal-agent", "name": "IDEA Terminal Agent"}]
 
-    def pipe(
+    async def pipe(
         self,
         body: dict,
         __user__: dict | None = None,
         __metadata__: dict | None = None,
-    ) -> Union[str, Generator, Iterator]:
+        __request__: object | None = None,
+    ) -> AsyncGenerator[str, None]:
         messages = body.get("messages", [])
         if not messages:
-            return ""
+            return
 
         user_content = _latest_user_content(messages)
         if not user_content:
-            return ""
+            return
         assistant_system_prompt = _assistant_system_prompt(messages)
         assistant_id = _selected_assistant_id(__metadata__)
+        public_base_url = _request_public_base_url(__request__)
 
         user = __user__ or {}
         # Open WebUI's own user id becomes the sandbox/session identity that
@@ -143,6 +301,9 @@ class Pipe:
             "model": self.valves.MODEL,
             "assistant_id": assistant_id,
             "assistant_system_prompt": assistant_system_prompt,
+            # Used only by langgraph's final /outputs upload. It is never
+            # added to model messages or persisted conversation history.
+            "openwebui_authorization": _request_authorization(__request__),
         }
 
         headers = (
@@ -151,31 +312,78 @@ class Pipe:
             else {}
         )
 
+        message_buffer: list[str] = []
+        pending_files: list[dict] = []
+
+        def flush_message_buffer() -> str:
+            content = _sanitize_sandbox_links("".join(message_buffer))
+            message_buffer.clear()
+            return content
+
         try:
-            response = requests.post(
-                f"{self.valves.LANGGRAPH_SERVICE_URL}/chat",
-                json=payload,
-                headers=headers,
-                stream=True,
-                timeout=self.valves.REQUEST_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
+            timeout = httpx.Timeout(self.valves.REQUEST_TIMEOUT_SECONDS)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.valves.LANGGRAPH_SERVICE_URL}/chat",
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    response.raise_for_status()
+                    async for raw_line in response.aiter_lines():
+                        if not raw_line or not raw_line.startswith("data: "):
+                            continue
+                        data = raw_line[len("data: "):]
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+
+                        if chunk.get("type") == "message":
+                            message_buffer.append(chunk.get("content", ""))
+                            continue
+
+                        if chunk.get("type") == "file":
+                            pending_files.append(chunk)
+                            continue
+
+                        if message_buffer:
+                            yield flush_message_buffer()
+                        for translated in self._translate_chunk(
+                            chunk,
+                            public_base_url,
+                        ):
+                            yield translated
+        except httpx.HTTPError as exc:
+            if message_buffer:
+                yield flush_message_buffer()
             yield f"\n\n**Error reaching langgraph service:** {exc}\n\n"
             return
 
-        for raw_line in response.iter_lines(decode_unicode=True):
-            if not raw_line or not raw_line.startswith("data: "):
+        referenced_file_ids: set[str] = set()
+        if message_buffer:
+            resolved_message, referenced_file_ids = _resolve_output_links(
+                "".join(message_buffer),
+                pending_files,
+                public_base_url,
+            )
+            message_buffer.clear()
+            yield resolved_message
+
+        for file_chunk in pending_files:
+            if file_chunk.get("openwebui_file_id") in referenced_file_ids:
                 continue
-            data = raw_line[len("data: "):]
-            try:
-                chunk = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-            yield from self._translate_chunk(chunk)
+            for translated in self._translate_chunk(
+                file_chunk,
+                public_base_url,
+            ):
+                yield translated
 
     @staticmethod
-    def _translate_chunk(chunk: dict) -> Generator[str, None, None]:
+    def _translate_chunk(
+        chunk: dict,
+        public_base_url: str = "",
+    ) -> Generator[str, None, None]:
         """
         Converts one langgraph_service SSE chunk into markdown text for Open
         WebUI's chat stream. Mirrors the rendering logic currently done in
@@ -215,6 +423,5 @@ class Pipe:
             # storage, no bytes to translate here.
             file_id = chunk.get("openwebui_file_id")
             filename = chunk.get("filename") or "file"
-            display_name = filename.rsplit("/", 1)[-1]
             if file_id:
-                yield f"\n\n📎 [{display_name}](/api/v1/files/{file_id}/content)\n\n"
+                yield f"\n\n📎 {_file_link(file_id, filename, public_base_url)}\n\n"

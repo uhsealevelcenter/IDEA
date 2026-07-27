@@ -200,7 +200,7 @@ https://docs.openwebui.com/features/authentication-access/api-keys/
 
 Two more `.env` variables matter once the above is working, and both require a follow-up step **inside the Open WebUI UI** - setting them in `.env` alone is not enough:
 
-- **`OPENWEBUI_API_KEY`** - the same admin API key from step 2 above, saved into `.env`. This lets `langgraph` push files the agent writes to `/outputs` into Open WebUI's own Files storage automatically (see `openwebui/README.md`'s "Automatic file sync"). Leave blank to disable syncing. After setting it, restart `langgraph`: `docker compose up -d langgraph`.
+- **`OPENWEBUI_API_KEY`** - the same admin API key from step 2 above, saved into `.env`. Deployment/configuration scripts use it to reconcile Open WebUI settings. Output syncing does not use this shared key; the Pipe forwards the current user's authenticated session so generated files are owned and downloadable by that user.
 - **`INTERNAL_SERVICE_TOKEN`** - a shared secret guarding the internal `langgraph`<->`sandbox` and Pipe-function->`langgraph` HTTP calls (generate with `openssl rand -hex 32`). Setting it in `.env` only secures the `langgraph`/`sandbox` side; you must **also** paste the same value into `idea_pipe.py`'s `INTERNAL_SERVICE_TOKEN` Valve in **Admin Panel > Functions > IDEA Terminal Agent > Valves**, since Open WebUI Valves are configured through that UI, not read from `.env`. Leave blank only for local dev (both sides fail open when unset).
 
 See `openwebui/README.md` for full details on both.

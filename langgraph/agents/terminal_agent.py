@@ -11,6 +11,7 @@ import hashlib
 import requests
 import threading
 import queue
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from typing import Dict, Any, Optional, Callable, Iterable, Iterator
 from pathlib import Path
 from langchain_openai import ChatOpenAI
@@ -19,7 +20,18 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files, run_python
+from tools.persistent_terminal import (
+    make_agent_tools,
+    close_terminal,
+    read_file_bytes,
+    list_file_metadata,
+    run_python,
+)
+from utils.output_sync import (
+    changed_output_paths,
+    discover_html_output_references,
+    is_html_output,
+)
 from utils.tools import DATA_TOOLS
 from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
 
@@ -31,7 +43,8 @@ SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
 # TerminalAgent._sync_outputs_to_openwebui.
 OUTPUTS_DIR = "/outputs"
 OPENWEBUI_BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "http://openwebui:8080").rstrip("/")
-OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
+OUTPUT_SYNC_TIMEOUT_SECONDS = float(os.getenv("OUTPUT_SYNC_TIMEOUT_SECONDS", "30"))
+OUTPUT_SYNC_MAX_WORKERS = max(1, int(os.getenv("OUTPUT_SYNC_MAX_WORKERS", "4")))
 
 
 def compose_system_prompt(
@@ -68,6 +81,7 @@ class TerminalAgent:
         max_iterations: int = 20,
         assistant_id: Optional[str] = None,
         assistant_system_prompt: Optional[str] = None,
+        openwebui_authorization: Optional[str] = None,
     ):
         self.session_id = session_id
         self.user_id = user_id
@@ -80,6 +94,7 @@ class TerminalAgent:
         self.max_iterations = max_iterations
         self.assistant_id = assistant_id
         self.assistant_system_prompt = assistant_system_prompt
+        self.openwebui_authorization = openwebui_authorization
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
         # The sandbox/shell is keyed by user_id (stable across page reloads
@@ -175,7 +190,10 @@ class TerminalAgent:
         ext = Path(filepath).suffix.lower().lstrip('.')
         return b64_content, ext
     
-    def _sync_outputs_to_openwebui(self) -> list[dict]:
+    def _sync_outputs_to_openwebui(
+        self,
+        outputs_before_turn: dict[str, str] | None,
+    ) -> list[dict]:
         """
         Scan this sandbox's OUTPUTS_DIR (final state, after the model has
         finished any mid-turn reorganizing/renaming) and upload each file
@@ -186,38 +204,123 @@ class TerminalAgent:
         Returns a list of {'filename', 'openwebui_file_id'} dicts for
         successfully synced files.
         """
-        # TODO: re-enable once sync latency/timeouts (blocking `run()` for
-        # up to 60s per file on a slow/unreachable Open WebUI, sometimes
-        # stalling the whole turn) are addressed - see msb_sandbox.py sync
-        # investigation. Disabled outright rather than gating on
-        # OPENWEBUI_API_KEY so it's a one-line flip to restore.
-        return []
-
-        if not OPENWEBUI_API_KEY:
+        if not self.openwebui_authorization:
+            print("⚠️  Skipping output sync: no Open WebUI user credential")
             return []
 
-        synced = []
-        for filepath in list_files(OUTPUTS_DIR, session_id=self.sandbox_id):
+        if outputs_before_turn is None:
+            print("⚠️  Skipping output sync: pre-turn output snapshot failed")
+            return []
+
+        outputs_after_turn = list_file_metadata(
+            OUTPUTS_DIR,
+            session_id=self.sandbox_id,
+        )
+        if outputs_after_turn is None:
+            print("⚠️  Skipping output sync: post-turn output snapshot failed")
+            return []
+
+        filepaths = changed_output_paths(
+            outputs_before_turn,
+            outputs_after_turn,
+        )
+        if not filepaths:
+            return []
+
+        sync_deadline = time.monotonic() + OUTPUT_SYNC_TIMEOUT_SECONDS
+        html_data: dict[str, bytes] = {}
+
+        # Self-contained HTML is required by system_prompt.md because a
+        # sandboxed preview cannot authenticate subresource requests. Check
+        # for accidental local dependencies, but never mutate the page.
+        for filepath in filepaths:
+            if not is_html_output(filepath):
+                continue
             try:
-                data = read_file_bytes(filepath, session_id=self.sandbox_id)
+                remaining = sync_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                data = read_file_bytes(
+                    filepath,
+                    session_id=self.sandbox_id,
+                    timeout=remaining,
+                )
+                html_data[filepath] = data
+                local_references = discover_html_output_references(
+                    data,
+                    filepath,
+                )
+                if local_references:
+                    print(
+                        f"⚠️  {filepath} is not self-contained; sandboxed "
+                        f"browser previews cannot load local output "
+                        f"resource(s): {', '.join(sorted(local_references))}"
+                    )
+            except Exception as e:
+                print(
+                    f"⚠️  Could not validate self-contained HTML for "
+                    f"{filepath}: {e}"
+                )
+
+        def upload(filepath: str, data: bytes | None = None) -> dict | None:
+            try:
+                remaining = sync_deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                if data is None:
+                    data = read_file_bytes(
+                        filepath,
+                        session_id=self.sandbox_id,
+                        timeout=remaining,
+                    )
+                remaining = sync_deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
                 filename = Path(filepath).name
                 response = requests.post(
                     f"{OPENWEBUI_BASE_URL}/api/v1/files/",
-                    headers={"Authorization": f"Bearer {OPENWEBUI_API_KEY}"},
+                    headers={"Authorization": self.openwebui_authorization},
                     files={"file": (filename, data)},
                     params={"process": "false"},
-                    timeout=60,
+                    timeout=(min(5, remaining), remaining),
                 )
                 response.raise_for_status()
                 file_id = response.json().get("id")
                 if file_id:
-                    synced.append({"filename": filepath, "openwebui_file_id": file_id})
                     print(f"✓ Synced {filepath} to Open WebUI (file_id={file_id})")
+                    return {"filename": filepath, "openwebui_file_id": file_id}
             except Exception as e:
                 print(f"⚠️  Failed to sync {filepath} to Open WebUI: {e}")
-                continue
+            return None
 
-        return synced
+        executor = ThreadPoolExecutor(
+            max_workers=min(OUTPUT_SYNC_MAX_WORKERS, len(filepaths)),
+            thread_name_prefix="idea-output-sync",
+        )
+        futures = [
+            executor.submit(upload, filepath, html_data.get(filepath))
+            for filepath in filepaths
+        ]
+        synced: list[dict] = []
+        try:
+            remaining = max(0, sync_deadline - time.monotonic())
+            for future in as_completed(futures, timeout=remaining):
+                result = future.result()
+                if result:
+                    synced.append(result)
+        except TimeoutError:
+            unfinished = sum(not future.done() for future in futures)
+            print(
+                "⚠️  Output sync reached its "
+                f"{OUTPUT_SYNC_TIMEOUT_SECONDS:g}s batch timeout; "
+                f"skipping {unfinished} unfinished file(s)"
+            )
+        finally:
+            for future in futures:
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        return sorted(synced, key=lambda item: item["filename"])
 
     @staticmethod
     def _invoke_with_heartbeat(
@@ -335,6 +438,10 @@ class TerminalAgent:
         """
         
         self._shown_image_hashes.clear()
+        outputs_before_turn = list_file_metadata(
+            OUTPUTS_DIR,
+            session_id=self.sandbox_id,
+        )
         
         # Load system prompt from the consolidated markdown file
         system_prompt = compose_system_prompt(
@@ -729,7 +836,7 @@ class TerminalAgent:
         # WebUI's own Files storage, once per turn (not per write - see
         # system_prompt.md and _sync_outputs_to_openwebui docstring), and
         # let the user know they're available as downloads.
-        synced_files = self._sync_outputs_to_openwebui()
+        synced_files = self._sync_outputs_to_openwebui(outputs_before_turn)
         if stream_callback:
             for synced in synced_files:
                 stream_callback({
