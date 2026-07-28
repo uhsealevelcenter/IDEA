@@ -380,6 +380,25 @@ langgraph/utils/
 
 ## 🔨 TODO
 
+### Deferred: heartbeat timing during invisible tool-call generation
+
+Native Open WebUI progress statuses now keep long LangGraph work visibly
+active (`Working`, `Thinking`, tool preparation/execution, output
+finalization, and completion). This resolves the user-facing appearance of a
+stalled process, but does not completely replace transport heartbeats.
+
+`TerminalAgent._iter_with_heartbeat()` currently emits a heartbeat only when
+its raw model-chunk queue is empty for the configured interval. A model can
+continuously emit structured tool-argument chunks whose visible `.content`
+is empty; those chunks keep the queue busy and suppress heartbeats even
+though no response bytes are being produced for the user-facing stream.
+
+**Potential follow-up:** base heartbeat timing on elapsed time since the last
+user-visible/SSE event rather than on `queue.get()` timeouts. This is lower
+priority now that progress statuses address the UX problem, but remains
+worth doing as connection-reliability hardening for runs that could remain
+in invisible tool generation beyond a proxy read timeout.
+
 ### 1. Update `app.py` to use Orchestrator
 
 **Current Code (app.py):**

@@ -476,6 +476,14 @@ class TerminalAgent:
         Iteration 3 stall this was added for, where 2690 chunks arrived with
         response_content length 0, so the existing per-chunk
         stream_callback(chunk.content) call in run() never fired even once).
+
+        TODO: Base heartbeat timing on time since the last user-visible/SSE
+        event, rather than only on queue.get() timeouts. A model can emit
+        continuous tool-argument chunks with empty visible content, which
+        keeps this queue busy and suppresses heartbeats. Native progress
+        statuses now prevent the UI from appearing stalled, but a run that
+        stays in this state beyond a proxy read timeout could still lose its
+        transport connection.
         """
         _SENTINEL = object()
         q: "queue.Queue" = queue.Queue()
