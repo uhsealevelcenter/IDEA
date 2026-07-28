@@ -44,6 +44,79 @@ INLINE_PREVIEW_EXTENSIONS = {
     ".webp",
     ".xml",
 }
+ARTIFACT_TARGET_PREFIXES = (
+    "/outputs/",
+    "sandbox:/outputs/",
+    "file:/outputs/",
+)
+MAX_PENDING_MARKDOWN_LABEL = 512
+RAW_ARTIFACT_REFERENCE_RE = re.compile(r"(?:sandbox|file):/outputs/")
+MARKDOWN_ARTIFACT_REFERENCE_RE = re.compile(
+    rf"\[[^\]\n]{{0,{MAX_PENDING_MARKDOWN_LABEL}}}\]\("
+    r"(?:(?:sandbox|file):)?/outputs/"
+)
+
+
+def _split_streamable_message(content: str) -> tuple[str, str, bool]:
+    """
+    Split assistant text into a safe-to-stream prefix and a retained tail.
+
+    Artifact URLs cannot be resolved until the LangGraph service emits its
+    final ``file`` chunks. Ordinary text should not wait for that. Retain only
+    a possible/confirmed artifact reference (including references split across
+    model-token boundaries) and stream everything before it immediately.
+    """
+    confirmed_starts = [
+        match.start()
+        for pattern in (
+            RAW_ARTIFACT_REFERENCE_RE,
+            MARKDOWN_ARTIFACT_REFERENCE_RE,
+        )
+        if (match := pattern.search(content))
+    ]
+    if confirmed_starts:
+        start = min(confirmed_starts)
+        return content[:start], content[start:], True
+
+    possible_starts: list[int] = []
+
+    # Preserve a suffix that may be the beginning of a raw artifact URL.
+    for prefix in ("sandbox:/outputs/", "file:/outputs/"):
+        for length in range(1, min(len(content), len(prefix) - 1) + 1):
+            if content.endswith(prefix[:length]):
+                possible_starts.append(len(content) - length)
+
+    # Preserve an incomplete Markdown link only while it can still become an
+    # output link. Once its target is visibly something else, it is safe to
+    # stream. The label cap prevents an unmatched "[" from buffering an
+    # otherwise unbounded response.
+    markdown_start = content.rfind("[")
+    if markdown_start >= 0:
+        candidate = content[markdown_start:]
+        close_label = candidate.find("]")
+        if close_label < 0:
+            if (
+                "\n" not in candidate
+                and len(candidate) <= MAX_PENDING_MARKDOWN_LABEL
+            ):
+                possible_starts.append(markdown_start)
+        else:
+            after_label = candidate[close_label + 1:]
+            if not after_label:
+                possible_starts.append(markdown_start)
+            elif after_label.startswith("("):
+                target_fragment = after_label[1:]
+                if not target_fragment or any(
+                    prefix.startswith(target_fragment)
+                    for prefix in ARTIFACT_TARGET_PREFIXES
+                ):
+                    possible_starts.append(markdown_start)
+
+    if not possible_starts:
+        return content, "", False
+
+    start = min(possible_starts)
+    return content[:start], content[start:], False
 
 
 def _message_content(message: dict) -> str:
@@ -321,12 +394,15 @@ class Pipe:
             else {}
         )
 
-        message_buffer: list[str] = []
+        message_buffer = ""
+        artifact_reference_confirmed = False
         pending_files: list[dict] = []
 
         def flush_message_buffer() -> str:
-            content = _sanitize_sandbox_links("".join(message_buffer))
-            message_buffer.clear()
+            nonlocal message_buffer, artifact_reference_confirmed
+            content = _sanitize_sandbox_links(message_buffer)
+            message_buffer = ""
+            artifact_reference_confirmed = False
             return content
 
         try:
@@ -349,7 +425,19 @@ class Pipe:
                             continue
 
                         if chunk.get("type") == "message":
-                            message_buffer.append(chunk.get("content", ""))
+                            content = chunk.get("content", "")
+                            if artifact_reference_confirmed:
+                                message_buffer += content
+                                continue
+
+                            streamable, message_buffer, confirmed = (
+                                _split_streamable_message(
+                                    message_buffer + content
+                                )
+                            )
+                            artifact_reference_confirmed = confirmed
+                            if streamable:
+                                yield streamable
                             continue
 
                         if chunk.get("type") == "file":
@@ -372,11 +460,11 @@ class Pipe:
         referenced_file_ids: set[str] = set()
         if message_buffer:
             resolved_message, referenced_file_ids = _resolve_output_links(
-                "".join(message_buffer),
+                message_buffer,
                 pending_files,
                 public_base_url,
             )
-            message_buffer.clear()
+            message_buffer = ""
             yield resolved_message
 
         for file_chunk in pending_files:

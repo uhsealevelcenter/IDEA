@@ -347,6 +347,100 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_pipe_yields_ordinary_assistant_text_before_stream_finishes(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        release_second_chunk = asyncio.Event()
+
+        async def aiter_lines():
+            yield 'data: {"type":"message","content":"Working now"}'
+            await release_second_chunk.wait()
+            yield 'data: {"type":"message","content":" and done"}'
+
+        response.aiter_lines = aiter_lines
+        response_context = Mock()
+        response_context.__aenter__ = AsyncMock(return_value=response)
+        response_context.__aexit__ = AsyncMock(return_value=None)
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.stream.return_value = response_context
+
+        async def collect_incrementally():
+            stream = idea_pipe.Pipe().pipe(
+                {"messages": [{"role": "user", "content": "Create it"}]},
+                __user__={"id": "user-1", "role": "user"},
+                __metadata__={"chat_id": "chat-1"},
+            )
+            first = await asyncio.wait_for(anext(stream), timeout=0.1)
+            release_second_chunk.set()
+            remaining = [chunk async for chunk in stream]
+            return first, remaining
+
+        with patch.object(
+            idea_pipe.httpx,
+            "AsyncClient",
+            return_value=client,
+        ):
+            first, remaining = asyncio.run(collect_incrementally())
+
+        self.assertEqual(first, "Working now")
+        self.assertEqual(remaining, [" and done"])
+
+    def test_pipe_resolves_artifact_link_split_across_message_chunks(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+
+        async def aiter_lines():
+            yield (
+                'data: {"type":"message",'
+                '"content":"Created it. [Download]("}'
+            )
+            yield 'data: {"type":"message","content":"sandbox:/out"}'
+            yield (
+                'data: {"type":"message",'
+                '"content":"puts/report/figure.png)"}'
+            )
+            yield (
+                'data: {"type":"file",'
+                '"filename":"/outputs/report/figure.png",'
+                '"openwebui_file_id":"file-123"}'
+            )
+
+        response.aiter_lines = aiter_lines
+        response_context = Mock()
+        response_context.__aenter__ = AsyncMock(return_value=response)
+        response_context.__aexit__ = AsyncMock(return_value=None)
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.stream.return_value = response_context
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Create it"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(
+            idea_pipe.httpx,
+            "AsyncClient",
+            return_value=client,
+        ):
+            result = asyncio.run(collect())
+
+        self.assertEqual(
+            result,
+            [
+                "Created it. ",
+                "[figure.png](/idea-file-preview/file-123/figure.png)",
+            ],
+        )
+
     def test_resolves_to_visible_absolute_public_url(self):
         resolved, referenced = idea_pipe._resolve_output_links(
             "[random_scatter.png](sandbox:/outputs/random_scatter.png)",
