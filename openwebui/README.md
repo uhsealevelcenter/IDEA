@@ -79,6 +79,30 @@ changes remain persistent and editable. `WEBUI_ADMIN_EMAIL` and
 is available. When run interactively, the script instead prompts for any
 missing admin credentials and does not save the password.
 
+## Unified IDEA and Open WebUI Skills
+
+IDEA exposes one `view_skill(source, id)` tool for two authoritative skill
+stores. Built-in skills are discovered from
+`langgraph/utils/skills/*/SKILL.md`, with their manifest generated from YAML
+frontmatter on each run. The LangGraph process reads these files directly;
+skill content never passes through the sandbox terminal or its output
+truncation.
+
+Open WebUI Workspace skills retain Open WebUI's native activation behavior.
+Skills selected with a `$` mention or the per-chat Skills toggle arrive as
+complete system context. Model-attached skills arrive as an
+`<available_skills>` manifest and IDEA loads the selected entry with
+`view_skill(source="workspace", id=...)`. The Workspace read uses the current
+user's forwarded bearer/session credential against Open WebUI's Skills API,
+preserving ownership, active-state, and access-control checks. IDEA does not
+fall back between same-named built-in and Workspace skills.
+
+Skill reads are returned to the model in full, subject to
+`MAX_SKILL_BYTES` (100,000 bytes by default). Oversized skills fail explicitly
+instead of being partially returned. Application logs record only skill
+source, ID, byte count, and SHA-256—not private skill instructions or user
+credentials.
+
 ## Automatic file sync (`/outputs` → Open WebUI Files)
 
 Any file the agent creates or modifies under `/outputs` in its sandbox (see
@@ -159,6 +183,10 @@ the canonical template.
 
 - **`OUTPUT_SYNC_MAX_WORKERS`** - maximum concurrent output uploads;
   defaults to 4.
+
+- **`MAX_SKILL_BYTES`** - maximum size of one complete built-in or Workspace
+  skill returned to IDEA; defaults to 100,000 bytes. Larger skills fail
+  explicitly and are never partially loaded.
 
 ## Status
 

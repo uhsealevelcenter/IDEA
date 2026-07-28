@@ -34,6 +34,12 @@ from utils.output_sync import (
     referenced_output_paths,
 )
 from utils.artifact_registry import ArtifactRegistry
+from utils.skill_loader import (
+    BuiltinSkillLoader,
+    OpenWebUISkillLoader,
+    make_view_skill_tool,
+    summarize_skill_result,
+)
 from utils.tools import DATA_TOOLS
 from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
 
@@ -52,19 +58,27 @@ OUTPUT_SYNC_MAX_WORKERS = max(1, int(os.getenv("OUTPUT_SYNC_MAX_WORKERS", "4")))
 def compose_system_prompt(
     base_prompt: str,
     assistant_system_prompt: Optional[str] = None,
+    builtin_skills_manifest: Optional[str] = None,
 ) -> str:
     """Append an Assistant specialization without replacing IDEA's base rules."""
+    sections = [base_prompt.rstrip()]
+    manifest = (builtin_skills_manifest or "").strip()
+    if manifest:
+        sections.append(
+            "# Available built-in IDEA skills\n\n"
+            f"{manifest}"
+        )
     specialization = (assistant_system_prompt or "").strip()
-    if not specialization:
-        return base_prompt
-    return (
-        f"{base_prompt.rstrip()}\n\n"
-        "# Selected Assistant specialization\n\n"
-        "Apply the following role and domain instructions when they are "
-        "compatible with the shared IDEA execution, security, sandbox, and "
-        "artifact rules above. The shared rules take precedence if they conflict.\n\n"
-        f"{specialization}\n"
-    )
+    if specialization:
+        sections.append(
+            "# Selected Assistant specialization and Open WebUI context\n\n"
+            "Apply the following role, domain, and skill instructions when "
+            "they are compatible with the shared IDEA execution, security, "
+            "sandbox, and artifact rules above. The shared rules take "
+            "precedence if they conflict.\n\n"
+            f"{specialization}"
+        )
+    return "\n\n".join(sections) + "\n"
 
 
 class TerminalAgent:
@@ -118,6 +132,15 @@ class TerminalAgent:
             )
         self.sandbox_id = str(user_id)
         self.artifact_registry = ArtifactRegistry(self.sandbox_id)
+        self.builtin_skill_loader = BuiltinSkillLoader()
+        self.workspace_skill_loader = OpenWebUISkillLoader(
+            OPENWEBUI_BASE_URL,
+            self.openwebui_authorization,
+        )
+        self.view_skill_tool = make_view_skill_tool(
+            self.builtin_skill_loader,
+            self.workspace_skill_loader,
+        )
         
         # Terminal/filesystem tools bound to this user's own sandbox (or
         # local shell, if sandboxing is unavailable) - never shared with
@@ -152,6 +175,7 @@ class TerminalAgent:
             self.show_image_tool,
             self.read_output_range_tool,
             self.run_python_tool,
+            self.view_skill_tool,
             *DATA_TOOLS,
         ]
         self.tools_by_name = {t.name: t for t in self.all_tools}
@@ -508,6 +532,7 @@ class TerminalAgent:
         system_prompt = compose_system_prompt(
             SYSTEM_PROMPT_PATH.read_text(),
             self.assistant_system_prompt,
+            self.builtin_skill_loader.render_manifest(),
         )
 
         user_prompt = prompt
@@ -526,7 +551,11 @@ class TerminalAgent:
         if self.assistant_id:
             print(f"Selected Assistant: {self.assistant_id}")
         print(f"{'─'*80}")
-        print(system_prompt)
+        print(
+            f"System prompt prepared ({len(system_prompt)} characters). "
+            "Full content is not logged because it may contain private "
+            "Open WebUI Workspace skill instructions."
+        )
         print(f"{'─'*80}")
         print(f"\n👤 USER PROMPT:")
         print(f"{'─'*80}")
@@ -539,6 +568,7 @@ class TerminalAgent:
         total_tokens = 0
         input_tokens = 0
         output_tokens = 0
+        sensitive_tool_call_ids: set[str] = set()
         
         while iterations < self.max_iterations and not task_complete:
             iterations += 1
@@ -831,6 +861,27 @@ class TerminalAgent:
                             result = (result + f"\n[{image_count} image(s) generated and shown to the user]").strip()
                         result = result or "(no output)"
 
+                    elif tool_name == 'view_skill':
+                        print(f"\n📝 Args: {tool_call['args']}")
+                        try:
+                            result = self.view_skill_tool.invoke(
+                                tool_call['args']
+                            )
+                            displayed_result = summarize_skill_result(result)
+                        except Exception as e:
+                            result = f"✗ view_skill failed: {e}"
+                            displayed_result = result
+
+                        if stream_callback:
+                            stream_callback({
+                                'role': 'computer',
+                                'type': 'console',
+                                'format': 'output',
+                                'content': displayed_result,
+                                'start': True,
+                                'end': True
+                            })
+
                     elif tool_name in self.tools_by_name:
                         # Generic dispatch for data tools (datetime, station, climate, web search, knowledge base)
                         print(f"\n📝 Args: {tool_call['args']}")
@@ -863,10 +914,17 @@ class TerminalAgent:
                     else:
                         # Unknown tool execution
                         result = f"Unknown tool: {tool_name}"
+
+                    displayed_result = (
+                        summarize_skill_result(result)
+                        if tool_name == 'view_skill'
+                        and not str(result).startswith("✗")
+                        else result
+                    )
                     
                     print(f"\n✉️  Tool Result:")
                     print(f"{'─'*60}")
-                    print(result)
+                    print(displayed_result)
                     print(f"{'─'*60}")
                     
                     # Add tool result to messages
@@ -875,6 +933,8 @@ class TerminalAgent:
                     if not tool_call_id:
                         tool_call_id = str(uuid.uuid4())
                         tool_call['id'] = tool_call_id
+                    if tool_name == 'view_skill':
+                        sensitive_tool_call_ids.add(tool_call_id)
                     
                     messages.append(ToolMessage(
                         content=result,
@@ -934,8 +994,19 @@ class TerminalAgent:
         for i, msg in enumerate(messages, 1):
             msg_type = type(msg).__name__
             if hasattr(msg, 'content'):
-                # Show FULL content, no truncation
-                content = str(msg.content)
+                if isinstance(msg, SystemMessage):
+                    content = (
+                        f"[system prompt omitted from logs; "
+                        f"{len(str(msg.content))} characters]"
+                    )
+                elif (
+                    isinstance(msg, ToolMessage)
+                    and msg.tool_call_id in sensitive_tool_call_ids
+                    and not str(msg.content).startswith("✗")
+                ):
+                    content = summarize_skill_result(str(msg.content))
+                else:
+                    content = str(msg.content)
                 print(f"  {i}. {msg_type}: {content}")
             else:
                 print(f"  {i}. {msg_type}")

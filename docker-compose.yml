@@ -65,6 +65,9 @@ services:
       - OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://openwebui:8080}
       - OUTPUT_SYNC_TIMEOUT_SECONDS=${OUTPUT_SYNC_TIMEOUT_SECONDS:-30}
       - OUTPUT_SYNC_MAX_WORKERS=${OUTPUT_SYNC_MAX_WORKERS:-4}
+      # Skill content is never silently truncated. A skill above this limit
+      # fails explicitly so an administrator can shorten or split it.
+      - MAX_SKILL_BYTES=${MAX_SKILL_BYTES:-100000}
       # INTERNAL_SERVICE_TOKEN itself is NOT re-declared here for the same
       # reason OPENAI_API_KEY isn't above - env_file already injects it
       # literally from .env. Guards both this service's own routes

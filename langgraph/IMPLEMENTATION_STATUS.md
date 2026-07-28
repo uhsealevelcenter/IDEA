@@ -597,7 +597,11 @@ conversation = conversation_crud.create_conversation(
 **New location:** `langgraph/utils/skills/`
 - ✅ Skills copied into `langgraph/utils/skills/<skill-name>/SKILL.md`
 - ✅ Skills: `frontend-design`, `review-code`, `latex`, `poster-design`, `co-ops-api`, `co-ops-tadc`, `cora-aws-beta`, `aquaview-ocean-data`, `skill-creator`
-- ✅ Skill activation instructions in `langgraph/utils/system_prompt.md` (`cat langgraph/utils/skills/<skill-name>/SKILL.md`)
+- ✅ Built-in catalog generated from each skill's YAML frontmatter
+- ✅ `view_skill(source="builtin", id=...)` reads the authoritative LangGraph copy in full without routing through terminal-output truncation
+- ✅ `view_skill(source="workspace", id=...)` loads active Open WebUI Workspace skills through the current user's authenticated Skills API
+- ✅ Complete `$`-mentioned and per-chat Open WebUI skills remain available through forwarded system context; model-attached skill manifests load lazily through `view_skill`
+- ✅ Skill loading rejects traversal, source fallback, inactive or unauthorized Workspace skills, and silent partial reads
 
 #### 4. **Comprehensive System Prompts** — 🟡 PARTIAL
 **Location in OI:** `utils/system_prompt.py` (195 lines), `utils/custom_instructions_v04_2026.py` (183 lines)

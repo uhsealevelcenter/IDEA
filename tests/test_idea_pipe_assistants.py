@@ -36,6 +36,33 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             "Latest question",
         )
 
+    def test_preserves_complete_openwebui_skill_system_context(self):
+        messages = [
+            {"role": "system", "content": "Assistant instructions"},
+            {
+                "role": "system",
+                "content": (
+                    '<skill name="private-workflow">\n'
+                    "BEGIN\nPRIVATE-MIDDLE\nEND\n"
+                    "</skill>"
+                ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    "<available_skills>\n"
+                    "<skill><id>lazy-skill</id></skill>\n"
+                    "</available_skills>"
+                ),
+            },
+            {"role": "user", "content": "Use the skills"},
+        ]
+
+        system_context = idea_pipe._assistant_system_prompt(messages)
+
+        self.assertIn("PRIVATE-MIDDLE", system_context)
+        self.assertIn("<id>lazy-skill</id>", system_context)
+
     def test_reads_selected_assistant_from_openwebui_metadata(self):
         metadata = {"model": {"id": "mars-assistant", "name": "Mars Assistant"}}
 
