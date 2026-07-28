@@ -1,0 +1,28 @@
+name: cindra
+display_name: CIndRA
+description: Climate Indicator Report Assistant skill family for approved Phase 1 sea-level workflows.
+status: Draft
+combined_phase_a_f: true
+root_skill: SKILL.md
+shared:
+  - shared/terminology.md
+  - shared/data_sources.md
+  - shared/conventions.md
+  - shared/validation_rules.md
+skills:
+  - name: cindra-sea-level-governance
+    path: skills/cindra-sea-level-governance/SKILL.md
+  - name: cindra-piccm-regional-definition
+    path: skills/cindra-piccm-regional-definition/SKILL.md
+  - name: cindra-site-setup
+    path: skills/cindra-site-setup/SKILL.md
+  - name: cindra-quality-control
+    path: skills/cindra-quality-control/SKILL.md
+  - name: cindra-sea-level-trend
+    path: skills/cindra-sea-level-trend/SKILL.md
+  - name: cindra-flood-frequency
+    path: skills/cindra-flood-frequency/SKILL.md
+  - name: cindra-product-assembly
+    path: skills/cindra-product-assembly/SKILL.md
+source_upload: CIndRA_MERGED_INSTRUCTIONS_WITH_UPDATED_PHASEF_REPORT_CODE_REPO.md
+phase_f_code_bundle_policy: Furnish only when explicitly requested or required.
