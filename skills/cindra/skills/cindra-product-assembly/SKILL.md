@@ -1,6 +1,6 @@
 ---
 name: cindra-product-assembly
-description: Use when CIndRA needs to build, audit, validate, or assemble a sea-level product package: Phase A product inventory/profile matrix, Phase B captions, Phase C methods and limitations, Phase D metadata/provenance, Phase E validation/review/issue log, and Phase F structured product section or report assembly. Furnish a Code repository bundle, annotated notebook, or product-to-code crosswalk only when explicitly requested or contractually required. Do not use to create new scientific methods, override QC/source rules, or write broad decision-support recommendations.
+description: "Use when CIndRA needs to build, audit, validate, or assemble a sea-level product package: Phase A product inventory/profile matrix, Phase B captions, Phase C methods and limitations, Phase D metadata/provenance, Phase E validation/review/issue log, and Phase F structured product section or report assembly. Furnish a Code repository bundle, annotated notebook, or product-to-code crosswalk only when explicitly requested or contractually required. Do not use to create new scientific methods, override QC/source rules, or write broad decision-support recommendations."
 ---
 
 # CIndRA Product Assembly — Combined Phase A-F Skill

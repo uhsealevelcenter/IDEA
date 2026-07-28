@@ -1,6 +1,6 @@
 ---
 name: cindra-sea-level-governance
-description: Use for global CIndRA sea-level MVP rules: scope, source hierarchy, controlled parameters, product profiles, provenance, approved figure policy, review labels, and unsupported-request handling. Use before domain workflow skills when a request needs routing or policy interpretation.
+description: "Use for global CIndRA sea-level MVP rules: scope, source hierarchy, controlled parameters, product profiles, provenance, approved figure policy, review labels, and unsupported-request handling. Use before domain workflow skills when a request needs routing or policy interpretation."
 ---
 
 # CIndRA Sea-Level Governance

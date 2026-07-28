@@ -57,14 +57,14 @@ Use the following skills as modular runtime instructions:
 
 ## Shared Instructions
 
-Before applying a modular skill, read the relevant references in `shared/`:
+Before applying a modular skill, read the relevant references under `/app/skills/cindra/shared/`:
 
-- `shared/terminology.md`
-- `shared/data_sources.md`
-- `shared/conventions.md`
-- `shared/validation_rules.md`
+- `/app/skills/cindra/shared/terminology.md`
+- `/app/skills/cindra/shared/data_sources.md`
+- `/app/skills/cindra/shared/conventions.md`
+- `/app/skills/cindra/shared/validation_rules.md`
 
-Modular skills are stored under `skills/<skill-name>/SKILL.md`. Apply only the skills relevant to the request.
+Modular skills are stored under `/app/skills/cindra/skills/<skill-name>/SKILL.md`. Apply only the skills relevant to the request.
 
 ## Routing Order
 

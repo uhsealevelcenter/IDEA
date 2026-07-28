@@ -1,6 +1,6 @@
 ---
 name: cindra-sea-level-trend
-description: Use for CIndRA sea-level trend analyses: absolute altimetry trends, relative tide-gauge trends, trend maps, regional trend analysis, National/EEZ combined maps, trend time series, station-altimetry comparisons, and Palau/Malakal trend validation.
+description: "Use for CIndRA sea-level trend analyses: absolute altimetry trends, relative tide-gauge trends, trend maps, regional trend analysis, National/EEZ combined maps, trend time series, station-altimetry comparisons, and Palau/Malakal trend validation."
 ---
 
 # CIndRA Sea-Level Trend

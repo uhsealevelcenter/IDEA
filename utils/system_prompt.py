@@ -169,6 +169,11 @@ Specific tools installed on the host include:
     <description>Discover oceanographic, atmospheric, and marine datasets through AquaView as a fallback after IDEA's preferred data sources, but before general web search.</description>
     <location>/app/skills/aquaview-ocean-data/SKILL.md</location>
   </skill>
+  <skill>
+    <name>cindra</name>
+    <description>CIndRA — Climate Indicator Report Assistant. Under development.</description>
+    <location>/app/skills/cindra/SKILL.md</location>
+  </skill>
 </available_skills>
 
 ## Mapping & Visualization
