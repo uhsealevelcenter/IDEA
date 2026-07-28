@@ -172,7 +172,23 @@ Same schema as above, but without `/langgraph` prefix:
 
 The agent streams different message types to the frontend:
 
-#### **1. Text Messages**
+#### **1. Progress Status**
+```json
+{
+  "role": "assistant",
+  "type": "status",
+  "action": "idea_agent",
+  "phase": "preparing_tool",
+  "description": "Preparing a file…",
+  "tool_name": "write_file_tool",
+  "done": false
+}
+```
+
+Status events describe phase transitions only. They never contain tool
+arguments or generated file contents.
+
+#### **2. Text Messages**
 ```json
 {
   "role": "assistant",
@@ -183,7 +199,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **2. Shell Commands**
+#### **3. Shell Commands**
 ```json
 {
   "role": "computer",
@@ -195,7 +211,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **3. File Writes**
+#### **4. File Writes**
 ```json
 {
   "role": "computer",
@@ -207,7 +223,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **4. Console Output**
+#### **5. Console Output**
 ```json
 {
   "role": "computer",
@@ -219,7 +235,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **5. Images** (via `show_image_tool`)
+#### **6. Images** (via `show_image_tool`)
 ```json
 {
   "role": "assistant",

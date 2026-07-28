@@ -19,7 +19,9 @@ function](https://docs.openwebui.com/features/plugin/functions/pipe) that:
    `ConversationOrchestrator` already expects.
 3. Translates each streamed chunk (`{role, type, content, format, start,
    end}` - the same format `frontend/assistant.js` renders) into markdown
-   text/images for Open WebUI's chat pane.
+   text/images for Open WebUI's chat pane. LangGraph `status` chunks are
+   forwarded through Open WebUI's injected `__event_emitter__` and appear in
+   its native response-status UI; this requires no Open WebUI source changes.
 
 ## Running it
 

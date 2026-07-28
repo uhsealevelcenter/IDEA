@@ -42,6 +42,11 @@ from utils.skill_loader import (
 )
 from utils.tools import DATA_TOOLS
 from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
+from progress import (
+    progress_chunk,
+    tool_call_chunk_names,
+    tool_status_description,
+)
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
 
@@ -569,23 +574,54 @@ class TerminalAgent:
         input_tokens = 0
         output_tokens = 0
         sensitive_tool_call_ids: set[str] = set()
+
+        def emit_progress(
+            phase: str,
+            description: str,
+            *,
+            done: bool = False,
+            tool_name: Optional[str] = None,
+        ) -> None:
+            if stream_callback:
+                stream_callback(
+                    progress_chunk(
+                        phase,
+                        description,
+                        done=done,
+                        tool_name=tool_name,
+                    )
+                )
         
         while iterations < self.max_iterations and not task_complete:
             iterations += 1
             print(f"\n{'='*60}")
             print(f"Iteration {iterations}")
             print(f"{'='*60}")
+            emit_progress("thinking", "Thinking…")
             
             # Get LLM response with streaming
             if stream_callback:
                 response_content = ""
                 aggregated_chunks = None
                 chunk_count = 0
+                announced_tool_names: set[str] = set()
                 for chunk in self._iter_with_heartbeat(self.llm.stream(messages), stream_callback):
                     chunk_count += 1
                     if hasattr(chunk, 'content') and chunk.content:
                         response_content += chunk.content
                         stream_callback(chunk.content)
+                    for tool_name in tool_call_chunk_names(chunk):
+                        if tool_name in announced_tool_names:
+                            continue
+                        announced_tool_names.add(tool_name)
+                        emit_progress(
+                            "preparing_tool",
+                            tool_status_description(
+                                tool_name,
+                                preparing=True,
+                            ),
+                            tool_name=tool_name,
+                        )
                     # Accumulate chunks properly for tool calls
                     if aggregated_chunks is None:
                         aggregated_chunks = chunk
@@ -662,6 +698,14 @@ class TerminalAgent:
                 for i, tool_call in enumerate(response.tool_calls, 1):
                     tool_name = tool_call['name']
                     print(f"\n→ Tool Call #{i}: {tool_name}")
+                    emit_progress(
+                        "running_tool",
+                        tool_status_description(
+                            tool_name,
+                            preparing=False,
+                        ),
+                        tool_name=tool_name,
+                    )
                     
                     # Display tool arguments and stream to frontend
                     if tool_name == 'run_terminal_tool':
@@ -957,6 +1001,7 @@ class TerminalAgent:
         # WebUI's own Files storage, once per turn (not per write - see
         # system_prompt.md and _sync_outputs_to_openwebui docstring), and
         # let the user know they're available as downloads.
+        emit_progress("syncing_outputs", "Finalizing outputs…")
         final_response = messages[-1].content if messages else ""
         synced_files = self._sync_outputs_to_openwebui(
             outputs_before_turn,
@@ -972,6 +1017,7 @@ class TerminalAgent:
                     'start': True,
                     'end': True
                 })
+        emit_progress("completed", "Finished", done=True)
         
         # Determine success based on completion
         success = task_complete or iterations < self.max_iterations

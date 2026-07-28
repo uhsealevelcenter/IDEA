@@ -17,7 +17,7 @@ import re
 import httpx
 from pydantic import BaseModel, Field
 from pathlib import PurePosixPath
-from typing import AsyncGenerator, Generator
+from typing import AsyncGenerator, Awaitable, Callable, Generator
 from urllib.parse import quote, unquote
 
 
@@ -339,6 +339,9 @@ class Pipe:
         __user__: dict | None = None,
         __metadata__: dict | None = None,
         __request__: object | None = None,
+        __event_emitter__: (
+            Callable[[dict], Awaitable[None]] | None
+        ) = None,
     ) -> AsyncGenerator[str, None]:
         messages = body.get("messages", [])
         if not messages:
@@ -397,6 +400,36 @@ class Pipe:
         message_buffer = ""
         artifact_reference_confirmed = False
         pending_files: list[dict] = []
+        status_done = False
+
+        async def emit_status(status: dict) -> None:
+            """Forward a LangGraph phase to Open WebUI's native status UI."""
+            nonlocal status_done
+            if status.get("done"):
+                status_done = True
+            if not __event_emitter__:
+                return
+            data = {
+                key: status[key]
+                for key in (
+                    "action",
+                    "phase",
+                    "description",
+                    "done",
+                    "tool_name",
+                    "error",
+                )
+                if key in status
+            }
+            try:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": data,
+                })
+            except Exception:
+                # Status display is best-effort and must never interrupt the
+                # actual assistant response.
+                return
 
         def flush_message_buffer() -> str:
             nonlocal message_buffer, artifact_reference_confirmed
@@ -404,6 +437,13 @@ class Pipe:
             message_buffer = ""
             artifact_reference_confirmed = False
             return content
+
+        await emit_status({
+            "action": "idea_agent",
+            "phase": "starting",
+            "description": "Working on your request…",
+            "done": False,
+        })
 
         try:
             timeout = httpx.Timeout(self.valves.REQUEST_TIMEOUT_SECONDS)
@@ -423,6 +463,19 @@ class Pipe:
                             chunk = json.loads(data)
                         except json.JSONDecodeError:
                             continue
+
+                        if chunk.get("type") == "status":
+                            await emit_status(chunk)
+                            continue
+
+                        if "error" in chunk:
+                            await emit_status({
+                                "action": "idea_agent",
+                                "phase": "failed",
+                                "description": "IDEA encountered an error",
+                                "done": True,
+                                "error": True,
+                            })
 
                         if chunk.get("type") == "message":
                             content = chunk.get("content", "")
@@ -452,6 +505,13 @@ class Pipe:
                         ):
                             yield translated
         except httpx.HTTPError as exc:
+            await emit_status({
+                "action": "idea_agent",
+                "phase": "failed",
+                "description": "Unable to reach the IDEA agent",
+                "done": True,
+                "error": True,
+            })
             if message_buffer:
                 yield flush_message_buffer()
             yield f"\n\n**Error reaching langgraph service:** {exc}\n\n"
@@ -475,6 +535,14 @@ class Pipe:
                 public_base_url,
             ):
                 yield translated
+
+        if not status_done:
+            await emit_status({
+                "action": "idea_agent",
+                "phase": "completed",
+                "description": "Finished",
+                "done": True,
+            })
 
     @staticmethod
     def _translate_chunk(

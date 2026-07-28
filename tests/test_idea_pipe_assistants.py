@@ -387,6 +387,101 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(first, "Working now")
         self.assertEqual(remaining, [" and done"])
 
+    def test_pipe_emits_native_openwebui_progress_statuses(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+
+        async def aiter_lines():
+            yield (
+                'data: {"type":"status","action":"idea_agent",'
+                '"phase":"thinking","description":"Thinking…",'
+                '"done":false}'
+            )
+            yield (
+                'data: {"type":"status","action":"idea_agent",'
+                '"phase":"preparing_tool",'
+                '"description":"Preparing a file…","done":false,'
+                '"tool_name":"write_file_tool"}'
+            )
+            yield 'data: {"type":"message","content":"Done"}'
+            yield (
+                'data: {"type":"status","action":"idea_agent",'
+                '"phase":"completed","description":"Finished",'
+                '"done":true}'
+            )
+
+        response.aiter_lines = aiter_lines
+        response_context = Mock()
+        response_context.__aenter__ = AsyncMock(return_value=response)
+        response_context.__aexit__ = AsyncMock(return_value=None)
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.stream.return_value = response_context
+        event_emitter = AsyncMock()
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Create it"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                    __event_emitter__=event_emitter,
+                )
+            ]
+
+        with patch.object(
+            idea_pipe.httpx,
+            "AsyncClient",
+            return_value=client,
+        ):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, ["Done"])
+        self.assertEqual(
+            [call.args[0] for call in event_emitter.await_args_list],
+            [
+                {
+                    "type": "status",
+                    "data": {
+                        "action": "idea_agent",
+                        "phase": "starting",
+                        "description": "Working on your request…",
+                        "done": False,
+                    },
+                },
+                {
+                    "type": "status",
+                    "data": {
+                        "action": "idea_agent",
+                        "phase": "thinking",
+                        "description": "Thinking…",
+                        "done": False,
+                    },
+                },
+                {
+                    "type": "status",
+                    "data": {
+                        "action": "idea_agent",
+                        "phase": "preparing_tool",
+                        "description": "Preparing a file…",
+                        "done": False,
+                        "tool_name": "write_file_tool",
+                    },
+                },
+                {
+                    "type": "status",
+                    "data": {
+                        "action": "idea_agent",
+                        "phase": "completed",
+                        "description": "Finished",
+                        "done": True,
+                    },
+                },
+            ],
+        )
+
     def test_pipe_resolves_artifact_link_split_across_message_chunks(self):
         response = Mock()
         response.raise_for_status.return_value = None
