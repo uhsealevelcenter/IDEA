@@ -12,6 +12,7 @@ sandbox_service instead of in this process.
 
 import json
 import os
+import posixpath
 import shlex
 import time
 import uuid
@@ -298,6 +299,64 @@ def file_exists(filepath: str, session_id: str) -> bool:
         return False
 
 
+def normalize_publish_paths(
+    source_path: str,
+    output_path: str | None = None,
+) -> tuple[str, str]:
+    """Validate and normalize an explicit /workspace -> /outputs publish."""
+    source = posixpath.normpath(source_path.strip())
+    if source == "/workspace" or not source.startswith("/workspace/"):
+        raise ValueError("source_path must name a file under /workspace")
+
+    if output_path and output_path.strip():
+        destination = posixpath.normpath(output_path.strip())
+    else:
+        relative = posixpath.relpath(source, "/workspace")
+        destination = posixpath.normpath(posixpath.join("/outputs", relative))
+
+    if destination == "/outputs" or not destination.startswith("/outputs/"):
+        raise ValueError("output_path must name a file under /outputs")
+    return source, destination
+
+
+def publish_artifact(
+    source_path: str,
+    session_id: str,
+    output_path: str | None = None,
+) -> str:
+    """
+    Copy one explicitly selected workspace file into the publish-only
+    /outputs tree without exposing or scanning the rest of /workspace.
+    """
+    try:
+        source, destination = normalize_publish_paths(source_path, output_path)
+    except ValueError as exc:
+        return f"✗ {exc}"
+
+    source_q = shlex.quote(source)
+    destination_q = shlex.quote(destination)
+    destination_parent_q = shlex.quote(posixpath.dirname(destination))
+    command = (
+        "set -eu; "
+        "mkdir -p -- /workspace /outputs; "
+        f"source_real=$(realpath -e -- {source_q}); "
+        "workspace_real=$(realpath -e -- /workspace); "
+        'case "$source_real" in "$workspace_real"/*) ;; '
+        "*) echo 'Source escapes /workspace' >&2; exit 64 ;; esac; "
+        '[ -f "$source_real" ] || { echo "Source is not a regular file" >&2; exit 66; }; '
+        f"mkdir -p -- {destination_parent_q}; "
+        "outputs_real=$(realpath -e -- /outputs); "
+        f"destination_parent_real=$(realpath -e -- {destination_parent_q}); "
+        'case "$destination_parent_real" in "$outputs_real"|"$outputs_real"/*) ;; '
+        "*) echo 'Destination escapes /outputs' >&2; exit 64 ;; esac; "
+        f"[ ! -L {destination_q} ] || "
+        "{ echo 'Destination may not be a symbolic link' >&2; exit 64; }; "
+        f"cp -- \"$source_real\" {destination_q}; "
+        f"printf 'Published %s\\n' {destination_q}"
+    )
+    return run_terminal(command, session_id=session_id)
+
+
 def list_files(directory: str, session_id: str) -> list[str]:
     """
     Return a list of file paths under `directory` in the session's sandbox,
@@ -485,6 +544,31 @@ def make_agent_tools(session_id: str):
         return write_file(filepath, content, session_id=session_id, append=append)
 
     @tool
+    def publish_artifact_tool(
+        source_path: str,
+        output_path: str = "",
+    ) -> str:
+        """
+        Publish one existing workspace file as a user deliverable by safely
+        copying it from /workspace into /outputs. Use this instead of making
+        /workspace directly downloadable. The source must be a regular file
+        under /workspace. The optional destination must be under /outputs;
+        when omitted, the workspace-relative path is preserved.
+
+        Args:
+            source_path: Existing file under /workspace.
+            output_path: Optional destination under /outputs.
+
+        Returns:
+            The published /outputs path, or a validation/copy error.
+        """
+        return publish_artifact(
+            source_path,
+            session_id=session_id,
+            output_path=output_path or None,
+        )
+
+    @tool
     def read_output_range_tool(filepath: str, offset: int = 0, n_limit: int = 2000) -> str:
         """
         Read a slice of a (typically large) file's text content - e.g. the
@@ -653,6 +737,7 @@ def make_agent_tools(session_id: str):
     return (
         run_terminal_tool,
         write_file_tool,
+        publish_artifact_tool,
         show_image_tool,
         read_output_range_tool,
         run_python_tool,

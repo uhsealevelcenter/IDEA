@@ -12,12 +12,13 @@ version: 0.1.0
 """
 
 import json
+import posixpath
 import re
 import httpx
 from pydantic import BaseModel, Field
 from pathlib import PurePosixPath
 from typing import AsyncGenerator, Generator
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 
 BASE_MODEL_ID = "idea_terminal_agent.idea-terminal-agent"
@@ -186,6 +187,11 @@ def _file_link(
     return f"[{markdown_label}]({url})"
 
 
+def _normalized_output_path(filepath: str) -> str:
+    """Normalize URL-encoded model placeholders for exact file-map lookup."""
+    return posixpath.normpath(unquote(filepath))
+
+
 def _resolve_output_links(
     content: str,
     synced_files: list[dict],
@@ -200,22 +206,25 @@ def _resolve_output_links(
     referenced_file_ids: set[str] = set()
 
     def replace_markdown(match: re.Match) -> str:
-        _, filepath = match.groups()
-        file_id = files_by_path.get(filepath)
+        label, filepath = match.groups()
+        normalized_path = _normalized_output_path(filepath)
+        file_id = files_by_path.get(normalized_path)
         if not file_id:
-            return f"`{filepath}`"
+            return f"⚠️ {label} (output link unavailable)"
         referenced_file_ids.add(file_id)
-        return _file_link(file_id, filepath, public_base_url)
+        return _file_link(file_id, normalized_path, public_base_url)
 
     content = SANDBOX_MARKDOWN_LINK_RE.sub(replace_markdown, content)
 
     def replace_url(match: re.Match) -> str:
         filepath = match.group(1)
-        file_id = files_by_path.get(filepath)
+        normalized_path = _normalized_output_path(filepath)
+        file_id = files_by_path.get(normalized_path)
         if not file_id:
-            return f"`{filepath}`"
+            display_name = PurePosixPath(filepath).name or filepath
+            return f"⚠️ {display_name} (output link unavailable)"
         referenced_file_ids.add(file_id)
-        return _file_link(file_id, filepath, public_base_url)
+        return _file_link(file_id, normalized_path, public_base_url)
 
     return SANDBOX_URL_RE.sub(replace_url, content), referenced_file_ids
 

@@ -93,7 +93,18 @@ authenticated `/idea-file-preview/` route displays browser-safe formats
 behavior. Generated HTML is served with a sandbox Content Security Policy.
 The model is free to reorganize/rename files under `/outputs` mid-turn
 (`run_terminal_tool`); unchanged files from earlier turns are not attached
-again.
+again. Successful path/signature-to-file-ID mappings are retained in a
+per-user Redis artifact registry. If a later response references an unchanged
+`/outputs` file, the existing Open WebUI file ID is reused without another
+upload. A missing registry entry is recovered by uploading that explicitly
+referenced file once.
+
+`/workspace` remains private working storage and is never scanned or uploaded
+automatically. The agent's `publish_artifact_tool` explicitly copies one
+selected regular file from `/workspace` into `/outputs`; the resulting output
+snapshot then follows the same upload and registry flow. This publication
+boundary prevents scratch files and intermediate data from becoming
+deliverables accidentally.
 
 HTML outputs must be self-contained: generated images use `data:` URLs,
 CSS is placed in `<style>` blocks, and custom JavaScript is placed in

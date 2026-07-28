@@ -48,6 +48,31 @@ class OutputChangeTests(unittest.TestCase):
             ],
         )
 
+    def test_extracts_and_normalizes_referenced_output_paths(self):
+        content = (
+            "[report](sandbox:/outputs/reports/final.html)\n"
+            "[encoded](/outputs/reports/plot%20one.png)\n"
+            "sandbox:/outputs/data.csv\n"
+            "[escape](sandbox:/outputs/../../etc/passwd)"
+        )
+
+        self.assertEqual(
+            output_sync.referenced_output_paths(content),
+            {
+                "/outputs/reports/final.html",
+                "/outputs/reports/plot one.png",
+                "/outputs/data.csv",
+            },
+        )
+
+    def test_rejects_paths_outside_outputs(self):
+        self.assertIsNone(
+            output_sync.normalize_output_path("/outputs/../workspace/private")
+        )
+        self.assertIsNone(
+            output_sync.normalize_output_path("/workspace/private")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

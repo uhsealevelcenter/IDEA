@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 
@@ -18,6 +19,32 @@ class OutputSyncTests(unittest.TestCase):
         agent.sandbox_id = "user-1"
         agent.openwebui_authorization = authorization
         return agent
+
+    class FakeRegistry:
+        def __init__(self, records=None):
+            self.records = dict(records or {})
+            self.upserts = []
+
+        def get_many(self, paths):
+            return {
+                path: self.records[path]
+                for path in paths
+                if path in self.records
+            }
+
+        def upsert(self, path, signature, file_id, display_name):
+            self.upserts.append((path, signature, file_id, display_name))
+            self.records[path] = SimpleNamespace(
+                sandbox_path=path,
+                signature=signature,
+                openwebui_file_id=file_id,
+                display_name=display_name,
+            )
+            return True
+
+        def remove_many(self, paths):
+            for path in paths:
+                self.records.pop(path, None)
 
     def test_uploads_only_new_or_modified_outputs(self):
         response_ids = {
@@ -106,6 +133,83 @@ class OutputSyncTests(unittest.TestCase):
 
         self.assertEqual(synced, [])
         post.assert_not_called()
+
+    def test_reuses_registered_unchanged_referenced_output(self):
+        filepath = "/outputs/report/page.html"
+        signature = "100:200.0"
+        agent = self.make_agent()
+        agent.artifact_registry = self.FakeRegistry({
+            filepath: SimpleNamespace(
+                sandbox_path=filepath,
+                signature=signature,
+                openwebui_file_id="existing-id",
+                display_name="page.html",
+            )
+        })
+        with (
+            patch.object(
+                terminal_agent,
+                "list_file_metadata",
+                return_value={filepath: signature},
+            ),
+            patch.object(terminal_agent.requests, "post") as post,
+        ):
+            resolved = agent._sync_outputs_to_openwebui(
+                {filepath: signature},
+                referenced_paths={filepath},
+            )
+
+        self.assertEqual(
+            resolved,
+            [{
+                "filename": filepath,
+                "openwebui_file_id": "existing-id",
+            }],
+        )
+        post.assert_not_called()
+
+    def test_registry_miss_reuploads_unchanged_referenced_output(self):
+        filepath = "/outputs/report/page.html"
+        signature = "100:200.0"
+        agent = self.make_agent()
+        agent.artifact_registry = self.FakeRegistry()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id": "recovered-id"}
+        with (
+            patch.object(
+                terminal_agent,
+                "list_file_metadata",
+                return_value={filepath: signature},
+            ),
+            patch.object(
+                terminal_agent,
+                "read_file_bytes",
+                return_value=b"<html></html>",
+            ),
+            patch.object(
+                terminal_agent.requests,
+                "post",
+                return_value=response,
+            ) as post,
+        ):
+            resolved = agent._sync_outputs_to_openwebui(
+                {filepath: signature},
+                referenced_paths={filepath},
+            )
+
+        self.assertEqual(
+            resolved,
+            [{
+                "filename": filepath,
+                "openwebui_file_id": "recovered-id",
+            }],
+        )
+        post.assert_called_once()
+        self.assertEqual(
+            agent.artifact_registry.upserts,
+            [(filepath, signature, "recovered-id", "page.html")],
+        )
 
     def test_skips_sync_if_pre_turn_snapshot_failed(self):
         with (

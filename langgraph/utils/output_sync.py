@@ -27,6 +27,12 @@ CSS_URL_RE = re.compile(
     r"url\(\s*(?P<quote>['\"]?)(?P<url>.*?)(?P=quote)\s*\)",
     re.IGNORECASE,
 )
+OUTPUT_MARKDOWN_LINK_RE = re.compile(
+    r"\[[^\]]+\]\((?:(?:sandbox|file):)?(?P<path>/outputs/[^)\s]+)\)"
+)
+OUTPUT_URL_RE = re.compile(
+    r"(?:sandbox|file):(?P<path>/outputs/[^\s)]+)"
+)
 
 
 def parse_file_metadata_output(output: str) -> dict[str, str]:
@@ -51,6 +57,28 @@ def changed_output_paths(
         for filepath, signature in after.items()
         if before.get(filepath) != signature
     )
+
+
+def normalize_output_path(filepath: str) -> str | None:
+    """Return a safe normalized /outputs file path, or None."""
+    parsed = urlsplit(filepath.strip())
+    if parsed.scheme or parsed.netloc or not parsed.path:
+        return None
+    normalized = posixpath.normpath(unquote(parsed.path))
+    if normalized == "/outputs" or not normalized.startswith("/outputs/"):
+        return None
+    return normalized
+
+
+def referenced_output_paths(content: str) -> set[str]:
+    """Extract safe /outputs paths referenced by model-authored link tokens."""
+    paths: set[str] = set()
+    for pattern in (OUTPUT_MARKDOWN_LINK_RE, OUTPUT_URL_RE):
+        for match in pattern.finditer(content):
+            normalized = normalize_output_path(match.group("path"))
+            if normalized:
+                paths.add(normalized)
+    return paths
 
 
 def is_html_output(filepath: str) -> bool:

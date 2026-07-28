@@ -31,7 +31,9 @@ from utils.output_sync import (
     changed_output_paths,
     discover_html_output_references,
     is_html_output,
+    referenced_output_paths,
 )
+from utils.artifact_registry import ArtifactRegistry
 from utils.tools import DATA_TOOLS
 from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
 
@@ -115,6 +117,7 @@ class TerminalAgent:
                 "per user and would risk multiple callers sharing a sandbox."
             )
         self.sandbox_id = str(user_id)
+        self.artifact_registry = ArtifactRegistry(self.sandbox_id)
         
         # Terminal/filesystem tools bound to this user's own sandbox (or
         # local shell, if sandboxing is unavailable) - never shared with
@@ -122,6 +125,7 @@ class TerminalAgent:
         (
             self.run_terminal_tool,
             self.write_file_tool,
+            self.publish_artifact_tool,
             self.show_image_tool,
             self.read_output_range_tool,
             # run_python_tool now requires the oi-kernel image
@@ -144,6 +148,7 @@ class TerminalAgent:
         self.all_tools = [
             self.run_terminal_tool,
             self.write_file_tool,
+            self.publish_artifact_tool,
             self.show_image_tool,
             self.read_output_range_tool,
             self.run_python_tool,
@@ -193,6 +198,7 @@ class TerminalAgent:
     def _sync_outputs_to_openwebui(
         self,
         outputs_before_turn: dict[str, str] | None,
+        referenced_paths: set[str] | None = None,
     ) -> list[dict]:
         """
         Scan this sandbox's OUTPUTS_DIR (final state, after the model has
@@ -220,12 +226,48 @@ class TerminalAgent:
             print("⚠️  Skipping output sync: post-turn output snapshot failed")
             return []
 
-        filepaths = changed_output_paths(
+        changed_paths = set(changed_output_paths(
             outputs_before_turn,
             outputs_after_turn,
-        )
+        ))
+        registry = getattr(self, "artifact_registry", None)
+        deleted_paths = set(outputs_before_turn) - set(outputs_after_turn)
+        if registry and deleted_paths:
+            try:
+                registry.remove_many(deleted_paths)
+            except Exception as e:
+                print(f"⚠️  Artifact registry cleanup failed: {e}")
+
+        referenced_paths = {
+            path
+            for path in (referenced_paths or set())
+            if path in outputs_after_turn
+        }
+
+        reused: list[dict] = []
+        unresolved_references = set(referenced_paths)
+        if registry and referenced_paths:
+            try:
+                registry_records = registry.get_many(referenced_paths)
+                for filepath, record in registry_records.items():
+                    if (
+                        filepath not in changed_paths
+                        and record.signature == outputs_after_turn[filepath]
+                    ):
+                        reused.append({
+                            "filename": filepath,
+                            "openwebui_file_id": record.openwebui_file_id,
+                        })
+                        unresolved_references.discard(filepath)
+            except Exception as e:
+                print(f"⚠️  Artifact registry lookup failed: {e}")
+
+        # Preserve the existing behavior of attaching every new/changed
+        # output, and additionally recover a mapping for any unchanged file
+        # the final response explicitly references.
+        filepaths = sorted(changed_paths | unresolved_references)
         if not filepaths:
-            return []
+            return reused
 
         sync_deadline = time.monotonic() + OUTPUT_SYNC_TIMEOUT_SECONDS
         html_data: dict[str, bytes] = {}
@@ -288,7 +330,10 @@ class TerminalAgent:
                 file_id = response.json().get("id")
                 if file_id:
                     print(f"✓ Synced {filepath} to Open WebUI (file_id={file_id})")
-                    return {"filename": filepath, "openwebui_file_id": file_id}
+                    return {
+                        "filename": filepath,
+                        "openwebui_file_id": file_id,
+                    }
             except Exception as e:
                 print(f"⚠️  Failed to sync {filepath} to Open WebUI: {e}")
             return None
@@ -320,7 +365,23 @@ class TerminalAgent:
                 future.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
 
-        return sorted(synced, key=lambda item: item["filename"])
+        if registry:
+            for item in synced:
+                filepath = item["filename"]
+                try:
+                    registry.upsert(
+                        filepath,
+                        outputs_after_turn[filepath],
+                        item["openwebui_file_id"],
+                        Path(filepath).name,
+                    )
+                except Exception as e:
+                    print(
+                        f"⚠️  Artifact registry update failed for "
+                        f"{filepath}: {e}"
+                    )
+
+        return sorted(reused + synced, key=lambda item: item["filename"])
 
     @staticmethod
     def _invoke_with_heartbeat(
@@ -836,7 +897,11 @@ class TerminalAgent:
         # WebUI's own Files storage, once per turn (not per write - see
         # system_prompt.md and _sync_outputs_to_openwebui docstring), and
         # let the user know they're available as downloads.
-        synced_files = self._sync_outputs_to_openwebui(outputs_before_turn)
+        final_response = messages[-1].content if messages else ""
+        synced_files = self._sync_outputs_to_openwebui(
+            outputs_before_turn,
+            referenced_paths=referenced_output_paths(str(final_response)),
+        )
         if stream_callback:
             for synced in synced_files:
                 stream_callback({

@@ -240,6 +240,34 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         )
         self.assertEqual(referenced, {"file-456"})
 
+    def test_unresolved_output_link_is_explicitly_unavailable(self):
+        resolved, referenced = idea_pipe._resolve_output_links(
+            "[Open the page](sandbox:/outputs/report/page.html)",
+            [],
+        )
+
+        self.assertEqual(
+            resolved,
+            "⚠️ Open the page (output link unavailable)",
+        )
+        self.assertEqual(referenced, set())
+
+    def test_resolves_url_encoded_output_path(self):
+        resolved, referenced = idea_pipe._resolve_output_links(
+            "[Open](sandbox:/outputs/report/interactive%20plot.html)",
+            [{
+                "filename": "/outputs/report/interactive plot.html",
+                "openwebui_file_id": "file-encoded",
+            }],
+        )
+
+        self.assertEqual(
+            resolved,
+            "[interactive plot.html]"
+            "(/idea-file-preview/file-encoded/interactive%20plot.html)",
+        )
+        self.assertEqual(referenced, {"file-encoded"})
+
     def test_pipe_replaces_final_sandbox_link_without_duplicate_attachment(self):
         response = Mock()
         response.raise_for_status.return_value = None
