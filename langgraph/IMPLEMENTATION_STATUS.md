@@ -349,7 +349,7 @@ langgraph/utils/
 ├── tools/                    # LangChain @tool-decorated data functions
 │   ├── datetime_tool.py      # get_datetime_tool
 │   ├── station_tool.py       # get_station_info_tool
-│   ├── climate_tool.py       # get_climate_index_tool (returns CSV text)
+│   ├── climate_tool.py       # batched climate fetch -> sandbox CSV/provenance
 │   ├── web_search_tool.py    # web_search_tool
 │   ├── knowledge_base_tool.py# query_knowledge_base_tool (PaperQA2)
 │   └── __init__.py           # exports DATA_TOOLS list
@@ -362,7 +362,10 @@ langgraph/utils/
 ```
 
 **Key architecture difference from Open Interpreter:** OI pre-injects these as plain Python functions into a persistent REPL (`interpreter.computer.run("python", custom_tool)`), so LLM-generated code calls them directly and gets back live Python objects (e.g., a DataFrame). LangGraph's `TerminalAgent` instead uses LLM function-calling — tools are invoked by the LLM directly and must return text. So:
-- `get_climate_index_tool` returns CSV text (the agent saves it via `write_file_tool` before plotting/analyzing).
+- `get_climate_indices_tool` batches one or more indices and writes a
+  long-form CSV plus provenance JSON directly into the current user's
+  `/workspace`; only compact paths, coverage, row counts, source URLs, and
+  checksums return through model context.
 - `get_station_info_tool` / `web_search_tool` / `query_knowledge_base_tool` return text/JSON strings.
 
 **Wired into `agents/terminal_agent.py`:**
@@ -597,12 +600,18 @@ conversation = conversation_crud.create_conversation(
 **Location in OI:** `utils/custom_functions.py`
 **New location:** `langgraph/utils/tools/`
 - ✅ `query_knowledge_base_tool(query, user_id, session_id)` - PaperQA2 RAG integration (`knowledge_base_tool.py`)
-- ✅ `get_climate_index_tool(name)` - Climate data (ONI, RONI, PDO, PNA, etc.) (`climate_tool.py`)
+- ✅ `get_climate_indices_tool(names, output_path)` - Batched climate data
+  (ONI, RONI, PDO, PNA, etc.) written directly to the user's sandbox
+  (`climate_tool.py`)
 - ✅ `get_station_info_tool(query)` - UHSLC tide gauge station lookup (`station_tool.py`)
 - ✅ `web_search_tool(query)` - LiteLLM web search with citations (`web_search_tool.py`)
 - ✅ `get_datetime_tool()` - UTC datetime utilities (`datetime_tool.py`)
 
-**Implemented as:** LangChain `@tool`-decorated functions bound to `TerminalAgent`'s LLM (function-calling), not pre-injected into a Python REPL — see the langgraph/utils update above for the architecture rationale. All 5 are exported via `DATA_TOOLS` in `langgraph/utils/tools/__init__.py` and wired into `TerminalAgent.bind_tools()`.
+**Implemented as:** LangChain `@tool`-decorated functions bound to
+`TerminalAgent`'s LLM (function-calling), not pre-injected into a Python
+REPL. Four stateless tools are exported via `DATA_TOOLS`; the climate tool
+is created separately for each `TerminalAgent` so its trusted byte writer is
+bound to the correct user's sandbox.
 
 #### 2. **MCP (Model Context Protocol) Tools**
 **Location in OI:** `app.py:186-210`, `mcp_tools.py`

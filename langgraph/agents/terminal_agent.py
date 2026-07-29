@@ -44,7 +44,7 @@ from utils.skill_loader import (
     make_view_skill_tool,
     summarize_skill_result,
 )
-from utils.tools import DATA_TOOLS
+from utils.tools import DATA_TOOLS, make_get_climate_indices_tool
 from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
 from progress import (
     progress_chunk,
@@ -278,6 +278,14 @@ class TerminalAgent:
             _grep_search_tool,
             _glob_search_tool,
         ) = make_agent_tools(self.sandbox_id)
+        self.get_climate_indices_tool = make_get_climate_indices_tool(
+            lambda filepath, data: write_file_stream(
+                filepath,
+                [data],
+                session_id=self.sandbox_id,
+                expected_size=len(data),
+            )
+        )
         self.all_tools = [
             self.run_terminal_tool,
             self.write_file_tool,
@@ -287,6 +295,7 @@ class TerminalAgent:
             self.read_output_range_tool,
             self.run_python_tool,
             self.view_skill_tool,
+            self.get_climate_indices_tool,
             *DATA_TOOLS,
         ]
         self.tools_by_name = {t.name: t for t in self.all_tools}
@@ -1329,7 +1338,8 @@ class TerminalAgent:
                             })
 
                     elif tool_name in self.tools_by_name:
-                        # Generic dispatch for data tools (datetime, station, climate, web search, knowledge base)
+                        # Generic dispatch for data tools (datetime, station,
+                        # batched climate data, web search, knowledge base).
                         print(f"\n📝 Args: {tool_call['args']}")
 
                         if stream_callback:
