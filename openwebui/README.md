@@ -239,9 +239,15 @@ This runs *alongside* the existing custom frontend (`frontend/`, `nginx`,
 for the underlying agent/sandbox architecture this depends on.
 
 **Not yet handled by the Pipe function:**
-- Conversation history persistence beyond what `langgraph_service.py`
-  already does in Redis (`langgraph_messages:{session_key}`) - Open WebUI's
-  own chat history and this Redis history are not reconciled.
+- **Major conversation-context TODO:** Open WebUI's branch-aware,
+  compacted chat history and LangGraph's linear Redis history
+  (`langgraph_messages:{session_key}`) are not reconciled. The investigated
+  proposal is to make the structured Open WebUI branch authoritative,
+  preserve message roles through LangGraph, persist only bounded IDEA
+  dataset/artifact/script state, and retire Redis as a conversation store.
+  See **"MAJOR TODO (Jul 29, 2026): Make Open WebUI the authoritative
+  conversation context"** in `langgraph/IMPLEMENTATION_STATUS.md` for the
+  findings, staged plan, and acceptance tests.
 - Interruption/stop button (`ConversationOrchestrator` has no cancel
   endpoint exposed yet).
 - Mapping Open WebUI's guest/pending-approval users to this repo's own

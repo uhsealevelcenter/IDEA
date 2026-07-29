@@ -386,6 +386,148 @@ reasoning-model configuration.
 
 ## 🔨 TODO
 
+### MAJOR TODO (Jul 29, 2026): Make Open WebUI the authoritative conversation context
+
+**Status:** proposal for dev-team consideration; investigated, not implemented.
+
+Open WebUI and LangGraph currently maintain competing versions of a
+conversation:
+
+1. Open WebUI reconstructs the exact message branch leading to the current
+   user message from its database. This is the branch-aware history that
+   reflects edits, regenerations, and alternative responses.
+2. Open WebUI applies its persisted context-compaction checkpoint, retaining
+   recent messages and injecting the accumulated `[CONVERSATION SUMMARY]`.
+3. `openwebui/functions/idea_pipe.py` receives those structured messages but
+   currently keeps only the latest user text and concatenated system text.
+4. `langgraph_service.py` independently restores the linear
+   `langgraph_messages:{session_key}` transcript from Redis.
+5. `ConversationOrchestrator.chat()` appends the current user message and
+   `_build_agent_context()` then repeats it under `Current task`. It flattens
+   all recent user/assistant roles into one synthesized `HumanMessage`.
+
+Consequences:
+
+- An abandoned or regenerated Open WebUI branch can remain in Redis and
+  influence a later response.
+- Message edits, branch selection, chat deletion, and Open WebUI compaction
+  are not reconciled with LangGraph history.
+- The current user prompt is duplicated in the terminal-agent input.
+- Open WebUI's compaction summary competes with an unrelated Redis
+  "last 10 messages" window.
+- Changing the selected Assistant creates a separate hidden Redis history,
+  even though Open WebUI presents one visible conversation branch.
+- Redis history omits useful durable execution facts while its conversation
+  keys currently have no TTL.
+
+#### Recommended target
+
+Treat the post-branch-selection, post-compaction `body["messages"]` supplied
+by Open WebUI as the sole authoritative conversational history. Forward
+structured roles to LangGraph instead of rebuilding a transcript string.
+Keep Redis only for transient chat-run status/events and task-queue needs,
+not conversation memory.
+
+The LangGraph request should carry:
+
+- `messages`: the normalized structured Open WebUI messages;
+- `chat_id` and a separately named sandbox/workspace identity;
+- the currently selected Assistant identity/instructions, applied once; and
+- a bounded, machine-readable `idea_state` snapshot for durable execution
+  facts.
+
+`TerminalAgent.run()` should compose IDEA's invariant execution/security
+system prompt, the current Assistant instructions, and the structured Open
+WebUI history. Attachments should be added only to the latest user message.
+The current user prompt must appear exactly once with its original `user`
+role.
+
+Assistant selection and workspace identity should not double as conversation
+storage keys. A change of Assistant should apply the newly selected
+instructions to the visible branch, rather than switching to a hidden
+transcript. The dev team should separately decide whether sandbox workspaces
+remain per-user (current behavior), become per-chat, or support an explicit
+workspace scope.
+
+#### Compact IDEA state
+
+Open WebUI assistant messages already support structured `meta`, `files`,
+`sources`, `output`, and `context_summary` fields. Its event emitter can
+currently persist content/status/files/sources but cannot merge custom
+message metadata. Add a narrowly scoped event such as `message_meta` that
+may update only a versioned `meta.idea_context` object.
+
+Store a bounded cumulative snapshot, not raw tool output. Candidate fields:
+
+- datasets: sandbox path, provenance path, source URL, row count, date range,
+  and optional content hash;
+- artifacts: sandbox path, Open WebUI file ID, media type, and short
+  description;
+- scripts/commands: executed script path or command hash and final status;
+- generated image/file references; and
+- schema version, entry limits, and total serialized-size limit.
+
+Before compaction, Open WebUI should select the latest IDEA state snapshot
+from the active branch and pass it to the IDEA Pipe separately from
+conversation text. This lets conversation summaries and machine state be
+compacted independently. Raw CSV, long console output, credentials, and
+complete tool transcripts must not be persisted in conversational content
+or IDEA state. Full data and reproducible outputs remain available in the
+user sandbox; live execution details can use transient status events or
+strictly bounded excerpts.
+
+#### Proposed implementation sequence
+
+1. **Structured request contract:** add `messages` and `idea_state` to
+   `ChatRequest`/`ChatRunRequest`, with strict role/content/size validation.
+   Temporarily retain the legacy `message`/`restore_history` fields for
+   rollback compatibility.
+2. **Pipe propagation:** forward the normalized `body["messages"]` already
+   supplied by Open WebUI. Stop reducing the request to only
+   `_latest_user_content()` and stop treating the conversation summary as
+   part of the selected Assistant's policy.
+3. **Role-preserving LangGraph execution:** make
+   `ConversationOrchestrator.chat()` and `TerminalAgent.run()` accept
+   structured messages. Remove `conversation_history`,
+   `_build_agent_context()`, the current-message append, and the
+   `Recent conversation context`/`Current task` wrapper. Apply the same path
+   to `/chat` and `/chat-runs`.
+4. **IDEA state persistence:** add the restricted Open WebUI metadata event,
+   have LangGraph emit a versioned turn-state delta/snapshot, and have the
+   Pipe persist it on the assistant message. Ensure compaction carries the
+   latest state independently.
+5. **Controlled Redis cutover:** introduce
+   `IDEA_HISTORY_SOURCE=redis|shadow|openwebui`. In `shadow` mode, use Open
+   WebUI for the response and compare only message counts, roles, sizes, and
+   hashes—never private content. Then stop reading/writing
+   `langgraph_messages:*`, retain old keys for a rollback window, and expire
+   or remove them in a separately reviewed cleanup.
+6. **Documentation/operations cleanup:** redefine `/clear` as ephemeral
+   run-state cleanup (or deprecate it), document that Open WebUI chat
+   deletion is authoritative, and keep Redis run-event storage distinct
+   from conversational persistence.
+
+#### Required acceptance tests
+
+- The current user prompt reaches the model exactly once.
+- User, assistant, and system roles remain structured.
+- Editing or regenerating excludes the abandoned branch.
+- Assistant switching uses the current instructions and visible branch,
+  without hidden history.
+- Compaction supplies one accumulated summary plus retained recent turns.
+- Compact IDEA state survives conversation compaction.
+- Raw CSV and long console output never enter persisted model context.
+- Malformed or oversized IDEA metadata is rejected or safely bounded.
+- Attachments and authorization remain scoped to the current request and
+  credentials never enter messages/state.
+- Service restarts and replica changes do not alter conversational memory.
+- `/chat` and `/chat-runs` have identical context semantics.
+- Deleting a chat leaves no independent durable LangGraph transcript.
+
+This work should be split into reviewable changes: structured-message
+propagation first, compact IDEA-state persistence second, and Redis
+cutover/legacy cleanup third.
+
 ### Deferred: heartbeat timing during invisible tool-call generation
 
 Native Open WebUI progress statuses now keep long LangGraph work visibly
