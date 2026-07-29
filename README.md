@@ -172,7 +172,9 @@ https://docs.openwebui.com/features/authentication-access/api-keys/
    keeps `gpt-5.6-luna` hidden from the chat model selector, and persists it
    as Open WebUI's **External Task Model**. It also enables context
    compaction at 136,000 tokens (matching legacy IDEA's 50%-of-272,000
-   policy) and installs IDEA's title-generation prompt. It reads
+   policy), raises Open WebUI's Token Cap to at least the same value while
+   preserving an existing higher cap, and installs IDEA's title-generation
+   prompt. It reads
    `OPENWEBUI_API_KEY`, `LITELLM_MASTER_KEY`, and
    `TASK_MODEL_EXTERNAL`, `ENABLE_CONTEXT_COMPACTION`, and
    `CONTEXT_COMPACTION_TOKEN_THRESHOLD` from `.env`. It does **not** disable

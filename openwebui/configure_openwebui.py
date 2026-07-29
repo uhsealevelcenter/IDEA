@@ -381,6 +381,18 @@ def configure_context_compaction(
     config = client.get("/api/v1/chats/config")
     config["ENABLE_CONTEXT_COMPACTION"] = enabled
     config["CONTEXT_COMPACTION_TOKEN_THRESHOLD"] = token_threshold
+    try:
+        existing_token_cap = int(
+            config.get("CONTEXT_COMPACTION_TOKEN_CAP") or 0
+        )
+    except (TypeError, ValueError):
+        existing_token_cap = 0
+    # Open WebUI uses the lower of the threshold and Token Cap as the
+    # effective compaction threshold. Never leave a stale, lower cap behind
+    # when IDEA raises its managed threshold, but preserve an administrator's
+    # intentionally higher cap.
+    token_cap = max(token_threshold, existing_token_cap)
+    config["CONTEXT_COMPACTION_TOKEN_CAP"] = token_cap
     # Preserve the independently editable compaction prompt template.
     client.post("/api/v1/chats/config", config)
 
@@ -392,6 +404,12 @@ def configure_context_compaction(
             "Context Compaction threshold verification failed: expected "
             f"{token_threshold!r}, received "
             f"{verified.get('CONTEXT_COMPACTION_TOKEN_THRESHOLD')!r}"
+        )
+    if verified.get("CONTEXT_COMPACTION_TOKEN_CAP") != token_cap:
+        raise RuntimeError(
+            "Context Compaction token-cap verification failed: expected "
+            f"{token_cap!r}, received "
+            f"{verified.get('CONTEXT_COMPACTION_TOKEN_CAP')!r}"
         )
 
 

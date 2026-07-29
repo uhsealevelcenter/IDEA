@@ -72,7 +72,10 @@ connection, Luna's hidden/public model metadata, `TASK_MODEL_EXTERNAL`,
 context compaction, and the title-generation prompt. Context compaction is
 enabled at 136,000 tokens by default, matching legacy IDEA's production
 policy of compacting at 50% of its 272,000-token long-context threshold.
-The existing compaction prompt remains independently editable.
+The configurator also raises Open WebUI's Token Cap to at least that
+threshold, while preserving an existing higher cap, so a stale lower cap
+cannot cause earlier-than-configured compaction. The existing compaction
+prompt remains independently editable.
 
 The configurator deliberately leaves
 `ENABLE_PERSISTENT_CONFIG` at its default (`true`), so other Admin Panel

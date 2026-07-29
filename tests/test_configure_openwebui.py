@@ -182,6 +182,7 @@ class ConfigureOpenWebUITests(unittest.TestCase):
         current = {
             "ENABLE_CONTEXT_COMPACTION": False,
             "CONTEXT_COMPACTION_TOKEN_THRESHOLD": 80_000,
+            "CONTEXT_COMPACTION_TOKEN_CAP": 80_000,
             "CONTEXT_COMPACTION_PROMPT_TEMPLATE": "Keep this custom prompt",
         }
         client = FakeClient({"/api/v1/chats/config": current})
@@ -200,8 +201,37 @@ class ConfigureOpenWebUITests(unittest.TestCase):
             136_000,
         )
         self.assertEqual(
+            payload["CONTEXT_COMPACTION_TOKEN_CAP"],
+            136_000,
+        )
+        self.assertEqual(
             payload["CONTEXT_COMPACTION_PROMPT_TEMPLATE"],
             "Keep this custom prompt",
+        )
+
+    def test_context_compaction_preserves_a_higher_token_cap(self):
+        current = {
+            "ENABLE_CONTEXT_COMPACTION": False,
+            "CONTEXT_COMPACTION_TOKEN_THRESHOLD": 80_000,
+            "CONTEXT_COMPACTION_TOKEN_CAP": 200_000,
+            "CONTEXT_COMPACTION_PROMPT_TEMPLATE": "",
+        }
+        client = FakeClient({"/api/v1/chats/config": current})
+
+        configure_openwebui.configure_context_compaction(
+            client,
+            True,
+            configure_openwebui.DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD,
+        )
+
+        payload = client.posts[0][1]
+        self.assertEqual(
+            payload["CONTEXT_COMPACTION_TOKEN_THRESHOLD"],
+            136_000,
+        )
+        self.assertEqual(
+            payload["CONTEXT_COMPACTION_TOKEN_CAP"],
+            200_000,
         )
 
     def test_title_prompt_matches_requested_template(self):
