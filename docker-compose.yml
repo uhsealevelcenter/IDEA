@@ -206,17 +206,15 @@ services:
   # `web`'s API routes (/api/, /idea-api/, /conversations/, /share/) are
   # untouched since other things may still depend on them.
   openwebui:
-    # Pinned by digest (was previously floating :main - see the
+    # Pinned to an IDEA customization Git commit and image digest (was
+    # previously floating :main - see the
     # architecture doc's "OpenWebUI upgrade compatibility" section for why
     # that's dangerous: upstream default-behavior changes, e.g. native
     # tool-calling becoming the v0.10.0 default, could otherwise reach this
-    # deployment via a routine `docker compose pull`). This digest is
-    # whatever :main resolved to as of 2026-07-15 (v0.10.2) - swap it out
-    # deliberately (and re-verify openwebui/functions/idea_pipe.py still
-    # works) whenever you want to move forward, rather than pulling
-    # unpinned. TODO: switch to a proper vX.Y.Z release tag once you've
-    # picked one to track long-term instead of a raw digest.
-    image: ghcr.io/uhsealevelcenter/idea-open-webui:d8a7ea308@sha256:1b299b743f67df87c8bf8a6e2b131ccf9ab7a5f387961f0a246078a73e869c9d
+    # deployment via a routine `docker compose pull`). Swap this exact
+    # commit tag deliberately (and re-verify
+    # openwebui/functions/idea_pipe.py still works) whenever moving forward.
+    image: ghcr.io/uhsealevelcenter/idea-open-webui:git-2574322bafe2fe0cd8958d29258eb6a782af2b1a@sha256:41ce4ed8a14bba38f901b2c227823129db1b34a66bdb9bfe5265e4fdc861890b
     container_name: idea_openwebui
     restart: unless-stopped
     ports:
