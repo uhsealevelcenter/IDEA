@@ -40,6 +40,17 @@ A production-ready AI agent microservice built on LangGraph and LangChain, provi
 - Streams as `type: 'image', format: 'base64.{ext}'` chunks
 - Displays inline in chat (Open Interpreter style)
 
+### **Model Vision**
+- Uploaded PNG/JPEG/GIF/WebP images are included in the initial model call
+  as validated, high-detail multimodal content
+- The synchronized sandbox path is retained so the model can also analyze
+  the same file with code
+- `inspect_image_tool(filepath)` supplies an existing sandbox image to model
+  vision in the next iteration
+- `show_image_tool` is display-only and never implies that the model has
+  inspected the pixels
+- Vision input defaults to 20 MiB per image and 8 images per turn
+
 ### **Async Job Queue**
 - Non-blocking execution via `/chat-runs` endpoints
 - Redis-backed status and event storage
@@ -445,6 +456,11 @@ When the LLM calls `show_image_tool(filepath)`, the agent:
 5. Frontend renders on `isComplete = true`
 
 **Supported formats:** `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg`
+
+For model-side visual interpretation, uploaded PNG/JPEG/GIF/WebP images are
+included automatically. Existing sandbox images must be passed through
+`inspect_image_tool`; that tool adds validated high-detail image content to
+the next model request. Display and inspection are deliberately separate.
 
 ### **Tool Call Streaming**
 

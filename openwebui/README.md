@@ -142,6 +142,15 @@ If authorization, transfer, or size validation fails, the run stops instead
 of asking the model to work without the attachment. Input files are retained
 with the user's persistent sandbox; they are not published as outputs.
 
+PNG, JPEG, GIF, and WebP attachments are additionally sent to the configured
+vision-capable model as high-detail multimodal content. The model therefore
+receives the actual pixels as well as the sandbox path. This is separate from
+`show_image_tool`, which only renders an image in the user's browser.
+`inspect_image_tool` supplies an existing sandbox image to model vision in
+the next agent iteration. Vision input is bounded by
+`VISION_MAX_IMAGE_BYTES` and `VISION_MAX_IMAGES_PER_TURN`; an image outside
+those limits remains available as a normal sandbox file.
+
 `/workspace` remains private working storage and is never scanned or uploaded
 automatically. The agent's `publish_artifact_tool` explicitly copies one
 selected regular file from `/workspace` into `/outputs`; the resulting output
@@ -202,6 +211,12 @@ the canonical template.
 
 - **`INPUT_SYNC_MAX_FILE_BYTES`** - maximum size of one input attachment,
   enforced by both LangGraph and the sandbox service; defaults to 1 GiB.
+
+- **`VISION_MAX_IMAGE_BYTES`** - maximum size of one synchronized or
+  inspected image sent to model vision; defaults to 20 MiB.
+
+- **`VISION_MAX_IMAGES_PER_TURN`** - maximum number of uploaded images sent
+  to model vision in one turn; defaults to 8.
 
 - **`OUTPUT_SYNC_TIMEOUT_SECONDS`** - whole-batch deadline for final output
   uploads; defaults to 30 seconds.

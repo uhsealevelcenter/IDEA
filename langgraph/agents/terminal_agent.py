@@ -68,6 +68,14 @@ INPUT_SYNC_MAX_FILE_BYTES = int(
     os.getenv("INPUT_SYNC_MAX_FILE_BYTES", str(1024 * 1024 * 1024))
 )
 INPUT_SYNC_CHUNK_BYTES = 1024 * 1024
+VISION_MAX_IMAGE_BYTES = int(
+    os.getenv("VISION_MAX_IMAGE_BYTES", str(20 * 1024 * 1024))
+)
+VISION_MAX_IMAGES_PER_TURN = max(
+    1,
+    int(os.getenv("VISION_MAX_IMAGES_PER_TURN", "8")),
+)
+VISION_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
 def _safe_input_component(value: str, fallback: str, max_length: int = 180) -> str:
@@ -103,6 +111,55 @@ def _attached_files_context(synced_files: list[dict]) -> str:
         "files under /workspace and user-facing deliverables under /outputs."
     )
     return "\n".join(lines)
+
+
+def _detect_model_image_mime(data: bytes) -> str | None:
+    """Recognize image formats accepted by the configured vision model."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if (
+        len(data) >= 12
+        and data.startswith(b"RIFF")
+        and data[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+    return None
+
+
+def _is_model_image_candidate(item: dict) -> bool:
+    content_type = str(item.get("content_type") or "").lower()
+    if content_type.startswith("image/"):
+        return True
+    return Path(str(item.get("name") or "")).suffix.lower() in (
+        VISION_IMAGE_EXTENSIONS
+    )
+
+
+def _safe_message_log_content(message: object) -> str:
+    """Summarize multimodal messages without logging raw image data."""
+    content = getattr(message, "content", "")
+    if not isinstance(content, list):
+        return str(content)
+    text_chars = sum(
+        len(str(part.get("text", "")))
+        for part in content
+        if isinstance(part, dict)
+        and part.get("type") in {"text", "input_text"}
+    )
+    image_count = sum(
+        1
+        for part in content
+        if isinstance(part, dict)
+        and part.get("type") in {"image_url", "input_image"}
+    )
+    return (
+        f"[multimodal message: {text_chars} text characters, "
+        f"{image_count} image(s); image data omitted from logs]"
+    )
 
 
 def compose_system_prompt(
@@ -202,6 +259,7 @@ class TerminalAgent:
             self.write_file_tool,
             self.publish_artifact_tool,
             self.show_image_tool,
+            self.inspect_image_tool,
             self.read_output_range_tool,
             # run_python_tool now requires the oi-kernel image
             # (SANDBOX_IMAGE=idea/oi-kernel:slim or similar) - it degrades
@@ -225,6 +283,7 @@ class TerminalAgent:
             self.write_file_tool,
             self.publish_artifact_tool,
             self.show_image_tool,
+            self.inspect_image_tool,
             self.read_output_range_tool,
             self.run_python_tool,
             self.view_skill_tool,
@@ -270,6 +329,83 @@ class TerminalAgent:
         b64_content = base64.b64encode(image_data).decode('utf-8')
         ext = Path(filepath).suffix.lower().lstrip('.')
         return b64_content, ext
+
+    def _model_image_part(self, filepath: str) -> dict:
+        """Read and validate one sandbox image for a multimodal model call."""
+        image_data = read_file_bytes(
+            filepath,
+            session_id=self.sandbox_id,
+        )
+        if len(image_data) > VISION_MAX_IMAGE_BYTES:
+            raise ValueError(
+                f"image is {len(image_data)} bytes; vision limit is "
+                f"{VISION_MAX_IMAGE_BYTES} bytes"
+            )
+        mime_type = _detect_model_image_mime(image_data)
+        if not mime_type:
+            raise ValueError(
+                "unsupported or invalid image; use PNG, JPEG, GIF, or WebP"
+            )
+        encoded = base64.b64encode(image_data).decode("ascii")
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{mime_type};base64,{encoded}",
+                "detail": "high",
+            },
+        }
+
+    def _user_message_with_attached_images(
+        self,
+        text: str,
+        synced_files: list[dict],
+    ) -> HumanMessage:
+        """Build the initial user message with eligible attachment pixels."""
+        model_images: list[tuple[str, dict]] = []
+        notes: list[str] = []
+
+        for item in synced_files:
+            if not _is_model_image_candidate(item):
+                continue
+            filepath = item["sandbox_path"]
+            if len(model_images) >= VISION_MAX_IMAGES_PER_TURN:
+                notes.append(
+                    f"`{filepath}` was not included in model vision because "
+                    f"the per-turn limit is {VISION_MAX_IMAGES_PER_TURN} images."
+                )
+                continue
+            size = item.get("size")
+            if isinstance(size, int) and size > VISION_MAX_IMAGE_BYTES:
+                notes.append(
+                    f"`{filepath}` was not included in model vision because "
+                    f"it exceeds the {VISION_MAX_IMAGE_BYTES}-byte image limit."
+                )
+                continue
+            try:
+                image_part = self._model_image_part(filepath)
+            except Exception as exc:
+                notes.append(
+                    f"`{filepath}` could not be included in model vision: {exc}."
+                )
+                continue
+            model_images.append((filepath, image_part))
+
+        if notes:
+            text = (
+                f"{text.rstrip()}\n\nVision attachment notes:\n"
+                + "\n".join(f"- {note}" for note in notes)
+            )
+        if not model_images:
+            return HumanMessage(content=text)
+
+        content: list[dict] = [{"type": "text", "text": text}]
+        for filepath, image_part in model_images:
+            content.append({
+                "type": "text",
+                "text": f"Image attached at `{filepath}`:",
+            })
+            content.append(image_part)
+        return HumanMessage(content=content)
 
     def _sync_inputs_from_openwebui(self) -> list[dict]:
         """
@@ -325,6 +461,9 @@ class TerminalAgent:
             if not isinstance(meta, dict):
                 meta = {}
             filename = meta.get("name") or metadata.get("filename") or "upload"
+            content_type = meta.get("content_type")
+            if not isinstance(content_type, str):
+                content_type = None
             size = meta.get("size")
             if not isinstance(size, int) or size < 0:
                 size = None
@@ -350,6 +489,7 @@ class TerminalAgent:
                 synced.append({
                     "id": file_id,
                     "name": str(filename),
+                    "content_type": content_type,
                     "size": size,
                     "sandbox_path": sandbox_path,
                 })
@@ -424,6 +564,7 @@ class TerminalAgent:
             synced.append({
                 "id": file_id,
                 "name": str(filename),
+                "content_type": content_type,
                 "size": transferred,
                 "sandbox_path": sandbox_path,
             })
@@ -789,7 +930,10 @@ class TerminalAgent:
         # Initialize conversation
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
+            self._user_message_with_attached_images(
+                user_prompt,
+                synced_inputs,
+            ),
         ]
         
         # Log initial messages
@@ -922,6 +1066,7 @@ class TerminalAgent:
             # Check if LLM wants to use tools
             if response.tool_calls:
                 print(f"\n🔧 LLM wants to use {len(response.tool_calls)} tool(s)")
+                pending_model_images: list[tuple[str, dict]] = []
                 for i, tool_call in enumerate(response.tool_calls, 1):
                     tool_name = tool_call['name']
                     print(f"\n→ Tool Call #{i}: {tool_name}")
@@ -1049,6 +1194,36 @@ class TerminalAgent:
                                 result = f"✗ Failed to display image {image_path}: {e}"
                                 print(result)
                         elif stream_callback:
+                            stream_callback({
+                                'role': 'computer',
+                                'type': 'console',
+                                'format': 'output',
+                                'content': result,
+                                'start': True,
+                                'end': True
+                            })
+
+                    elif tool_name == 'inspect_image_tool':
+                        image_path = tool_call['args']['filepath']
+                        print(
+                            "\n👁️  LLM requested model vision for image: "
+                            f"{image_path}"
+                        )
+                        result = self.inspect_image_tool.invoke(
+                            tool_call['args']
+                        )
+                        if result.startswith("✓"):
+                            try:
+                                pending_model_images.append((
+                                    image_path,
+                                    self._model_image_part(image_path),
+                                ))
+                            except Exception as exc:
+                                result = (
+                                    f"✗ Failed to prepare {image_path} for "
+                                    f"model vision: {exc}"
+                                )
+                        if stream_callback:
                             stream_callback({
                                 'role': 'computer',
                                 'type': 'console',
@@ -1211,6 +1386,19 @@ class TerminalAgent:
                         content=result,
                         tool_call_id=tool_call_id
                     ))
+                if pending_model_images:
+                    vision_content: list[dict] = []
+                    for image_path, image_part in pending_model_images:
+                        vision_content.append({
+                            "type": "text",
+                            "text": (
+                                "Image requested with inspect_image_tool at "
+                                f"`{image_path}`. Inspect the actual pixels "
+                                "before continuing."
+                            ),
+                        })
+                        vision_content.append(image_part)
+                    messages.append(HumanMessage(content=vision_content))
             else:
                 # LLM responded without calling tools - task is complete
                 print(f"\n💬 LLM Response (no tool calls):")
@@ -1229,7 +1417,14 @@ class TerminalAgent:
         # system_prompt.md and _sync_outputs_to_openwebui docstring), and
         # let the user know they're available as downloads.
         emit_progress("syncing_outputs", "Finalizing outputs…")
-        final_response = messages[-1].content if messages else ""
+        final_response = next(
+            (
+                message.content
+                for message in reversed(messages)
+                if isinstance(message, AIMessage)
+            ),
+            "",
+        )
         synced_files = self._sync_outputs_to_openwebui(
             outputs_before_turn,
             referenced_paths=referenced_output_paths(str(final_response)),
@@ -1279,7 +1474,7 @@ class TerminalAgent:
                 ):
                     content = summarize_skill_result(str(msg.content))
                 else:
-                    content = str(msg.content)
+                    content = _safe_message_log_content(msg)
                 print(f"  {i}. {msg_type}: {content}")
             else:
                 print(f"  {i}. {msg_type}")
@@ -1301,7 +1496,7 @@ class TerminalAgent:
                     'total_cost': total_cost
                 }
             },
-            'final_response': messages[-1].content if messages else None
+            'final_response': final_response or None,
         }
     
     def reset(self):

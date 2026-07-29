@@ -53,6 +53,13 @@ class AgentProgressTests(unittest.TestCase):
             tool_status_description("unknown_tool", preparing=False),
             "Using a tool…",
         )
+        self.assertEqual(
+            tool_status_description(
+                "inspect_image_tool",
+                preparing=False,
+            ),
+            "Inspecting an image…",
+        )
 
 
 if __name__ == "__main__":

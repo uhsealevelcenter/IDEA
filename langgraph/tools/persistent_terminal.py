@@ -533,8 +533,8 @@ def glob_search(
 def make_agent_tools(session_id: str):
     """
     Build a run_terminal_tool / write_file_tool / show_image_tool /
-    read_output_range_tool set bound to one specific session's terminal
-    (local shell or microsandbox microVM).
+    inspect_image_tool / read_output_range_tool set bound to one specific
+    session's terminal (local shell or microsandbox microVM).
 
     Every TerminalAgent must build its own set via this factory instead of
     sharing module-level tool instances, so concurrent users never end up
@@ -688,6 +688,33 @@ def make_agent_tools(session_id: str):
         return f"✓ Image ready to display: {filepath}"
 
     @tool
+    def inspect_image_tool(filepath: str) -> str:
+        """
+        Load an image file into model vision so you can visually inspect and
+        describe it. Use this for images already in the sandbox, including
+        generated plots that you need to validate. This does not display the
+        image to the user; call show_image_tool separately when the user
+        should see it.
+
+        Args:
+            filepath: Path to a PNG, JPEG, GIF, or WebP image.
+
+        Returns:
+            A readiness message. The agent loop supplies the actual pixels
+            to model vision in the next iteration.
+        """
+        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext not in valid_extensions:
+            return (
+                f"✗ Unsupported model-vision image extension '{ext}' for "
+                f"{filepath}; convert it to PNG, JPEG, GIF, or WebP first"
+            )
+        if not file_exists(filepath, session_id):
+            return f"✗ Image not found: {filepath}"
+        return f"✓ Image ready for model inspection: {filepath}"
+
+    @tool
     def grep_search_tool(
         query: str,
         path: str = ".",
@@ -773,6 +800,7 @@ def make_agent_tools(session_id: str):
         write_file_tool,
         publish_artifact_tool,
         show_image_tool,
+        inspect_image_tool,
         read_output_range_tool,
         run_python_tool,
         grep_search_tool,

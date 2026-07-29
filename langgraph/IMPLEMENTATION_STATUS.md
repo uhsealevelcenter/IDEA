@@ -374,7 +374,10 @@ langgraph/utils/
 - `Dockerfile` now `COPY utils/ ./utils/`.
 - `requirements.txt` updated with `litellm`, `beautifulsoup4`, `nest-asyncio`, `paper-qa`, `paper-qa-pymupdf`, and previously-missing `pexpect`, `langchain-core`, `langchain-openai`, `numpy`.
 
-**Still NOT wired (see gaps below):** MCP tools, automatic user/session context injection into the system prompt, per-user active prompt (PromptManager), guest-vs-registered model selection, vision support, reasoning-model LLM config.
+**Still NOT wired (see gaps below):** MCP tools, automatic user/session
+context injection into the system prompt, per-user active prompt
+(PromptManager), guest-vs-registered model selection, and remaining
+reasoning-model configuration.
 
 ---
 
@@ -630,11 +633,14 @@ conversation = conversation_crud.create_conversation(
 - ✅ Security policies (guarddog, destructive ops prevention)
 - ✅ Math formatting (MathJax), mapping (folium), data output guidelines
 - ✅ Data tool usage guidance (the 5 ported functions)
-- ❌ Vision support instructions (image viewing, OCR, `plt.show()`) — not yet added, no vision wiring on the LLM side either (see #7)
+- ✅ Vision instructions distinguish automatic uploaded-image vision,
+  `inspect_image_tool` (model inspection), and `show_image_tool` (user
+  display)
 - ❌ Codex CLI integration instructions — not applicable to `TerminalAgent`'s architecture yet
 - ❌ User-specific active prompts from `PromptManager` — not wired (see #5)
 
-**Action Required:** Add vision instructions once vision support is wired (#7); decide whether/how to surface per-user active prompts (#5) in the orchestrator.
+**Action Required:** Decide whether/how to surface per-user active prompts
+(#5) in the orchestrator.
 
 #### 5. **User Context Injection**
 **Location in OI:** `app.py:2331`, `custom_instructions_v04_2026.py:33-37`
@@ -663,12 +669,23 @@ conversation = conversation_crud.create_conversation(
 
 #### 7. **Vision Support**
 **Location in OI:** `app.py:1765`
-- ❌ `interpreter.llm.supports_vision = True`
-- ❌ Image viewing capabilities
-- ❌ Plot display via `plt.show()`
-- ❌ OCR instructions (no separate extraction step)
+- ✅ The configured `gpt-5.6-sol` route advertises `supports_vision: true`
+  through LiteLLM model metadata
+- ✅ Authorized PNG/JPEG/GIF/WebP uploads are included as high-detail
+  multimodal content in the initial model message
+- ✅ `inspect_image_tool` feeds an existing sandbox image into the next
+  model iteration; `show_image_tool` remains display-only
+- ✅ Image magic-byte validation, per-image byte limits, per-turn image
+  count limits, and application-log redaction for data URIs
+- 🟡 `plt.show()` output is displayed to the user by `run_python_tool`, but
+  must be saved and passed to `inspect_image_tool` for model inspection
+- ❌ Dedicated OCR/cropping workflow for exceptionally dense scientific
+  imagery
 
-**Action Required:** Enable vision in LLM config, add vision instructions to prompt
+**Privacy TODO:** LiteLLM currently persists prompts/completions to its spend
+logs. Redact or omit image data-URI payloads there before declaring this
+suitable for sensitive-image deployments. The application itself omits
+multimodal image data from its terminal-agent summary logs.
 
 #### 8. **Pre-loaded Python Environment**
 **Location in OI:** `app.py:1807`, `utils/custom_functions.py:1-16`
@@ -841,7 +858,10 @@ user's terminal sandbox:
 
 **Remaining for Full Feature Parity with Open Interpreter:**
 - 🟡 4 of 12 capability gaps closed or partially closed (Custom functions ✅, Skills ✅, System prompts 🟡, PQA integration 🟡)
-- ❌ 8 remaining gaps: MCP tools, user context auto-injection, vision support, pre-loaded Python env (superseded by tool-calling architecture), guest/security model selection, advanced conversation features, file/URL management, reasoning model config
+- ❌ Remaining gaps: MCP tools, user context auto-injection, pre-loaded
+  Python env (superseded by tool-calling architecture), guest/security model
+  selection, advanced conversation features, file/URL management, and
+  remaining reasoning-model configuration
 - ❌ Most critical remaining: MCP tools, user context auto-injection, reasoning model config
 
 **Total Implementation Time:** 

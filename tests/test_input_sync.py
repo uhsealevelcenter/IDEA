@@ -80,6 +80,10 @@ class InputSyncTests(unittest.TestCase):
         self.assertEqual(written["expected_size"], 8)
         self.assertEqual(synced[0]["sandbox_path"], expected_path)
         self.assertEqual(
+            synced[0]["content_type"],
+            "application/x-netcdf",
+        )
+        self.assertEqual(
             get.call_args_list[0].kwargs["headers"],
             {"Authorization": "Bearer user-token"},
         )

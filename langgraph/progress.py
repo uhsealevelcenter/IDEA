@@ -20,6 +20,10 @@ TOOL_STATUS_DESCRIPTIONS = {
         "Preparing an image…",
         "Displaying an image…",
     ),
+    "inspect_image_tool": (
+        "Preparing an image…",
+        "Inspecting an image…",
+    ),
     "view_skill": (
         "Preparing task instructions…",
         "Reading task instructions…",

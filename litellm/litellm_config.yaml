@@ -49,6 +49,10 @@ general_settings:
   allow_requests_on_db_unavailable: false
 
   # Persist prompts/completions in the spend-logs table (DB).
+  # TODO(vision-privacy): redact or omit image data-URI payloads from spend
+  # logs before treating uploaded-image vision as suitable for sensitive
+  # deployments. This follow-up is intentionally deferred; see
+  # langgraph/IMPLEMENTATION_STATUS.md.
   store_prompts_in_spend_logs: true
 
   proxy_batch_write_at: 60 # Batch-write spend updates every 60s.
