@@ -37,9 +37,9 @@ and uses the same Open WebUI administrator authentication flow as
 
 The script also:
 
-- keeps the IDEA Terminal Agent visible in both chat selection and the
+- keeps the IDEA Agent visible in both chat selection and the
   Assistant editor's base-model picker;
-- assigns the IDEA logo to the Terminal Agent's workspace metadata so its
+- assigns the IDEA logo to the IDEA Agent's workspace metadata so its
   profile image endpoint does not fall back to the Open WebUI favicon;
 - enables private Assistant creation for verified non-admin users;
 - keeps user-to-user and public Assistant sharing disabled; and

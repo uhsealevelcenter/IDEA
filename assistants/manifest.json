@@ -1,5 +1,6 @@
 {
   "base_model_id": "idea-terminal-agent",
+  "base_model_name": "IDEA Agent",
   "base_model_logo": "assets/idea.png",
   "default_assistant_id": "welcome-assistant",
   "assistants": [

@@ -1,5 +1,5 @@
 """
-title: IDEA Terminal Agent (LangGraph)
+title: IDEA Agent (LangGraph)
 author: IDEA
 description: >
     Open WebUI Pipe function that bridges to IDEA's existing langgraph
@@ -331,7 +331,7 @@ class Pipe:
 
     def pipes(self) -> list[dict]:
         """Registers this as a single selectable model in Open WebUI's model dropdown."""
-        return [{"id": "idea-terminal-agent", "name": "IDEA Terminal Agent"}]
+        return [{"id": "idea-terminal-agent", "name": "IDEA Agent"}]
 
     async def pipe(
         self,

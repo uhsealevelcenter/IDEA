@@ -41,10 +41,13 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 def load_manifest(path: Path) -> dict[str, Any]:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     base_model_id = manifest.get("base_model_id")
+    base_model_name = manifest.get("base_model_name")
     base_model_logo = manifest.get("base_model_logo")
     assistants = manifest.get("assistants")
     if not isinstance(base_model_id, str) or not base_model_id:
         raise RuntimeError("Assistant manifest requires a non-empty base_model_id")
+    if not isinstance(base_model_name, str) or not base_model_name:
+        raise RuntimeError("Assistant manifest requires a non-empty base_model_name")
     if not isinstance(base_model_logo, str) or not base_model_logo:
         raise RuntimeError("Assistant manifest requires a non-empty base_model_logo")
     if not isinstance(assistants, list) or not assistants:
@@ -194,7 +197,7 @@ def official_assistant_payload(
 def configure_assistant_base_model(
     client: OpenWebUIClient,
     base_model_id: str,
-    catalog_model: dict[str, Any],
+    base_model_name: str,
     profile_image_url: str,
     dry_run: bool,
 ) -> str:
@@ -209,9 +212,7 @@ def configure_assistant_base_model(
     payload = {
         "id": base_model_id,
         "base_model_id": (existing or {}).get("base_model_id"),
-        "name": (existing or {}).get("name")
-        or catalog_model.get("name")
-        or base_model_id,
+        "name": base_model_name,
         "meta": meta,
         "params": dict((existing or {}).get("params") or {}),
         "access_grants": public_read_grants((existing or {}).get("access_grants")),
@@ -404,7 +405,7 @@ def main() -> int:
     base_action = configure_assistant_base_model(
         client,
         resolved_base_model_id,
-        base_model,
+        manifest["base_model_name"],
         png_data_uri(manifest_path, manifest["base_model_logo"]),
         args.dry_run,
     )

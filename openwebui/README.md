@@ -11,7 +11,7 @@ translation layer.
 `functions/idea_pipe.py` is an Open WebUI [Pipe
 function](https://docs.openwebui.com/features/plugin/functions/pipe) that:
 
-1. Registers as a selectable model ("IDEA Terminal Agent") in Open WebUI's
+1. Registers as a selectable model ("IDEA Agent") in Open WebUI's
    model dropdown.
 2. On each chat turn, POSTs to the existing `langgraph_service.py` `/chat`
    SSE endpoint (see `langgraph/langgraph_service.py`), mapping Open WebUI's
@@ -43,7 +43,7 @@ auto-discovery - they live in its own database):**
    `./openwebui/functions/idea_pipe.py`, or use **Import from URL** if
    this repo is pushed somewhere reachable.
 3. Enable the function once created.
-4. Back in a new chat, "IDEA Terminal Agent" will now appear in the model
+4. Back in a new chat, "IDEA Agent" will now appear in the model
    dropdown (top-left of the chat page) - not in Admin Panel > Settings >
    Models, which only manages Ollama/OpenAI connections, unrelated to Pipe
    Functions.
@@ -54,7 +54,7 @@ Open WebUI uses an external task model for auxiliary work such as titles,
 tags, follow-up suggestions, and search queries. IDEA keeps this separate
 from the user-facing Pipe model:
 
-- `IDEA Terminal Agent` remains the only visible chat model and continues
+- `IDEA Agent` remains the only visible chat model and continues
   to use `gpt-5.6-sol` through LangGraph.
 - `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
   Open WebUI, and marked hidden so it remains available to backend tasks

@@ -36,7 +36,7 @@ fi
 
 OPENWEBUI_BASE_URL="${OPENWEBUI_BASE_URL:-http://localhost:3001}"
 FUNCTION_ID="idea_terminal_agent"
-FUNCTION_NAME="IDEA Terminal Agent"
+FUNCTION_NAME="IDEA Agent"
 
 : "${OPENWEBUI_API_KEY:?OPENWEBUI_API_KEY not set - export it or set it in .env (use the admin API key from Settings > Account > API Keys)}"
 

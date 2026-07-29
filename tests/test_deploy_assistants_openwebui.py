@@ -42,6 +42,7 @@ class DeployAssistantsTests(unittest.TestCase):
             ["welcome-assistant", "sea", "mars-assistant"],
         )
         self.assertEqual(self.manifest["base_model_id"], "idea-terminal-agent")
+        self.assertEqual(self.manifest["base_model_name"], "IDEA Agent")
         self.assertEqual(self.manifest["base_model_logo"], "assets/idea.png")
 
     def test_official_prompts_match_pinned_repository_versions(self):
@@ -88,7 +89,7 @@ class DeployAssistantsTests(unittest.TestCase):
                         {"id": "gpt-5.6-luna", "name": "gpt-5.6-luna"},
                         {
                             "id": "idea_terminal_agent.idea-terminal-agent",
-                            "name": "IDEA Terminal Agent",
+                            "name": "IDEA Agent",
                         },
                     ]
                 }
@@ -240,7 +241,7 @@ class DeployAssistantsTests(unittest.TestCase):
         action = deploy.configure_assistant_base_model(
             client,
             "idea-terminal-agent",
-            {"id": "idea-terminal-agent", "name": "IDEA Terminal Agent"},
+            "IDEA Agent",
             "data:image/png;base64,aWRlYQ==",
             dry_run=False,
         )
@@ -248,12 +249,37 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertEqual(action, "created")
         path, payload = client.posts[0]
         self.assertEqual(path, "/api/v1/models/create")
+        self.assertEqual(payload["name"], "IDEA Agent")
         self.assertFalse(payload["meta"]["hidden"])
         self.assertNotIn("assistant_base_model", payload["meta"])
         self.assertEqual(
             payload["meta"]["profile_image_url"],
             "data:image/png;base64,aWRlYQ==",
         )
+
+    def test_base_model_reconciles_stale_display_name(self):
+        client = FakeClient(
+            models={
+                "idea-terminal-agent": {
+                    "id": "idea-terminal-agent",
+                    "name": "IDEA Terminal Agent",
+                    "meta": {},
+                }
+            }
+        )
+
+        action = deploy.configure_assistant_base_model(
+            client,
+            "idea-terminal-agent",
+            "IDEA Agent",
+            "data:image/png;base64,aWRlYQ==",
+            dry_run=False,
+        )
+
+        self.assertEqual(action, "updated")
+        path, payload = client.posts[0]
+        self.assertEqual(path, "/api/v1/models/model/update")
+        self.assertEqual(payload["name"], "IDEA Agent")
 
     def test_permissions_enable_private_assistant_creation_only(self):
         client = FakeClient(
