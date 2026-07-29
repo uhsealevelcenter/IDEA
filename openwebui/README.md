@@ -125,6 +125,23 @@ per-user Redis artifact registry. If a later response references an unchanged
 upload. A missing registry entry is recovered by uploading that explicitly
 referenced file once.
 
+Files attached to a user message flow in the other direction. The Pipe sends
+only their Open WebUI file IDs and display metadata to LangGraph. Before
+invoking the model, LangGraph uses that same user's current credential to
+re-authorize each ID through Open WebUI and streams the original bytes into
+the user's sandbox at:
+
+```text
+/workspace/uploads/<file-id>/<sanitized-original-name>
+```
+
+The exact paths are appended to that turn's model context. Files are copied
+atomically and binary formats such as NetCDF are preserved unchanged. A
+previously copied ID is reused only after authorization is checked again.
+If authorization, transfer, or size validation fails, the run stops instead
+of asking the model to work without the attachment. Input files are retained
+with the user's persistent sandbox; they are not published as outputs.
+
 `/workspace` remains private working storage and is never scanned or uploaded
 automatically. The agent's `publish_artifact_tool` explicitly copies one
 selected regular file from `/workspace` into `/outputs`; the resulting output
@@ -144,8 +161,8 @@ instead of being embedded.
 
 The Pipe forwards the current user's Open WebUI bearer/session credential
 only for the active internal chat request. LangGraph uses that credential
-for the final upload, so Open WebUI owns the generated files as that user
-and its normal `/api/v1/files/{id}/content` authorization succeeds. The
+for attachment downloads and final output uploads, so Open WebUI's normal
+file ownership and sharing authorization applies in both directions. The
 credential is not included in model messages or Redis conversation history.
 Uploads are concurrent and bounded by `OUTPUT_SYNC_TIMEOUT_SECONDS` (30
 seconds by default), with at most `OUTPUT_SYNC_MAX_WORKERS` active uploads.
@@ -179,6 +196,12 @@ the canonical template.
 - **`OPENWEBUI_API_KEY`** - optional administrator API key used by
   deployment/configuration scripts such as `configure_openwebui.py`. It is
   not used for per-user output syncing.
+
+- **`INPUT_SYNC_TIMEOUT_SECONDS`** - whole-turn deadline for copying input
+  attachments into the sandbox; defaults to 120 seconds.
+
+- **`INPUT_SYNC_MAX_FILE_BYTES`** - maximum size of one input attachment,
+  enforced by both LangGraph and the sandbox service; defaults to 1 GiB.
 
 - **`OUTPUT_SYNC_TIMEOUT_SECONDS`** - whole-batch deadline for final output
   uploads; defaults to 30 seconds.

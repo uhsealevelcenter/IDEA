@@ -57,6 +57,7 @@ class ConversationOrchestrator:
         user_email: Optional[str] = None,
         assistant_id: Optional[str] = None,
         assistant_system_prompt: Optional[str] = None,
+        attached_files: Optional[list[dict[str, Any]]] = None,
         openwebui_authorization: Optional[str] = None,
     ):
         self.user_id = user_id
@@ -72,6 +73,7 @@ class ConversationOrchestrator:
         self.max_iterations = max_iterations
         self.assistant_id = assistant_id
         self.assistant_system_prompt = assistant_system_prompt
+        self.attached_files = list(attached_files or [])
         self.openwebui_authorization = openwebui_authorization
         
         # Conversation management
@@ -149,6 +151,7 @@ class ConversationOrchestrator:
                 max_iterations=self.max_iterations,
                 assistant_id=self.assistant_id,
                 assistant_system_prompt=self.assistant_system_prompt,
+                attached_files=self.attached_files,
                 openwebui_authorization=self.openwebui_authorization,
             )
         

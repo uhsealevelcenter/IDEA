@@ -641,7 +641,9 @@ conversation = conversation_crud.create_conversation(
 - ❌ `user_id` in custom instructions
 - ❌ `session_id` in custom instructions
 - ❌ `user_first_name` personalization
-- ❌ Upload directory paths: `/app/static/{user_id}/{session_id}/uploads/`
+- ✅ Open WebUI attachment paths are injected per turn as
+  `/workspace/uploads/<file-id>/<sanitized-original-name>` after the file
+  is authorized and copied into that user's sandbox
 - ❌ Output directory paths: `/app/static/{user_id}/{session_id}/`
 - ❌ Host URL for file link generation
 
@@ -790,6 +792,32 @@ scoped specifically to the Open WebUI frontend integration
 items above (per-turn `find` + upload round-trip cost, `/outputs`
 namespacing across turns, static-API-key attribution, no size-limit
 handling) remain unaddressed.
+
+---
+
+## 📥 Open WebUI Input Attachment Sync (Jul 28, 2026) — IMPLEMENTED
+
+Files attached in Open WebUI are now usable by code running inside the
+user's terminal sandbox:
+
+- `openwebui/functions/idea_pipe.py` accepts Open WebUI's injected
+  `__files__`, keeps only safe file/image IDs, deduplicates them, and
+  forwards the descriptors plus the current user's credential.
+- The request models and `ConversationOrchestrator` pass those descriptors
+  to `TerminalAgent` without adding credentials to Redis history or model
+  messages.
+- Before model execution, `TerminalAgent` re-authorizes each file ID using
+  Open WebUI's owner/share checks, downloads the raw content as a stream,
+  and copies it atomically to
+  `/workspace/uploads/<file-id>/<sanitized-original-name>`.
+- The sandbox service has a token-protected binary streaming write route;
+  both local and Microsandbox backends write a temporary file and rename it
+  only after the complete transfer succeeds. Binary files are never routed
+  through JSON or text decoding.
+- The exact sandbox paths are appended to only the current turn's model
+  context. Input sync is fail-closed, rechecks authorization even for an
+  already-copied ID, and enforces `INPUT_SYNC_TIMEOUT_SECONDS` plus
+  `INPUT_SYNC_MAX_FILE_BYTES` (1 GiB by default).
 
 ---
 

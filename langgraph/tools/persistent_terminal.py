@@ -16,7 +16,7 @@ import posixpath
 import shlex
 import time
 import uuid
-from typing import Optional
+from typing import Iterable, Optional
 import httpx
 from langchain_core.tools import tool
 
@@ -246,6 +246,32 @@ def write_file(filepath: str, content: str, session_id: str, append: bool = Fals
     return f"✓ {action} {chars} characters ({lines} lines) to {filepath}"
 
 
+def write_file_stream(
+    filepath: str,
+    chunks: Iterable[bytes],
+    session_id: str,
+    expected_size: int | None = None,
+    timeout: httpx.Timeout | float | None = None,
+) -> int:
+    """Stream arbitrary bytes into a sandbox without JSON/base64 encoding."""
+    response = _client.put(
+        f"/sandboxes/{session_id}/files/content",
+        params={
+            "filepath": filepath,
+            **(
+                {"expected_size": expected_size}
+                if expected_size is not None
+                else {}
+            ),
+        },
+        headers={"Content-Type": "application/octet-stream"},
+        content=chunks,
+        timeout=timeout or _HTTP_TIMEOUT,
+    )
+    response.raise_for_status()
+    return int(response.json().get("size", 0))
+
+
 def read_file_bytes(
     filepath: str,
     session_id: str,
@@ -289,10 +315,18 @@ def read_output_range(filepath: str, session_id: str, offset: int = 0, n_limit: 
     return f"Characters {offset}-{end} of {total_len} total in {filepath}:\n\n{chunk}"
 
 
-def file_exists(filepath: str, session_id: str) -> bool:
+def file_exists(
+    filepath: str,
+    session_id: str,
+    timeout: httpx.Timeout | float | None = None,
+) -> bool:
     """Check whether filepath exists in the session's sandbox (via sandbox_service)."""
     try:
-        response = _client.get(f"/sandboxes/{session_id}/files/exists", params={"filepath": filepath})
+        response = _client.get(
+            f"/sandboxes/{session_id}/files/exists",
+            params={"filepath": filepath},
+            timeout=timeout or _HTTP_TIMEOUT,
+        )
         response.raise_for_status()
         return response.json().get("exists", False)
     except httpx.HTTPError:

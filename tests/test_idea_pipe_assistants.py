@@ -122,6 +122,37 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             )
         )
 
+    def test_collects_only_safe_deduplicated_attachment_ids(self):
+        descriptors = idea_pipe._attached_file_descriptors(
+            [
+                {"type": "file", "id": "file-1", "name": "data.nc"},
+                {"type": "file", "id": "file-1", "name": "duplicate.nc"},
+                {"type": "collection", "id": "knowledge-1"},
+                {"type": "file", "url": "https://example.org/file.csv"},
+                {"type": "file", "id": "../unsafe"},
+            ],
+            {
+                "user_message": {
+                    "files": [
+                        {
+                            "type": "image",
+                            "id": "image-2",
+                            "name": "map.png",
+                            "size": 42,
+                        }
+                    ]
+                }
+            },
+        )
+
+        self.assertEqual(
+            descriptors,
+            [
+                {"id": "file-1", "name": "data.nc"},
+                {"id": "image-2", "name": "map.png", "size": 42},
+            ],
+        )
+
     def test_builds_public_origin_from_forwarded_request_headers(self):
         request = SimpleNamespace(
             headers={
@@ -175,6 +206,13 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                         "email": "scientist@example.org",
                         "role": "user",
                     },
+                    __files__=[
+                        {
+                            "type": "file",
+                            "id": "file-123",
+                            "name": "observations.nc",
+                        }
+                    ],
                     __metadata__=metadata,
                     __request__=SimpleNamespace(
                         headers={},
@@ -196,6 +234,10 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(payload["assistant_system_prompt"], "You are SEA.")
         self.assertEqual(payload["session_key"], "user-1:chat-123:sea")
         self.assertEqual(payload["message"], "Analyze Honolulu.")
+        self.assertEqual(
+            payload["attached_files"],
+            [{"id": "file-123", "name": "observations.nc"}],
+        )
         self.assertEqual(
             payload["openwebui_authorization"],
             "Bearer user-session-token",

@@ -12,6 +12,7 @@ is allowed to live - the langgraph service that calls into this over HTTP
 import os
 import threading
 import time
+import uuid
 import pexpect
 
 from msb_sandbox import MicrosandboxTerminal, microsandbox_available
@@ -301,6 +302,33 @@ def write_file(filepath: str, content: str, sandbox_id: str, append: bool = Fals
                 os.makedirs(dirpath, exist_ok=True)
             with open(filepath, mode, encoding='utf-8') as f:
                 f.write(content)
+
+
+def write_file_bytes(filepath: str, source, sandbox_id: str) -> None:
+    """Atomically stream raw bytes into sandbox_id's private filesystem."""
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if isinstance(terminal, MicrosandboxTerminal):
+            terminal.write_file_bytes(filepath, source)
+            return
+
+        dirpath = os.path.dirname(filepath)
+        if dirpath:
+            os.makedirs(dirpath, exist_ok=True)
+        temporary_path = f"{filepath}.idea-upload-{uuid.uuid4().hex}"
+        try:
+            with open(temporary_path, "wb") as output:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+            os.replace(temporary_path, filepath)
+        finally:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
 
 
 def run_python(code: str, sandbox_id: str) -> dict:

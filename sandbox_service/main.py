@@ -7,8 +7,10 @@ pexpect/microsandbox objects itself, so it can stay stateless with respect
 to terminal/sandbox execution.
 """
 
+import asyncio
 import hmac
 import os
+import tempfile
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -47,6 +49,13 @@ def _stop_all_terminals_on_shutdown() -> None:
 # thing standing between "on the docker network" and "full code exec as
 # any user" if this service's host ports are ever exposed.
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+INPUT_SYNC_MAX_FILE_BYTES = int(
+    os.getenv("INPUT_SYNC_MAX_FILE_BYTES", str(1024 * 1024 * 1024))
+)
+INPUT_SYNC_SPOOL_MEMORY_BYTES = min(
+    INPUT_SYNC_MAX_FILE_BYTES,
+    8 * 1024 * 1024,
+)
 
 
 def require_internal_token(request: Request) -> None:
@@ -124,6 +133,84 @@ async def write_file(sandbox_id: str, request: WriteFileRequest):
         raise HTTPException(status_code=400, detail=f"{request.filepath} is a directory, not a file")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write {request.filepath}: {e}")
+
+
+@app.put("/sandboxes/{sandbox_id}/files/content", dependencies=[Depends(require_internal_token)])
+async def write_file_content(
+    sandbox_id: str,
+    request: Request,
+    filepath: str,
+    expected_size: Optional[int] = None,
+):
+    """Stream an arbitrary binary file into a user's sandbox atomically."""
+    if expected_size is not None and expected_size < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="expected_size must be non-negative",
+        )
+    if (
+        expected_size is not None
+        and expected_size > INPUT_SYNC_MAX_FILE_BYTES
+    ):
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "Input file exceeds the configured "
+                f"{INPUT_SYNC_MAX_FILE_BYTES}-byte limit"
+            ),
+        )
+    uploaded = 0
+    spool = tempfile.SpooledTemporaryFile(
+        max_size=INPUT_SYNC_SPOOL_MEMORY_BYTES,
+        mode="w+b",
+    )
+    try:
+        async for chunk in request.stream():
+            uploaded += len(chunk)
+            if uploaded > INPUT_SYNC_MAX_FILE_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "Input file exceeds the configured "
+                        f"{INPUT_SYNC_MAX_FILE_BYTES}-byte limit"
+                    ),
+                )
+            spool.write(chunk)
+        if expected_size is not None and uploaded != expected_size:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Input file size mismatch: expected {expected_size} "
+                    f"bytes, received {uploaded}"
+                ),
+            )
+        spool.seek(0)
+        await asyncio.to_thread(
+            registry.write_file_bytes,
+            filepath,
+            spool,
+            sandbox_id,
+        )
+        return {"ok": True, "size": uploaded}
+    except HTTPException:
+        raise
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission denied: Cannot write to {filepath}",
+        )
+    except IsADirectoryError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{filepath} is a directory, not a file",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to write {filepath}: {e}",
+        )
+    finally:
+        spool.close()
 
 
 @app.post("/sandboxes/{sandbox_id}/run-python", dependencies=[Depends(require_internal_token)])

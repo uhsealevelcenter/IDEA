@@ -63,6 +63,8 @@ services:
       # The Pipe forwards the current user's credential for correct file
       # ownership; uploads run concurrently within this whole-batch timeout.
       - OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://openwebui:8080}
+      - INPUT_SYNC_TIMEOUT_SECONDS=${INPUT_SYNC_TIMEOUT_SECONDS:-120}
+      - INPUT_SYNC_MAX_FILE_BYTES=${INPUT_SYNC_MAX_FILE_BYTES:-1073741824}
       - OUTPUT_SYNC_TIMEOUT_SECONDS=${OUTPUT_SYNC_TIMEOUT_SECONDS:-30}
       - OUTPUT_SYNC_MAX_WORKERS=${OUTPUT_SYNC_MAX_WORKERS:-4}
       # Skill content is never silently truncated. A skill above this limit
@@ -146,6 +148,9 @@ services:
       # lifetime cap. See sandbox_service/msb_sandbox.py.
       - SANDBOX_IDLE_TIMEOUT_SECONDS=${SANDBOX_IDLE_TIMEOUT_SECONDS:-1800}
       - SANDBOX_MAX_DURATION_SECONDS=${SANDBOX_MAX_DURATION_SECONDS:-}
+      # Must match langgraph's limit. The sandbox service enforces it again
+      # while receiving binary Open WebUI attachments.
+      - INPUT_SYNC_MAX_FILE_BYTES=${INPUT_SYNC_MAX_FILE_BYTES:-1073741824}
       # Guards this service's HTTP API (main.py's require_internal_token) -
       # this service has no env_file, unlike langgraph/openwebui above, so
       # this must be listed explicitly to reach the container at all.

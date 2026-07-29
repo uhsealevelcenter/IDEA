@@ -503,6 +503,43 @@ class MicrosandboxTerminal:
         else:
             self._exec(lambda: self._sandbox.fs.write(filepath, data))
 
+    def write_file_bytes(self, filepath: str, source) -> None:
+        """Atomically stream a binary file into the sandbox filesystem."""
+        filepath = self._resolve_path(filepath)
+        parent = os.path.dirname(filepath)
+        if parent:
+            quoted_parent = shlex.quote(parent)
+            self._exec(
+                lambda: self._sandbox.shell(f"mkdir -p -- {quoted_parent}")
+            )
+
+        temporary_path = f"{filepath}.idea-upload-{uuid.uuid4().hex}"
+        sink = self._exec(
+            lambda: self._sandbox.fs.write_stream(temporary_path)
+        )
+        try:
+            while True:
+                chunk = source.read(1024 * 1024)
+                if not chunk:
+                    break
+                self._exec(lambda chunk=chunk: sink.write(chunk))
+            self._exec(lambda: sink.close())
+            self._exec(
+                lambda: self._sandbox.fs.rename(temporary_path, filepath)
+            )
+        except Exception:
+            try:
+                self._exec(lambda: sink.close())
+            except Exception:
+                pass
+            try:
+                self._exec(
+                    lambda: self._sandbox.fs.remove(temporary_path)
+                )
+            except Exception:
+                pass
+            raise
+
     def read_file(self, filepath: str) -> bytes:
         """Read raw bytes of a file from inside the sandbox (e.g. for image display)."""
         return self._exec(lambda: self._sandbox.fs.read(self._resolve_path(filepath)))

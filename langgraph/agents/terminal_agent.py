@@ -4,6 +4,7 @@ A general-purpose AI agent with access to a persistent terminal session.
 """
 
 import os
+import re
 import time
 import uuid
 import base64
@@ -14,6 +15,7 @@ import queue
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from typing import Dict, Any, Optional, Callable, Iterable, Iterator
 from pathlib import Path
+from urllib.parse import quote
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
@@ -24,8 +26,10 @@ from tools.persistent_terminal import (
     make_agent_tools,
     close_terminal,
     read_file_bytes,
+    file_exists,
     list_file_metadata,
     run_python,
+    write_file_stream,
 )
 from utils.output_sync import (
     changed_output_paths,
@@ -58,6 +62,47 @@ OUTPUTS_DIR = "/outputs"
 OPENWEBUI_BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "http://openwebui:8080").rstrip("/")
 OUTPUT_SYNC_TIMEOUT_SECONDS = float(os.getenv("OUTPUT_SYNC_TIMEOUT_SECONDS", "30"))
 OUTPUT_SYNC_MAX_WORKERS = max(1, int(os.getenv("OUTPUT_SYNC_MAX_WORKERS", "4")))
+INPUTS_DIR = "/workspace/uploads"
+INPUT_SYNC_TIMEOUT_SECONDS = float(os.getenv("INPUT_SYNC_TIMEOUT_SECONDS", "120"))
+INPUT_SYNC_MAX_FILE_BYTES = int(
+    os.getenv("INPUT_SYNC_MAX_FILE_BYTES", str(1024 * 1024 * 1024))
+)
+INPUT_SYNC_CHUNK_BYTES = 1024 * 1024
+
+
+def _safe_input_component(value: str, fallback: str, max_length: int = 180) -> str:
+    """Produce one non-traversing, shell-friendly sandbox path component."""
+    basename = str(value or "").replace("\\", "/").rsplit("/", 1)[-1]
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", basename).strip("._")
+    if not sanitized:
+        sanitized = fallback
+    return sanitized[:max_length]
+
+
+def _input_sandbox_path(file_id: str, filename: str) -> str:
+    safe_id = _safe_input_component(file_id, "", max_length=96)
+    if not safe_id or safe_id != file_id:
+        safe_id = hashlib.sha256(file_id.encode("utf-8")).hexdigest()[:32]
+    safe_name = _safe_input_component(filename, "upload")
+    return f"{INPUTS_DIR}/{safe_id}/{safe_name}"
+
+
+def _attached_files_context(synced_files: list[dict]) -> str:
+    if not synced_files:
+        return ""
+    lines = [
+        "Files attached by the user are available at these exact private "
+        "sandbox paths:"
+    ]
+    lines.extend(
+        f"- `{item['sandbox_path']}`"
+        for item in synced_files
+    )
+    lines.append(
+        "Use these exact paths for code and analysis. Keep derived working "
+        "files under /workspace and user-facing deliverables under /outputs."
+    )
+    return "\n".join(lines)
 
 
 def compose_system_prompt(
@@ -102,6 +147,7 @@ class TerminalAgent:
         max_iterations: int = 20,
         assistant_id: Optional[str] = None,
         assistant_system_prompt: Optional[str] = None,
+        attached_files: Optional[list[dict[str, Any]]] = None,
         openwebui_authorization: Optional[str] = None,
     ):
         self.session_id = session_id
@@ -115,6 +161,7 @@ class TerminalAgent:
         self.max_iterations = max_iterations
         self.assistant_id = assistant_id
         self.assistant_system_prompt = assistant_system_prompt
+        self.attached_files = list(attached_files or [])
         self.openwebui_authorization = openwebui_authorization
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
@@ -223,6 +270,166 @@ class TerminalAgent:
         b64_content = base64.b64encode(image_data).decode('utf-8')
         ext = Path(filepath).suffix.lower().lstrip('.')
         return b64_content, ext
+
+    def _sync_inputs_from_openwebui(self) -> list[dict]:
+        """
+        Authorize and copy this turn's Open WebUI attachments into the
+        user's private sandbox before the model sees the prompt.
+
+        Input sync is intentionally fail-closed. Running without a requested
+        attachment would invite the model to guess about data it cannot read.
+        """
+        attached_files = list(getattr(self, "attached_files", []) or [])
+        if not attached_files:
+            return []
+        if not self.openwebui_authorization:
+            raise RuntimeError(
+                "Cannot prepare attached files because the current Open "
+                "WebUI user credential was not forwarded."
+            )
+
+        sync_deadline = time.monotonic() + INPUT_SYNC_TIMEOUT_SECONDS
+        headers = {"Authorization": self.openwebui_authorization}
+        synced: list[dict] = []
+        seen: set[str] = set()
+
+        for descriptor in attached_files:
+            file_id = descriptor.get("id") if isinstance(descriptor, dict) else None
+            if not isinstance(file_id, str) or not file_id or file_id in seen:
+                continue
+            seen.add(file_id)
+
+            remaining = sync_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Timed out while preparing attached files for the sandbox."
+                )
+
+            encoded_id = quote(file_id, safe="")
+            try:
+                metadata_response = requests.get(
+                    f"{OPENWEBUI_BASE_URL}/api/v1/files/{encoded_id}",
+                    headers=headers,
+                    timeout=(min(5, remaining), remaining),
+                )
+                metadata_response.raise_for_status()
+                metadata = metadata_response.json()
+                if not isinstance(metadata, dict):
+                    raise ValueError("Open WebUI returned invalid file metadata")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not authorize attached file {file_id!r}: {exc}"
+                ) from exc
+
+            meta = metadata.get("meta") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+            filename = meta.get("name") or metadata.get("filename") or "upload"
+            size = meta.get("size")
+            if not isinstance(size, int) or size < 0:
+                size = None
+            if size is not None and size > INPUT_SYNC_MAX_FILE_BYTES:
+                raise RuntimeError(
+                    f"Attached file {filename!r} is {size} bytes; the sandbox "
+                    f"input limit is {INPUT_SYNC_MAX_FILE_BYTES} bytes."
+                )
+
+            sandbox_path = _input_sandbox_path(file_id, str(filename))
+            # Re-authorize above on every turn, even when this immutable file
+            # ID has already been copied into the persistent sandbox.
+            remaining = sync_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Timed out while preparing attached files for the sandbox."
+                )
+            if file_exists(
+                sandbox_path,
+                session_id=self.sandbox_id,
+                timeout=remaining,
+            ):
+                synced.append({
+                    "id": file_id,
+                    "name": str(filename),
+                    "size": size,
+                    "sandbox_path": sandbox_path,
+                })
+                continue
+
+            remaining = sync_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Timed out while preparing attached files for the sandbox."
+                )
+
+            try:
+                content_response = requests.get(
+                    f"{OPENWEBUI_BASE_URL}/api/v1/files/{encoded_id}/content",
+                    headers=headers,
+                    stream=True,
+                    timeout=(min(5, remaining), remaining),
+                )
+                content_response.raise_for_status()
+                transferred = 0
+
+                def chunks() -> Iterator[bytes]:
+                    nonlocal transferred
+                    for chunk in content_response.iter_content(
+                        chunk_size=INPUT_SYNC_CHUNK_BYTES
+                    ):
+                        if time.monotonic() >= sync_deadline:
+                            raise RuntimeError(
+                                "Timed out while copying attached files "
+                                "into the sandbox."
+                            )
+                        if not chunk:
+                            continue
+                        transferred += len(chunk)
+                        if transferred > INPUT_SYNC_MAX_FILE_BYTES:
+                            raise RuntimeError(
+                                f"Attached file {filename!r} exceeds the "
+                                f"{INPUT_SYNC_MAX_FILE_BYTES}-byte sandbox "
+                                "input limit."
+                            )
+                        yield chunk
+
+                remaining = sync_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(
+                        "Timed out while preparing attached files for the sandbox."
+                    )
+                written = write_file_stream(
+                    sandbox_path,
+                    chunks(),
+                    session_id=self.sandbox_id,
+                    expected_size=size,
+                    timeout=remaining,
+                )
+                if written != transferred or (
+                    size is not None and transferred != size
+                ):
+                    raise RuntimeError(
+                        f"Attached file {filename!r} was not copied intact "
+                        f"(expected {size}, received {transferred}, wrote {written})."
+                    )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not copy attached file {filename!r} into the "
+                    f"sandbox: {exc}"
+                ) from exc
+            finally:
+                if "content_response" in locals():
+                    content_response.close()
+                    del content_response
+
+            synced.append({
+                "id": file_id,
+                "name": str(filename),
+                "size": transferred,
+                "sandbox_path": sandbox_path,
+            })
+            print(f"✓ Prepared Open WebUI attachment at {sandbox_path}")
+
+        return synced
     
     def _sync_outputs_to_openwebui(
         self,
@@ -535,7 +742,33 @@ class TerminalAgent:
             Dictionary containing the result, messages, and metadata
         """
         
+        def emit_progress(
+            phase: str,
+            description: str,
+            *,
+            done: bool = False,
+            tool_name: Optional[str] = None,
+        ) -> None:
+            if stream_callback:
+                stream_callback(
+                    progress_chunk(
+                        phase,
+                        description,
+                        done=done,
+                        tool_name=tool_name,
+                    )
+                )
+
         self._shown_image_hashes.clear()
+        if getattr(self, "attached_files", None):
+            emit_progress("syncing_inputs", "Preparing attached files…")
+            synced_inputs = self._sync_inputs_from_openwebui()
+            emit_progress(
+                "syncing_inputs",
+                "Attached files are ready",
+            )
+        else:
+            synced_inputs = []
         outputs_before_turn = list_file_metadata(
             OUTPUTS_DIR,
             session_id=self.sandbox_id,
@@ -549,6 +782,9 @@ class TerminalAgent:
         )
 
         user_prompt = prompt
+        attached_context = _attached_files_context(synced_inputs)
+        if attached_context:
+            user_prompt = f"{prompt.rstrip()}\n\n{attached_context}"
         
         # Initialize conversation
         messages = [
@@ -583,23 +819,6 @@ class TerminalAgent:
         output_tokens = 0
         sensitive_tool_call_ids: set[str] = set()
 
-        def emit_progress(
-            phase: str,
-            description: str,
-            *,
-            done: bool = False,
-            tool_name: Optional[str] = None,
-        ) -> None:
-            if stream_callback:
-                stream_callback(
-                    progress_chunk(
-                        phase,
-                        description,
-                        done=done,
-                        tool_name=tool_name,
-                    )
-                )
-        
         while iterations < self.max_iterations and not task_complete:
             iterations += 1
             print(f"\n{'='*60}")

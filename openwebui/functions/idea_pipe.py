@@ -183,6 +183,52 @@ def _request_authorization(request: object | None) -> str | None:
     return None
 
 
+def _attached_file_descriptors(
+    files: list[dict] | None,
+    metadata: dict | None,
+) -> list[dict]:
+    """Return deduplicated OpenWebUI file IDs without trusting client paths."""
+    candidates = list(files or [])
+    user_message = (metadata or {}).get("user_message")
+    if isinstance(user_message, dict):
+        candidates.extend(user_message.get("files") or [])
+
+    descriptors: list[dict] = []
+    seen: set[str] = set()
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type", "file")
+        if item_type not in {"file", "image"}:
+            continue
+        file_id = item.get("id") or item.get("url")
+        if (
+            not isinstance(file_id, str)
+            or not file_id
+            or file_id in seen
+            or file_id.startswith(("http://", "https://", "data:"))
+            or "/" in file_id
+            or "\\" in file_id
+            or any(ord(char) < 32 for char in file_id)
+        ):
+            continue
+
+        descriptor = {"id": file_id}
+        name = item.get("name") or item.get("filename")
+        if isinstance(name, str) and name:
+            descriptor["name"] = name
+        content_type = item.get("content_type")
+        if isinstance(content_type, str) and content_type:
+            descriptor["content_type"] = content_type
+        size = item.get("size")
+        if isinstance(size, int) and size >= 0:
+            descriptor["size"] = size
+
+        descriptors.append(descriptor)
+        seen.add(file_id)
+    return descriptors
+
+
 def _request_public_base_url(request: object | None) -> str:
     """Return the browser-facing Open WebUI origin for absolute file links."""
     if request is None:
@@ -337,6 +383,7 @@ class Pipe:
         self,
         body: dict,
         __user__: dict | None = None,
+        __files__: list[dict] | None = None,
         __metadata__: dict | None = None,
         __request__: object | None = None,
         __event_emitter__: (
@@ -386,6 +433,10 @@ class Pipe:
             "model": self.valves.MODEL,
             "assistant_id": assistant_id,
             "assistant_system_prompt": assistant_system_prompt,
+            "attached_files": _attached_file_descriptors(
+                __files__,
+                __metadata__,
+            ),
             # Used only by langgraph's final /outputs upload. It is never
             # added to model messages or persisted conversation history.
             "openwebui_authorization": _request_authorization(__request__),
