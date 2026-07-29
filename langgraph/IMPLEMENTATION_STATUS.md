@@ -937,14 +937,19 @@ bound to the correct user's sandbox.
 
 **Action Required:** Integrate with existing MCP manager, expose tools in agent environment
 
-#### 3. **Skills System** (9 specialized skills) — ✅ DONE
+#### 3. **Skills System** (9 flat skills + CIndRA package) — ✅ DONE
 **Location in OI:** `skills/*/SKILL.md`, `utils/system_prompt.py:122-172`
 **New location:** `langgraph/utils/skills/`
 - ✅ Skills copied into `langgraph/utils/skills/<skill-name>/SKILL.md`
 - ✅ Skills: `frontend-design`, `review-code`, `latex`, `poster-design`, `co-ops-api`, `co-ops-tadc`, `cora-aws-beta`, `aquaview-ocean-data`, `skill-creator`
 - ✅ Built-in catalog generated from each skill's YAML frontmatter
 - ✅ `view_skill(source="builtin", id=...)` reads the authoritative LangGraph copy in full without routing through terminal-output truncation
+- ✅ General hierarchical built-in package schema supports a root skill, shared references, modular skills, explicit dependencies, and advertised routes
+- ✅ Package routes resolve dependency-first with deterministic ordering and deduplication, then return the complete bundle atomically
+- ✅ Package validation rejects traversal, symlinks, duplicate/unknown IDs, cycles, and configured component/depth/byte limit violations
+- ✅ CIndRA ported from the legacy `CIndRA-skills` branch as the first hierarchical package; its unresolved external source/helper requirements remain explicit in its manifest
 - ✅ `view_skill(source="workspace", id=...)` loads active Open WebUI Workspace skills through the current user's authenticated Skills API
+- 🟡 Open WebUI Workspace skills remain flat pending package-level persistence, authorization, and version semantics
 - ✅ Complete `$`-mentioned and per-chat Open WebUI skills remain available through forwarded system context; model-attached skill manifests load lazily through `view_skill`
 - ✅ Skill loading rejects traversal, source fallback, inactive or unauthorized Workspace skills, and silent partial reads
 

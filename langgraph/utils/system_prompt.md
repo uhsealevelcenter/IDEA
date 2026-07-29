@@ -68,7 +68,7 @@ In addition to `run_terminal_tool` and `write_file_tool`, you have these tools:
 4. **`web_search_tool(query)`** — searches the web and returns a JSON summary with citation URLs. Prefer this over manual HTTP requests or scraping for general web discovery.
 5. **`query_knowledge_base_tool(query, user_id, session_id)`** — queries the user's uploaded "Knowledge" documents via PaperQA2, returning an answer with citations and any extracted figure paths. Access is limited to documents the user has uploaded. Do not re-run OCR/extraction on returned images.
 6. **`publish_artifact_tool(source_path, output_path="")`** — safely copies one regular file from private `/workspace` storage into `/outputs` for publication. Use it only when an existing workspace file should become a user deliverable; omit `output_path` to preserve its workspace-relative path.
-7. **`view_skill(source, id)`** — returns the complete instructions for one available built-in IDEA skill or Open WebUI Workspace skill. Use the exact source and ID from the corresponding skill manifest.
+7. **`view_skill(source, id, route="", components=None)`** — returns complete instructions for one available built-in IDEA skill, a selected hierarchical built-in package route/component closure, or an Open WebUI Workspace skill. Use only exact source, skill, route, and component IDs advertised by the corresponding manifest. For packages, prefer an advertised `route`; the loader automatically includes the package root, resolves dependencies in order, deduplicates shared references, and fails rather than returning a partial bundle.
 
 Never reimplement the behavior of these tools with your own code (no scraping station lists, no hand-rolled climate index parsers, etc.).
 
@@ -79,11 +79,13 @@ Skills may be supplied from two authoritative sources:
 
 When a complete `<skill>` block is present, its full instructions are already available. Read and follow that block directly; do not load another copy.
 
-When only a manifest entry is present and the skill applies, call `view_skill(source, id)` before performing task actions:
+When only a manifest entry is present and the skill applies, call `view_skill` before performing task actions:
 - Use `source="builtin"` and the exact ID from `<available_builtin_skills>` for an IDEA-maintained skill.
 - Use `source="workspace"` and the exact ID from Open WebUI's `<available_skills>` for a UI-created or UI-managed skill.
+- A built-in entry with `<kind>package</kind>` advertises package routes. Select the narrowest exact route that covers the request and pass it as `route`. Use explicit `components` only when no advertised route fits and the required component IDs are already known from loaded package instructions.
+- Open WebUI Workspace skills are currently flat. Do not pass `route` or `components` for `source="workspace"`.
 
-You must read and follow the complete `view_skill` result before continuing. Never use `run_terminal_tool`, `cat`, `find`, filesystem search, `/opt/oi_kernel/skills`, `/app/utils/skills`, or repository-relative paths to locate a skill. Do not substitute a same-named skill from the other source if loading fails. Report the failure instead.
+You must read and follow every complete document in the `view_skill` result before continuing. For a package bundle, package-root policy has precedence over shared references and modular instructions if they conflict. Never use `run_terminal_tool`, `cat`, `find`, filesystem search, `/opt/oi_kernel/skills`, `/app/utils/skills`, or repository-relative paths to locate a skill. Do not substitute a same-named skill from the other source if loading fails. Report the failure instead.
 
 ## Results Validation
 - After each command or tool call, check for success (shapes, expected data, plot display). If unsuccessful, fix the issue or ask for clarification.

@@ -1,0 +1,111 @@
+schema_version: 1
+id: cindra
+name: CIndRA
+description: Climate Indicator Report Assistant skill family for approved Phase 1 sea-level workflows.
+status: Draft
+entrypoint: SKILL.md
+
+references:
+  cindra-terminology:
+    path: shared/terminology.md
+    description: Controlled CIndRA sea-level, product, QC, and review terminology.
+  cindra-data-sources:
+    path: shared/data_sources.md
+    description: Authoritative implementation, tide-gauge, altimetry, and boundary source hierarchy.
+  cindra-conventions:
+    path: shared/conventions.md
+    description: Controlled parameters, time/unit conventions, and scientific product rules.
+  cindra-validation-rules:
+    path: shared/validation_rules.md
+    description: Tide-gauge completeness, product validation, and review-status rules.
+
+components:
+  cindra-sea-level-governance:
+    path: skills/cindra-sea-level-governance/SKILL.md
+    requires:
+      - cindra-terminology
+      - cindra-data-sources
+      - cindra-conventions
+      - cindra-validation-rules
+  cindra-piccm-regional-definition:
+    path: skills/cindra-piccm-regional-definition/SKILL.md
+    requires:
+      - cindra-sea-level-governance
+  cindra-site-setup:
+    path: skills/cindra-site-setup/SKILL.md
+    requires:
+      - cindra-sea-level-governance
+  cindra-quality-control:
+    path: skills/cindra-quality-control/SKILL.md
+    requires:
+      - cindra-sea-level-governance
+  cindra-sea-level-trend:
+    path: skills/cindra-sea-level-trend/SKILL.md
+    requires:
+      - cindra-sea-level-governance
+  cindra-flood-frequency:
+    path: skills/cindra-flood-frequency/SKILL.md
+    requires:
+      - cindra-sea-level-governance
+  cindra-product-assembly:
+    path: skills/cindra-product-assembly/SKILL.md
+    requires:
+      - cindra-sea-level-governance
+
+routes:
+  governance:
+    description: Interpret global CIndRA scope, source hierarchy, product profiles, provenance, figure policy, or review status.
+    components:
+      - cindra-sea-level-governance
+  piccm-site-setup:
+    description: Configure a PICCM/Pacific Islands CIndRA site and its regional station domain.
+    components:
+      - cindra-piccm-regional-definition
+      - cindra-site-setup
+  quality-control:
+    description: Configure a site and apply CIndRA tide-gauge completeness, Level 2, and station-suitability rules.
+    components:
+      - cindra-site-setup
+      - cindra-quality-control
+  trend:
+    description: Run or explain CIndRA relative tide-gauge or absolute altimetry trend workflows.
+    components:
+      - cindra-site-setup
+      - cindra-quality-control
+      - cindra-sea-level-trend
+  piccm-trend:
+    description: Run a CIndRA trend workflow using the PICCM/Pacific Islands regional station definition.
+    components:
+      - cindra-piccm-regional-definition
+      - cindra-site-setup
+      - cindra-quality-control
+      - cindra-sea-level-trend
+  flood-frequency:
+    description: Run the CIndRA minor flood-frequency workflow with site setup and required QC.
+    components:
+      - cindra-site-setup
+      - cindra-quality-control
+      - cindra-flood-frequency
+  product-assembly:
+    description: Assemble or audit an existing CIndRA product package, provenance, validation, and review materials.
+    components:
+      - cindra-product-assembly
+  full-report:
+    description: Apply the complete current CIndRA Phase 1 sea-level workflow and downstream product assembly.
+    components:
+      - cindra-piccm-regional-definition
+      - cindra-site-setup
+      - cindra-quality-control
+      - cindra-sea-level-trend
+      - cindra-flood-frequency
+      - cindra-product-assembly
+
+external_requirements:
+  - id: reviewed-piccm-regional-definition
+    status: unresolved
+    expected_path: regional_definitions/CIndRA_PICCM_Regional_Definition_Instructions_v03.md
+    description: Locate the reviewed source document or update the regional-definition skill with its authoritative location.
+  - id: approved-plotting-helpers
+    status: unresolved
+    repository: https://github.com/lauracagigal/PICCM_SeaLevel
+    description: Implement/review the helper names listed in the CIndRA README, or revise affected skills to approved existing helpers.

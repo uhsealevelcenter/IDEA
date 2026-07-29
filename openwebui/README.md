@@ -86,12 +86,41 @@ missing admin credentials and does not save the password.
 
 ## Unified IDEA and Open WebUI Skills
 
-IDEA exposes one `view_skill(source, id)` tool for two authoritative skill
-stores. Built-in skills are discovered from
-`langgraph/utils/skills/*/SKILL.md`, with their manifest generated from YAML
-frontmatter on each run. The LangGraph process reads these files directly;
-skill content never passes through the sandbox terminal or its output
-truncation.
+IDEA exposes one `view_skill(source, id, route="", components=None)` tool for
+two authoritative skill stores. Flat built-in skills are discovered from
+`langgraph/utils/skills/*/SKILL.md`, with their catalog generated from YAML
+frontmatter on each run. A built-in directory becomes a hierarchical package
+when it also contains `manifest.yaml` with `schema_version: 1`. The manifest
+may declare shared `references`, modular `components`, dependency edges, and
+named `routes`. The LangGraph process reads these files directly; skill
+content never passes through the sandbox terminal or its output truncation.
+
+For a package, the generated catalog advertises its named routes. A route
+load always returns the root `SKILL.md` followed by the complete dependency
+closure in deterministic dependency-first order. Shared documents are
+deduplicated. Unknown IDs, dependency cycles, excessive depth/count/size,
+path traversal, and symlinks fail the entire request; no partial package is
+returned. Package-root policy takes precedence if component instructions
+conflict. CIndRA is the first package using this general mechanism.
+
+A minimal package manifest is:
+
+```yaml
+schema_version: 1
+id: example
+entrypoint: SKILL.md
+references:
+  shared-policy:
+    path: shared/policy.md
+components:
+  example-workflow:
+    path: skills/example-workflow/SKILL.md
+    requires: [shared-policy]
+routes:
+  standard:
+    description: Apply the standard example workflow.
+    components: [example-workflow]
+```
 
 Open WebUI Workspace skills retain Open WebUI's native activation behavior.
 Skills selected with a `$` mention or the per-chat Skills toggle arrive as
@@ -100,13 +129,17 @@ complete system context. Model-attached skills arrive as an
 `view_skill(source="workspace", id=...)`. The Workspace read uses the current
 user's forwarded bearer/session credential against Open WebUI's Skills API,
 preserving ownership, active-state, and access-control checks. IDEA does not
-fall back between same-named built-in and Workspace skills.
+fall back between same-named built-in and Workspace skills. Workspace skills
+remain single-document skills: package route/component requests are rejected
+until Open WebUI can store and return a package atomically under one
+authorization and version boundary.
 
-Skill reads are returned to the model in full, subject to
-`MAX_SKILL_BYTES` (100,000 bytes by default). Oversized skills fail explicitly
-instead of being partially returned. Application logs record only skill
-source, ID, byte count, and SHA-256—not private skill instructions or user
-credentials.
+Skill documents are returned to the model in full, subject to the per-document
+limit. Hierarchical selections also have aggregate document-count,
+dependency-depth, and byte limits. Oversized skills and packages fail
+explicitly instead of being partially returned. Application logs record only
+skill source, ID, route, document/byte count, and SHA-256—not private skill
+instructions or user credentials.
 
 ## Automatic file sync (`/outputs` → Open WebUI Files)
 
@@ -230,6 +263,18 @@ the canonical template.
 - **`MAX_SKILL_BYTES`** - maximum size of one complete built-in or Workspace
   skill returned to IDEA; defaults to 100,000 bytes. Larger skills fail
   explicitly and are never partially loaded.
+
+- **`MAX_SKILL_COMPONENT_BYTES`** - maximum size of one hierarchical package
+  root, reference, component, or manifest; defaults to `MAX_SKILL_BYTES`.
+
+- **`MAX_SKILL_BUNDLE_BYTES`** - maximum aggregate size of one resolved
+  hierarchical package bundle; defaults to 200,000 bytes.
+
+- **`MAX_SKILL_COMPONENTS`** - maximum declared package documents (excluding
+  the root); defaults to 32.
+
+- **`MAX_SKILL_DEPENDENCY_DEPTH`** - maximum package dependency depth;
+  defaults to 16.
 
 ## Status
 
