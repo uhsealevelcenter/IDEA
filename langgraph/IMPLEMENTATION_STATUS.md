@@ -528,6 +528,178 @@ This work should be split into reviewable changes: structured-message
 propagation first, compact IDEA-state persistence second, and Redis
 cutover/legacy cleanup third.
 
+### MAJOR TODO (Jul 29, 2026): Separate workspace, kernel, and run identities
+
+**Status:** proposal for dev-team consideration; investigated, not implemented.
+
+The dedicated-per-user sandbox work correctly makes each user's filesystem
+persistent across chats and page reloads, but it also unintentionally gives
+all of that user's conversations one Python kernel:
+
+1. The Open WebUI Pipe creates a `session_key` containing user, chat, and
+   Assistant IDs.
+2. LangGraph passes that session through `ConversationOrchestrator`, but
+   `TerminalAgent` deliberately derives `sandbox_id` from only `user_id`.
+3. All tools are bound to that per-user `sandbox_id`.
+4. `POST /sandboxes/{sandbox_id}/run-python` accepts only source code, with
+   no separate kernel identity.
+5. The in-VM kernel daemon caches one `PythonLanguage` runner under the
+   `"python"` language key, so variables, imports, matplotlib state, monkey
+   patches, and other process globals are shared by every chat for that user.
+
+The sandbox service's current per-`sandbox_id` lock prevents two individual
+tool operations from running simultaneously, but it does not lock an entire
+agent response. Calls from separate chats can alternate against the common
+kernel. For example, chat A can load `df`, chat B can replace `df`, and chat
+A can then unknowingly plot B's data.
+
+The production microsandbox shell starts a fresh shell command for each
+call, so the state leak is principally the persistent Python kernel and the
+intentionally shared filesystem/packages. The local fallback additionally
+has one persistent shell per user and needs equivalent isolation.
+
+#### Legacy comparison
+
+The legacy `CIndRA-skills` system creates an `OpenInterpreter` per
+`user_id:session_id` and holds a per-session lock for the complete agent
+run. This provides separate Python state and prevents requests within one
+session from interleaving. Its frontend-generated session ID changes on a
+page load, however, so it is tab/session-oriented rather than a durable
+conversation identity. Open WebUI's stable chat ID gives the new system an
+opportunity to preserve that isolation without inheriting the legacy
+lifecycle problem.
+
+#### Recommended identity model
+
+Use three explicit identities:
+
+| Identity | Recommended scope | Purpose |
+| --- | --- | --- |
+| `workspace_id` | user | persistent microVM, filesystem, packages, uploads |
+| `kernel_id` | user + chat + Assistant | Python variables, imports, figures |
+| `run_id` | one response execution | whole-run serialization/cancellation |
+
+Keep kernel scope configurable while the dev team decides Assistant-switch
+semantics:
+
+- `IDEA_KERNEL_SCOPE=chat` retains Python state when a chat changes
+  Assistants.
+- `IDEA_KERNEL_SCOPE=chat_assistant` starts isolated Python state for each
+  Assistant in a chat. This is the safer proposed default.
+
+Derive a bounded `kernel_id` server-side from authenticated identity, a
+stable Open WebUI chat ID, and (when configured) Assistant ID. Use a
+versioned hash rather than accepting a caller-composed runtime name. The LLM
+must never supply or modify workspace/kernel identifiers. The Pipe's
+current shared `"anonymous"` fallback is not acceptable for execution
+identity: guests need a stable unique identity or execution must fail
+closed.
+
+This identity split complements the authoritative-conversation-context TODO
+above: Open WebUI owns conversational history, `workspace_id` owns durable
+user files, and `kernel_id` owns best-effort in-memory computation state.
+
+#### Proposed implementation sequence
+
+1. **Define and derive identities:** add a stable `chat_id` to both
+   `ChatRequest` and `ChatRunRequest`; derive `workspace_id` and `kernel_id`
+   inside LangGraph. Retain the old user-scoped kernel behind
+   `IDEA_KERNEL_SCOPE=user` for rollback.
+2. **Plumb kernel identity:** pass `kernel_id` through
+   `ConversationOrchestrator`, `TerminalAgent`, `make_agent_tools`,
+   `run_python`, `RunPythonRequest`, `terminal_registry.run_python`,
+   `MicrosandboxTerminal.run_python`, and the in-VM client. Filesystem,
+   shell, uploads, artifacts, and package installation continue to use only
+   `workspace_id`.
+3. **Make the daemon multi-kernel:** replace the singleton language map with
+   named kernel records containing a `PythonLanguage` runner, per-kernel
+   execution lock, and last-used timestamp. Include validated `kernel_id` in
+   `/run`; add a kernel-reset path that calls
+   `PythonLanguage.terminate()`. Replace the daemon's global execution lock
+   with per-kernel locks while retaining defense-in-depth serialization
+   within each kernel.
+4. **Serialize complete runs:** add a distributed LangGraph run lock keyed
+   by `kernel_id`, covering the whole agent turn for both `/chat` and
+   `/chat-runs`. Redis is appropriate for this transient coordination even
+   if it is retired as a conversation store. Use a unique owner token,
+   expiry, renewal while alive, token-safe release in `finally`, and a
+   waiting/busy status. A worker crash must release through TTL rather than
+   permanently blocking the chat.
+5. **Keep conservative sandbox locking initially:** retain the current
+   per-user sandbox operation lock during the first isolation rollout. It
+   may limit parallelism between a user's chats, but avoids changing VM and
+   filesystem concurrency at the same time. Split lifecycle, shell/file,
+   and kernel locks only after stress testing shows that the microsandbox SDK
+   and shared-workspace operations are safe under greater concurrency.
+6. **Match the local fallback:** key local shell/runtime instances by
+   `(workspace_id, kernel_id)` while keeping their files in the same
+   user-scoped workspace. Development and production must not have different
+   cross-chat state behavior.
+7. **Add explicit lifecycle operations:** distinguish reset-current-kernel,
+   reset-all-user-kernels, stop-user-sandbox (files preserved), and
+   destroy-user-workspace (explicitly destructive). Open WebUI chat deletion
+   may trigger kernel cleanup, but reliable idle eviction must handle chats
+   deleted without a hook.
+
+#### Resource and lifecycle requirements
+
+Production user VMs currently default to one CPU and 1 GiB RAM. A Jupyter
+process per chat cannot grow without bounds. Before enabling scoped kernels,
+add:
+
+- `MAX_KERNELS_PER_SANDBOX` (initial value determined by memory testing);
+- `KERNEL_IDLE_TIMEOUT_SECONDS`;
+- LRU eviction of idle, unlocked kernels;
+- protection against evicting a running/leased kernel; and
+- metrics for active kernels, memory pressure, creation latency, resets, and
+  evictions.
+
+Kernel variables are best-effort runtime state, not durable data. Stopping
+or restarting a microVM, restarting the daemon, image replacement, a crash,
+or LRU eviction can remove variables. The per-user filesystem remains the
+authoritative durable state, and scripts/data needed for reproducibility
+must be written there.
+
+#### Non-destructive rollout requirement
+
+Existing microsandboxes do not adopt a new `SANDBOX_IMAGE` automatically.
+The current `interpreter_kernel/refresh_sandboxes.sh` destroys and recreates
+them, which wipes writable filesystem state. It must not be used blindly for
+this feature.
+
+Before migrating existing users, provide either:
+
+- a versioned kernel-runtime update that can be installed into the existing
+  VM overlay without recreating the workspace; or
+- a verified snapshot/recreate/restore workflow that preserves the user's
+  required files and clearly handles installed packages.
+
+New sandboxes can use the updated image immediately. Existing users can
+remain temporarily on `IDEA_KERNEL_SCOPE=user` until migrated safely.
+Singleton kernel variables require no migration because they are already
+ephemeral; user files must be preserved.
+
+#### Required acceptance tests
+
+- Chat A can retain a variable across its turns, while chat B cannot access
+  it.
+- Assistant switching follows the configured `chat` or `chat_assistant`
+  policy.
+- Separate kernels for one user can read the same workspace file.
+- Resetting a kernel removes variables but preserves workspace files.
+- Two overlapping runs for one kernel serialize for their complete turns.
+- A crashed run lock expires and does not permanently block the chat.
+- Different users never share kernels or files.
+- Kernel count/idle limits are enforced without evicting active work.
+- VM restart loses kernel variables but preserves filesystem state.
+- Local fallback behavior matches production isolation.
+- Invalid identities and shared anonymous execution are rejected.
+- `/chat` and `/chat-runs` derive the same kernel identity and locking scope.
+
+This should be split into reviewable changes: identity plumbing and
+isolation tests first, multi-kernel daemon/lifecycle second, and distributed
+whole-run locking plus non-destructive rollout tooling third.
+
 ### Deferred: heartbeat timing during invisible tool-call generation
 
 Native Open WebUI progress statuses now keep long LangGraph work visibly
