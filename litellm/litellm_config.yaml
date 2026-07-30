@@ -26,6 +26,14 @@ model_list:
     model_info:
       mode: chat
 
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: embedding
+
 general_settings:
   # Admin/virtual-key auth for this proxy - see example.env's
   # LITELLM_MASTER_KEY (distinct from INTERNAL_SERVICE_TOKEN, which guards

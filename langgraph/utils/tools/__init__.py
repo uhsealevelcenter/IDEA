@@ -10,13 +10,12 @@ from .datetime_tool import get_datetime_tool
 from .station_tool import get_station_info_tool
 from .climate_tool import make_get_climate_indices_tool
 from .web_search_tool import web_search_tool
-from .knowledge_base_tool import query_knowledge_base_tool
+from .knowledge_base_tool import make_query_knowledge_base_tool
 
 DATA_TOOLS = [
     get_datetime_tool,
     get_station_info_tool,
     web_search_tool,
-    query_knowledge_base_tool,
 ]
 
 __all__ = [
@@ -24,6 +23,6 @@ __all__ = [
     "get_station_info_tool",
     "make_get_climate_indices_tool",
     "web_search_tool",
-    "query_knowledge_base_tool",
+    "make_query_knowledge_base_tool",
     "DATA_TOOLS",
 ]

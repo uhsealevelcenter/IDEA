@@ -48,5 +48,12 @@ The script also:
 
 User-created Assistants are never modified or deleted by this script.
 
+An Assistant manifest entry may set `"paperqa_enabled": true`. Reconciliation
+then disables native Open WebUI file-context RAG for that Assistant and uses
+legacy function handling so its attached Knowledge collection descriptors
+are handled exclusively by IDEA's trusted PaperQA2 integration. The Pipe's
+`PAPERQA_ASSISTANT_IDS` Valve must contain the same Assistant IDs; it defaults
+to `welcome-assistant,sea,mars-assistant`.
+
 `assets/uhslc.svg` preserves the source UHSLC mark on a black square
 background; `assets/uhslc.png` is its 512×512 deployment rendering.

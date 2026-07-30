@@ -71,6 +71,13 @@ services:
       - VISION_MAX_IMAGES_PER_TURN=${VISION_MAX_IMAGES_PER_TURN:-8}
       - OUTPUT_SYNC_TIMEOUT_SECONDS=${OUTPUT_SYNC_TIMEOUT_SECONDS:-30}
       - OUTPUT_SYNC_MAX_WORKERS=${OUTPUT_SYNC_MAX_WORKERS:-4}
+      # PaperQA uses the authenticated LiteLLM proxy and keeps its
+      # synchronized PDFs/indexes on a durable, LangGraph-only volume.
+      - PQA_LLM_MODEL=${PQA_LLM_MODEL:-gpt-5.6-luna}
+      - PQA_EMBEDDING_MODEL=${PQA_EMBEDDING_MODEL:-text-embedding-3-small}
+      - PQA_LITELLM_BASE_URL=${PQA_LITELLM_BASE_URL:-http://litellm:8080/v1}
+      - PQA_SYNC_TIMEOUT_SECONDS=${PQA_SYNC_TIMEOUT_SECONDS:-300}
+      - PQA_MAX_PDF_BYTES=${PQA_MAX_PDF_BYTES:-1073741824}
       # Skill content is never silently truncated. A skill above this limit
       # fails explicitly so an administrator can shorten or split it.
       - MAX_SKILL_BYTES=${MAX_SKILL_BYTES:-100000}
@@ -79,6 +86,8 @@ services:
       # literally from .env. Guards both this service's own routes
       # (langgraph_service.py) and its calls into sandbox below - see
       # require_internal_token in both services and example.env.
+    volumes:
+      - idea_paperqa_data:/app/data
     depends_on:
       - redis
       - sandbox
@@ -279,3 +288,4 @@ volumes:
   idea_openwebui_data:
   idea_microsandbox_data:
   idea_shared_data:
+  idea_paperqa_data:

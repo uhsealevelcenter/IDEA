@@ -163,6 +163,23 @@ class DeployAssistantsTests(unittest.TestCase):
             self.assertIn("/workspace", prompt)
             self.assertIn("read-only", prompt)
 
+    def test_official_assistants_use_paperqa_without_native_openwebui_rag(self):
+        for definition in self.manifest["assistants"]:
+            payload = deploy.official_assistant_payload(
+                self.manifest_path,
+                self.manifest["base_model_id"],
+                definition,
+            )
+
+            self.assertTrue(payload["meta"]["paperqa_enabled"])
+            self.assertFalse(
+                payload["meta"]["capabilities"]["file_context"]
+            )
+            self.assertEqual(
+                payload["params"]["function_calling"],
+                "legacy",
+            )
+
     def test_seed_mode_preserves_an_existing_assistant(self):
         existing = {
             "id": "sea",

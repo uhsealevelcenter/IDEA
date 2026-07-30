@@ -2,9 +2,9 @@
 
 Adds [Open WebUI](https://github.com/open-webui/open-webui) as an additional
 frontend for the existing `langgraph` agent (`ConversationOrchestrator` /
-`TerminalAgent`) and `sandbox_service` per-user microVM isolation. Nothing in
-`langgraph/` or `sandbox_service/` changes - this integration is purely a
-translation layer.
+`TerminalAgent`) and `sandbox_service` per-user microVM isolation. The Pipe
+is the browser/API translation boundary; trusted attachment and PaperQA
+processing continues inside LangGraph.
 
 ## How it works
 
@@ -83,6 +83,31 @@ changes remain persistent and editable. `WEBUI_ADMIN_EMAIL` and
 `WEBUI_ADMIN_PASSWORD` may be supplied as a fallback if no admin API key
 is available. When run interactively, the script instead prompts for any
 missing admin credentials and does not save the password.
+
+## PaperQA2 literature collections
+
+Welcome, SEA, and Mars are PaperQA-enabled by `assistants/manifest.json`.
+Their deployment metadata forces legacy function handling so attached
+Knowledge collection descriptors reach the IDEA Pipe, while
+`capabilities.file_context` is disabled to prevent Open WebUI's native RAG
+from injecting a second copy of the same literature context.
+
+The Pipe's `PAPERQA_ASSISTANT_IDS` Valve defaults to
+`welcome-assistant,sea,mars-assistant`. Keep this list in sync with manifest
+entries whose `paperqa_enabled` value is true. LangGraph resolves each
+collection through Open WebUI's authenticated
+`/api/v1/knowledge/{id}/files` API and downloads only authorized PDFs.
+Collection-only indexes are isolated by user, Assistant, and collection set
+and reused across chats. Direct PDF attachments are additive only within the
+current chat. Guest/pending users never receive the PaperQA tool.
+
+PaperQA answer generation, evidence summaries, and agent planning all use
+`gpt-5.6-luna`; embeddings use `text-embedding-3-small`. Both routes go
+through the internal LiteLLM proxy and shared virtual key. The PaperQA
+library and index live on the durable `idea_paperqa_data` volume. If an
+existing virtual key predates this integration, regenerate or update it to
+allow `gpt-5.6-luna` and `text-embedding-3-small` as documented in
+`example.env`.
 
 ## Unified IDEA and Open WebUI Skills
 
@@ -259,6 +284,13 @@ the canonical template.
 
 - **`OUTPUT_SYNC_MAX_WORKERS`** - maximum concurrent output uploads;
   defaults to 4.
+
+- **`PQA_LLM_MODEL`** / **`PQA_EMBEDDING_MODEL`** - PaperQA model aliases;
+  default to `gpt-5.6-luna` and `text-embedding-3-small`.
+
+- **`PQA_SYNC_TIMEOUT_SECONDS`** / **`PQA_MAX_PDF_BYTES`** - authenticated
+  collection/direct-PDF synchronization deadline and per-PDF size limit;
+  default to 300 seconds and 1 GiB.
 
 - **`MAX_SKILL_BYTES`** - maximum size of one complete built-in or Workspace
   skill returned to IDEA; defaults to 100,000 bytes. Larger skills fail

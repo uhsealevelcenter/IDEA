@@ -154,11 +154,19 @@ def _assistant_system_prompt(messages: list) -> str | None:
 
 
 def _selected_assistant_id(metadata: dict | None) -> str | None:
-    model = (metadata or {}).get("model")
+    metadata = metadata or {}
+    model = metadata.get("model")
     if isinstance(model, dict):
         model_id = model.get("id")
         if isinstance(model_id, str) and model_id and model_id not in BASE_MODEL_ALIASES:
             return model_id
+    model_id = metadata.get("model_id")
+    if (
+        isinstance(model_id, str)
+        and model_id
+        and model_id not in BASE_MODEL_ALIASES
+    ):
+        return model_id
     return None
 
 
@@ -183,29 +191,34 @@ def _request_authorization(request: object | None) -> str | None:
     return None
 
 
-def _attached_file_descriptors(
+def _attached_resource_descriptors(
     files: list[dict] | None,
     metadata: dict | None,
 ) -> list[dict]:
-    """Return deduplicated OpenWebUI file IDs without trusting client paths."""
+    """Return safe file/collection IDs without trusting client paths.
+
+    Collection descriptors must survive the Pipe boundary so LangGraph can
+    resolve their current members through Open WebUI using the current user's
+    credential. LangGraph, not the model, performs that authorization.
+    """
     candidates = list(files or [])
     user_message = (metadata or {}).get("user_message")
     if isinstance(user_message, dict):
         candidates.extend(user_message.get("files") or [])
 
     descriptors: list[dict] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for item in candidates:
         if not isinstance(item, dict):
             continue
         item_type = item.get("type", "file")
-        if item_type not in {"file", "image"}:
+        if item_type not in {"file", "image", "collection"}:
             continue
         file_id = item.get("id") or item.get("url")
         if (
             not isinstance(file_id, str)
             or not file_id
-            or file_id in seen
+            or (item_type, file_id) in seen
             or file_id.startswith(("http://", "https://", "data:"))
             or "/" in file_id
             or "\\" in file_id
@@ -213,7 +226,7 @@ def _attached_file_descriptors(
         ):
             continue
 
-        descriptor = {"id": file_id}
+        descriptor = {"id": file_id, "type": item_type}
         name = item.get("name") or item.get("filename")
         if isinstance(name, str) and name:
             descriptor["name"] = name
@@ -225,8 +238,32 @@ def _attached_file_descriptors(
             descriptor["size"] = size
 
         descriptors.append(descriptor)
-        seen.add(file_id)
+        seen.add((item_type, file_id))
     return descriptors
+
+
+# Backward-compatible name for callers/tests that only care about files.
+_attached_file_descriptors = _attached_resource_descriptors
+
+
+def _configured_paperqa_assistants(value: str) -> set[str]:
+    return {
+        assistant_id.strip()
+        for assistant_id in value.split(",")
+        if assistant_id.strip()
+    }
+
+
+def _paperqa_enabled(
+    assistant_id: str | None,
+    is_guest: bool,
+    configured_ids: str,
+) -> bool:
+    return bool(
+        assistant_id
+        and not is_guest
+        and assistant_id in _configured_paperqa_assistants(configured_ids)
+    )
 
 
 def _request_public_base_url(request: object | None) -> str:
@@ -371,6 +408,13 @@ class Pipe:
                 "own copy is also unset (dev-only; see example.env)."
             ),
         )
+        PAPERQA_ASSISTANT_IDS: str = Field(
+            default="welcome-assistant,sea,mars-assistant",
+            description=(
+                "Comma-separated Assistant IDs for which attached Knowledge "
+                "collections and direct PDFs are handled exclusively by PaperQA2."
+            ),
+        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -421,6 +465,11 @@ class Pipe:
         # approval; treat anyone without a full "user"/"admin" role as guest,
         # matching this repo's existing guest-vs-registered distinction.
         is_guest = user.get("role") not in ("user", "admin")
+        paperqa_enabled = _paperqa_enabled(
+            assistant_id,
+            is_guest,
+            self.valves.PAPERQA_ASSISTANT_IDS,
+        )
 
         payload = {
             # Keep Redis conversation history separate when the same Open
@@ -433,7 +482,8 @@ class Pipe:
             "model": self.valves.MODEL,
             "assistant_id": assistant_id,
             "assistant_system_prompt": assistant_system_prompt,
-            "attached_files": _attached_file_descriptors(
+            "paperqa_enabled": paperqa_enabled,
+            "attached_files": _attached_resource_descriptors(
                 __files__,
                 __metadata__,
             ),

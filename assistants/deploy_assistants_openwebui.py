@@ -63,6 +63,12 @@ def load_manifest(path: Path) -> dict[str, Any]:
                     f"Assistant manifest entry requires a non-empty {field!r}"
                 )
         assistant_id = assistant["id"]
+        if "paperqa_enabled" in assistant and not isinstance(
+            assistant["paperqa_enabled"], bool
+        ):
+            raise RuntimeError(
+                "Assistant paperqa_enabled must be true or false"
+            )
         if assistant_id in seen:
             raise RuntimeError(f"Duplicate Assistant ID {assistant_id!r}")
         seen.add(assistant_id)
@@ -175,14 +181,23 @@ def official_assistant_payload(
             "profile_image_url": png_data_uri(manifest_path, definition["logo"]),
             "tags": [{"name": name} for name in definition.get("tags", [])],
             "official_assistant": True,
+            "paperqa_enabled": bool(definition.get("paperqa_enabled", False)),
         }
     )
+    capabilities = dict(meta.get("capabilities") or {})
+    if definition.get("paperqa_enabled"):
+        # The collection descriptors still reach the Pipe in legacy mode, but
+        # Open WebUI must not inject its own RAG context for the same PDFs.
+        capabilities["file_context"] = False
+    meta["capabilities"] = capabilities
     params = dict((existing or {}).get("params") or {})
     params["system"] = read_relative_text(
         manifest_path,
         definition["prompt"],
         bool(definition.get("prompt_ends_with_newline")),
     )
+    if definition.get("paperqa_enabled"):
+        params["function_calling"] = "legacy"
     return {
         "id": definition["id"],
         "base_model_id": base_model_id,

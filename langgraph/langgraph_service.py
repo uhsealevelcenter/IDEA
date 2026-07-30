@@ -139,6 +139,7 @@ class ChatRequest(BaseModel):
     assistant_system_prompt: Optional[str] = None
     attached_files: list[dict[str, Any]] = Field(default_factory=list)
     openwebui_authorization: Optional[str] = None
+    paperqa_enabled: bool = False
 
 
 class ChatRunRequest(BaseModel):
@@ -152,6 +153,7 @@ class ChatRunRequest(BaseModel):
     assistant_system_prompt: Optional[str] = None
     attached_files: list[dict[str, Any]] = Field(default_factory=list)
     openwebui_authorization: Optional[str] = None
+    paperqa_enabled: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -171,6 +173,7 @@ def _run_chat_job(
     assistant_system_prompt: Optional[str] = None,
     attached_files: Optional[list[dict[str, Any]]] = None,
     openwebui_authorization: Optional[str] = None,
+    paperqa_enabled: bool = False,
 ):
     """Background job to execute chat and stream events to Redis"""
     session_key = f"{user_id}:{session_id}"
@@ -199,6 +202,7 @@ def _run_chat_job(
             assistant_system_prompt=assistant_system_prompt,
             attached_files=attached_files,
             openwebui_authorization=openwebui_authorization,
+            paperqa_enabled=paperqa_enabled,
         )
         
         stored_messages = redis_client.get(f"langgraph_messages:{session_key}")
@@ -281,6 +285,7 @@ async def start_chat_run(request: ChatRunRequest):
             "assistant_system_prompt": request.assistant_system_prompt,
             "attached_files": request.attached_files,
             "openwebui_authorization": request.openwebui_authorization,
+            "paperqa_enabled": request.paperqa_enabled,
         },
         daemon=True,
     )
@@ -343,6 +348,7 @@ async def chat_endpoint(request: ChatRequest):
             assistant_system_prompt=request.assistant_system_prompt,
             attached_files=request.attached_files,
             openwebui_authorization=request.openwebui_authorization,
+            paperqa_enabled=request.paperqa_enabled,
         )
         
         # Restore conversation history from Redis if requested

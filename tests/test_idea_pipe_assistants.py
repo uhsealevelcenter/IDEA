@@ -148,8 +148,17 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(
             descriptors,
             [
-                {"id": "file-1", "name": "data.nc"},
-                {"id": "image-2", "name": "map.png", "size": 42},
+                {"id": "file-1", "type": "file", "name": "data.nc"},
+                {
+                    "id": "knowledge-1",
+                    "type": "collection",
+                },
+                {
+                    "id": "image-2",
+                    "type": "image",
+                    "name": "map.png",
+                    "size": 42,
+                },
             ],
         )
 
@@ -236,11 +245,47 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(payload["message"], "Analyze Honolulu.")
         self.assertEqual(
             payload["attached_files"],
-            [{"id": "file-123", "name": "observations.nc"}],
+            [
+                {
+                    "id": "file-123",
+                    "type": "file",
+                    "name": "observations.nc",
+                }
+            ],
         )
+        self.assertTrue(payload["paperqa_enabled"])
         self.assertEqual(
             payload["openwebui_authorization"],
             "Bearer user-session-token",
+        )
+
+    def test_paperqa_is_enabled_for_official_assistants_but_disabled_for_guests(self):
+        pipe = idea_pipe.Pipe()
+        for assistant_id in (
+            "welcome-assistant",
+            "sea",
+            "mars-assistant",
+        ):
+            self.assertTrue(
+                idea_pipe._paperqa_enabled(
+                    assistant_id,
+                    False,
+                    pipe.valves.PAPERQA_ASSISTANT_IDS,
+                )
+            )
+        self.assertFalse(
+            idea_pipe._paperqa_enabled(
+                "sea",
+                True,
+                pipe.valves.PAPERQA_ASSISTANT_IDS,
+            )
+        )
+        self.assertTrue(
+            idea_pipe._paperqa_enabled(
+                "welcome-assistant",
+                False,
+                pipe.valves.PAPERQA_ASSISTANT_IDS,
+            )
         )
 
     def test_sanitizes_model_authored_sandbox_links(self):

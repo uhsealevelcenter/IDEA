@@ -59,6 +59,7 @@ class ConversationOrchestrator:
         assistant_system_prompt: Optional[str] = None,
         attached_files: Optional[list[dict[str, Any]]] = None,
         openwebui_authorization: Optional[str] = None,
+        paperqa_enabled: bool = False,
     ):
         self.user_id = user_id
         # Passed through to TerminalAgent for LiteLLM per-end-user spend
@@ -75,6 +76,7 @@ class ConversationOrchestrator:
         self.assistant_system_prompt = assistant_system_prompt
         self.attached_files = list(attached_files or [])
         self.openwebui_authorization = openwebui_authorization
+        self.paperqa_enabled = bool(paperqa_enabled and not is_guest)
         
         # Conversation management
         self.conversation_history: list[dict] = []
@@ -153,6 +155,8 @@ class ConversationOrchestrator:
                 assistant_system_prompt=self.assistant_system_prompt,
                 attached_files=self.attached_files,
                 openwebui_authorization=self.openwebui_authorization,
+                is_guest=self.is_guest,
+                paperqa_enabled=self.paperqa_enabled,
             )
         
         # Stream agent execution in real time.

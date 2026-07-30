@@ -44,7 +44,12 @@ from utils.skill_loader import (
     make_view_skill_tool,
     summarize_skill_result,
 )
-from utils.tools import DATA_TOOLS, make_get_climate_indices_tool
+from utils.pqa.openwebui_library import prepare_paperqa_library
+from utils.tools import (
+    DATA_TOOLS,
+    make_get_climate_indices_tool,
+    make_query_knowledge_base_tool,
+)
 from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
 from progress import (
     progress_chunk,
@@ -206,6 +211,8 @@ class TerminalAgent:
         assistant_system_prompt: Optional[str] = None,
         attached_files: Optional[list[dict[str, Any]]] = None,
         openwebui_authorization: Optional[str] = None,
+        is_guest: bool = False,
+        paperqa_enabled: bool = False,
     ):
         self.session_id = session_id
         self.user_id = user_id
@@ -220,6 +227,9 @@ class TerminalAgent:
         self.assistant_system_prompt = assistant_system_prompt
         self.attached_files = list(attached_files or [])
         self.openwebui_authorization = openwebui_authorization
+        self.is_guest = is_guest
+        self.paperqa_enabled = bool(paperqa_enabled and not is_guest)
+        self.paperqa_scope_id: str | None = None
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
         # The sandbox/shell is keyed by user_id (stable across page reloads
@@ -286,6 +296,16 @@ class TerminalAgent:
                 expected_size=len(data),
             )
         )
+        self.query_knowledge_base_tool = None
+        if getattr(self, "paperqa_enabled", False):
+            self.query_knowledge_base_tool = make_query_knowledge_base_tool(
+                lambda: self.paperqa_scope_id,
+                session_id=self.session_id,
+                end_user_id=(
+                    self.user_email or str(self.user_id)
+                ).strip(),
+                publish_media=self._publish_paperqa_media,
+            )
         self.all_tools = [
             self.run_terminal_tool,
             self.write_file_tool,
@@ -298,6 +318,8 @@ class TerminalAgent:
             self.get_climate_indices_tool,
             *DATA_TOOLS,
         ]
+        if self.query_knowledge_base_tool is not None:
+            self.all_tools.append(self.query_knowledge_base_tool)
         self.tools_by_name = {t.name: t for t in self.all_tools}
         
         # Initialize LLM with tools
@@ -334,10 +356,38 @@ class TerminalAgent:
             (base64_content, format) tuple, e.g., (base64_str, "png")
         """
         image_data = read_file_bytes(filepath, session_id=self.sandbox_id)
-        
+
         b64_content = base64.b64encode(image_data).decode('utf-8')
         ext = Path(filepath).suffix.lower().lstrip('.')
         return b64_content, ext
+
+    def _publish_paperqa_media(self, source: Path) -> str:
+        """Copy trusted PaperQA media into this user's synced /outputs tree."""
+        session_hash = hashlib.sha256(
+            self.session_id.encode("utf-8")
+        ).hexdigest()[:16]
+        filename = _safe_input_component(source.name, "paperqa-image.png")
+        destination = f"{OUTPUTS_DIR}/paperqa/{session_hash}/{filename}"
+        expected_size = source.stat().st_size
+
+        def chunks() -> Iterator[bytes]:
+            with source.open("rb") as input_file:
+                while chunk := input_file.read(INPUT_SYNC_CHUNK_BYTES):
+                    yield chunk
+
+        written = write_file_stream(
+            destination,
+            chunks(),
+            session_id=self.sandbox_id,
+            expected_size=expected_size,
+            timeout=INPUT_SYNC_TIMEOUT_SECONDS,
+        )
+        if written != expected_size:
+            raise RuntimeError(
+                f"PaperQA media copy was incomplete: expected "
+                f"{expected_size} bytes, wrote {written}."
+            )
+        return destination
 
     def _model_image_part(self, filepath: str) -> dict:
         """Read and validate one sandbox image for a multimodal model call."""
@@ -439,6 +489,11 @@ class TerminalAgent:
         seen: set[str] = set()
 
         for descriptor in attached_files:
+            if (
+                isinstance(descriptor, dict)
+                and descriptor.get("type") == "collection"
+            ):
+                continue
             file_id = descriptor.get("id") if isinstance(descriptor, dict) else None
             if not isinstance(file_id, str) or not file_id or file_id in seen:
                 continue
@@ -910,6 +965,23 @@ class TerminalAgent:
                 )
 
         self._shown_image_hashes.clear()
+        if getattr(self, "paperqa_enabled", False):
+            emit_progress(
+                "syncing_paperqa",
+                "Preparing the attached literature collection…",
+            )
+            library = prepare_paperqa_library(
+                user_id=str(self.user_id),
+                assistant_id=str(self.assistant_id or "assistant"),
+                session_id=self.session_id,
+                resources=self.attached_files,
+                authorization=self.openwebui_authorization or "",
+            )
+            self.paperqa_scope_id = library.scope_id
+            emit_progress(
+                "syncing_paperqa",
+                f"PaperQA literature is ready ({library.paper_count} PDFs)",
+            )
         if getattr(self, "attached_files", None):
             emit_progress("syncing_inputs", "Preparing attached files…")
             synced_inputs = self._sync_inputs_from_openwebui()

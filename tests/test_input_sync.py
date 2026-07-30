@@ -133,6 +133,19 @@ class InputSyncTests(unittest.TestCase):
         get.assert_not_called()
         write.assert_not_called()
 
+    def test_collection_descriptors_are_reserved_for_paperqa(self):
+        with (
+            patch.object(terminal_agent.requests, "get") as get,
+            patch.object(terminal_agent, "write_file_stream") as write,
+        ):
+            synced = self.make_agent([
+                {"type": "collection", "id": "literature"}
+            ])._sync_inputs_from_openwebui()
+
+        self.assertEqual(synced, [])
+        get.assert_not_called()
+        write.assert_not_called()
+
     def test_rejects_metadata_size_above_configured_limit(self):
         metadata_response = self.response(json_data={
             "id": "file-123",
