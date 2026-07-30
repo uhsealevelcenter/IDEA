@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import time as _time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -32,6 +33,29 @@ _docs_cache: dict = {}
 PQA_MEDIA_ROOT = Path(
     os.getenv("PQA_MEDIA_ROOT", "/app/data/.pqa/media")
 )
+
+_VISUAL_MEDIA_PATTERN = re.compile(
+    r"\b(?:figures?|tables?|diagrams?|images?|plots?|charts?|maps?|"
+    r"photographs?|illustrations?|panels?)\b|\bfigs?\.",
+    re.IGNORECASE,
+)
+
+
+def _selected_media_context_ids(query: str, session: Any) -> set[str]:
+    """Return cited context IDs when the question or answer concerns media."""
+    answer_parts = [
+        getattr(session, attribute, "")
+        for attribute in ("raw_answer", "answer", "formatted_answer")
+    ]
+    media_text = " ".join(
+        part for part in (query, *answer_parts) if isinstance(part, str)
+    )
+    if not _VISUAL_MEDIA_PATTERN.search(media_text):
+        return set()
+
+    # PaperQA computes used_contexts from context IDs cited in raw_answer.
+    # An empty set is not evidence that every retrieved context was used.
+    return set(getattr(session, "used_contexts", set()) or ())
 
 
 def _save_base64_image(data_url: str, output_dir: Path, prefix: str = "kb_figure") -> Optional[Path]:
@@ -129,7 +153,7 @@ async def _query_knowledge_base_async(
     session = await docs.aquery(query=query, settings=settings)
     print(f"[PQA] Query complete in {_time.perf_counter() - t_query:.2f}s.")
 
-    print("[PQA] Step 5: Extracting images from contexts...")
+    print("[PQA] Step 5: Selecting cited images from contexts...")
     static_dir = PQA_MEDIA_ROOT
     if session_id:
         session_key = hashlib.sha256(
@@ -141,10 +165,11 @@ async def _query_knowledge_base_async(
 
     saved_images = []
     seen_hashes: set = set()
-    used_context_ids = getattr(session, "used_contexts", set())
+    selected_context_ids = _selected_media_context_ids(query, session)
 
     for context in session.contexts:
-        is_used = context.id in used_context_ids if used_context_ids else True
+        if context.id not in selected_context_ids:
+            continue
 
         if not hasattr(context, "text") or not hasattr(context.text, "media"):
             continue
@@ -180,7 +205,7 @@ async def _query_knowledge_base_async(
                         "page": page_num,
                         "type": media_type,
                         "description": description,
-                        "used_in_answer": is_used,
+                        "used_in_answer": True,
                     })
                     print(f"[PQA] Saved: {saved_path.name} (page {page_num})")
             except Exception as e:
