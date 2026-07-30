@@ -37,6 +37,40 @@ from openwebui.configure_openwebui import (  # noqa: E402
 DEFAULT_MANIFEST = SCRIPT_DIR / "manifest.json"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
+# Keep the official Assistants' Workspace controls consistent while allowing
+# only capabilities that IDEA's Pipe owns or safely interoperates with.
+OFFICIAL_ASSISTANT_CAPABILITIES = {
+    "vision": True,
+    "file_upload": True,
+    "web_search": False,
+    "image_generation": False,
+    "code_interpreter": False,
+    "citations": True,
+    "status_updates": True,
+    "memory": False,
+    "builtin_tools": True,
+    "terminal": False,
+    "usage": False,
+}
+OFFICIAL_ASSISTANT_DEFAULT_FEATURE_IDS: list[str] = []
+OFFICIAL_ASSISTANT_BUILTIN_TOOLS = {
+    "time": True,
+    "memory": False,
+    "chats": False,
+    "notes": False,
+    "knowledge": False,
+    "files": False,
+    "channels": False,
+    "notifications": False,
+    "web_search": False,
+    "image_generation": False,
+    "code_interpreter": False,
+    "tasks": False,
+    "automations": False,
+    "calendar": False,
+    "subagents": False,
+}
+
 
 def load_manifest(path: Path) -> dict[str, Any]:
     manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -185,11 +219,16 @@ def official_assistant_payload(
         }
     )
     capabilities = dict(meta.get("capabilities") or {})
+    capabilities.update(OFFICIAL_ASSISTANT_CAPABILITIES)
     if definition.get("paperqa_enabled"):
         # The collection descriptors still reach the Pipe in legacy mode, but
         # Open WebUI must not inject its own RAG context for the same PDFs.
         capabilities["file_context"] = False
     meta["capabilities"] = capabilities
+    meta["defaultFeatureIds"] = list(
+        OFFICIAL_ASSISTANT_DEFAULT_FEATURE_IDS
+    )
+    meta["builtinTools"] = dict(OFFICIAL_ASSISTANT_BUILTIN_TOOLS)
     params = dict((existing or {}).get("params") or {})
     params["system"] = read_relative_text(
         manifest_path,

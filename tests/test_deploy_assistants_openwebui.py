@@ -164,6 +164,10 @@ class DeployAssistantsTests(unittest.TestCase):
             self.assertIn("read-only", prompt)
 
     def test_official_assistants_use_paperqa_without_native_openwebui_rag(self):
+        managed_capabilities = {
+            **deploy.OFFICIAL_ASSISTANT_CAPABILITIES,
+            "file_context": False,
+        }
         for definition in self.manifest["assistants"]:
             payload = deploy.official_assistant_payload(
                 self.manifest_path,
@@ -172,13 +176,36 @@ class DeployAssistantsTests(unittest.TestCase):
             )
 
             self.assertTrue(payload["meta"]["paperqa_enabled"])
-            self.assertFalse(
-                payload["meta"]["capabilities"]["file_context"]
+            self.assertEqual(
+                payload["meta"]["capabilities"],
+                managed_capabilities,
+            )
+            self.assertEqual(
+                payload["meta"]["defaultFeatureIds"],
+                [],
+            )
+            self.assertEqual(
+                payload["meta"]["builtinTools"],
+                deploy.OFFICIAL_ASSISTANT_BUILTIN_TOOLS,
             )
             self.assertEqual(
                 payload["params"]["function_calling"],
                 "legacy",
             )
+
+    def test_only_time_builtin_is_enabled(self):
+        self.assertTrue(
+            deploy.OFFICIAL_ASSISTANT_BUILTIN_TOOLS["time"]
+        )
+        self.assertFalse(
+            any(
+                enabled
+                for name, enabled in (
+                    deploy.OFFICIAL_ASSISTANT_BUILTIN_TOOLS.items()
+                )
+                if name != "time"
+            )
+        )
 
     def test_seed_mode_preserves_an_existing_assistant(self):
         existing = {

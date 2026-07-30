@@ -48,6 +48,16 @@ The script also:
 
 User-created Assistants are never modified or deleted by this script.
 
+Reconciliation also applies one shared Workspace feature policy to Welcome,
+SEA, and Mars. Vision, file upload, citations, status updates, and the
+Built-in Tools section are available. All Default Features remain off so
+Open WebUI does not run web search, image generation, or code interpretation
+ahead of IDEA's Pipe. Time & Calculation is the only enabled Open WebUI
+built-in; Knowledge Base, Files, Web Search, Code Interpreter, Image
+Generation, Memory, Chat History, Tasks, Sub-agents, Notes, Channels,
+Notifications, Automations, and Calendar remain visible but off to avoid
+duplicating IDEA/PaperQA or introducing side effects.
+
 An Assistant manifest entry may set `"paperqa_enabled": true`. Reconciliation
 then disables native Open WebUI file-context RAG for that Assistant and uses
 legacy function handling so its attached Knowledge collection descriptors
