@@ -48,6 +48,8 @@ class PaperQALibrary:
     collection_ids: tuple[str, ...]
     direct_file_ids: tuple[str, ...]
     paper_count: int
+    direct_scope_id: str | None = None
+    direct_file_names: tuple[str, ...] = ()
 
 
 def _opaque_id(prefix: str, *parts: Any) -> str:
@@ -187,6 +189,15 @@ def _metadata_fingerprint(metadata: dict) -> str:
     ).hexdigest()
 
 
+def _metadata_name(metadata: dict) -> str:
+    meta = metadata.get("meta") or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    return str(
+        meta.get("name") or metadata.get("filename") or ""
+    ).strip()
+
+
 def _state_path(scope_id: str) -> Path:
     return LIBRARY_STATE_ROOT / f"{scope_id}.json"
 
@@ -299,6 +310,7 @@ def _sync_scope_unlocked(
         if not _is_pdf(metadata):
             continue
         fingerprint = _metadata_fingerprint(metadata)
+        original_name = _metadata_name(metadata)
         filename = f"{hashlib.sha256(file_id.encode()).hexdigest()}.pdf"
         destination = papers_dir / filename
         old = previous.get(file_id) if isinstance(previous, dict) else None
@@ -308,7 +320,10 @@ def _sync_scope_unlocked(
             and old.get("filename") == filename
             and destination.is_file()
         ):
-            desired[file_id] = old
+            desired[file_id] = {
+                **old,
+                "name": original_name or old.get("name", ""),
+            }
             continue
 
         size, content_hash = _download_pdf(
@@ -319,6 +334,7 @@ def _sync_scope_unlocked(
             "fingerprint": fingerprint,
             "sha256": content_hash,
             "size": size,
+            "name": original_name,
         }
 
     if not remove_stale and isinstance(previous, dict):
@@ -479,6 +495,12 @@ def prepare_paperqa_library(
             collection_ids=tuple(collection_ids),
             direct_file_ids=tuple(sorted(direct_state)),
             paper_count=len(combined),
+            direct_scope_id=chat_scope if direct_state else None,
+            direct_file_names=tuple(sorted({
+                str(record.get("name"))
+                for record in direct_state.values()
+                if isinstance(record, dict) and record.get("name")
+            })),
         )
 
     return PaperQALibrary(
@@ -486,4 +508,6 @@ def prepare_paperqa_library(
         collection_ids=tuple(collection_ids),
         direct_file_ids=(),
         paper_count=len(collection_state),
+        direct_scope_id=None,
+        direct_file_names=(),
     )

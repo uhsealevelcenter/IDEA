@@ -123,6 +123,11 @@ class PaperQAOpenWebUILibraryTests(unittest.TestCase):
         self.assertEqual(first.paper_count, 2)
         self.assertEqual(second.paper_count, 2)
         self.assertEqual(second.direct_file_ids, ("direct-pdf",))
+        self.assertIsNotNone(second.direct_scope_id)
+        self.assertEqual(
+            second.direct_file_names,
+            ("supplement.pdf",),
+        )
         for call in get.call_args_list:
             self.assertEqual(
                 call.kwargs["headers"],
@@ -147,6 +152,8 @@ class PaperQAOpenWebUILibraryTests(unittest.TestCase):
         self.assertNotEqual(first.scope_id, isolated.scope_id)
         self.assertEqual(isolated.paper_count, 1)
         self.assertEqual(isolated.direct_file_ids, ())
+        self.assertIsNone(isolated.direct_scope_id)
+        self.assertEqual(isolated.direct_file_names, ())
 
     def test_rejects_missing_user_authorization(self):
         with self.assertRaisesRegex(

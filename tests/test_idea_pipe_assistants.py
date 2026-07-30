@@ -198,11 +198,36 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             "messages": [
                 {"role": "system", "content": "You are SEA."},
                 {"role": "user", "content": "Analyze Honolulu."},
-            ]
+            ],
+            # OpenWebUI's legacy model-Knowledge handling injects the
+            # persistent collection here, while the direct PDF also arrives
+            # separately through __files__.
+            "files": [
+                {
+                    "type": "file",
+                    "id": "file-123",
+                    "name": "article.pdf",
+                    "content_type": "application/pdf",
+                },
+            ],
         }
         metadata = {
             "chat_id": "chat-123",
-            "model": {"id": "sea", "name": "SEA"},
+            "model": {
+                "id": "sea",
+                "name": "SEA",
+                "info": {
+                    "meta": {
+                        "knowledge": [
+                            {
+                                "type": "collection",
+                                "id": "knowledge-123",
+                                "name": "Literature",
+                            }
+                        ]
+                    }
+                },
+            },
         }
 
         async def collect():
@@ -219,7 +244,8 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                         {
                             "type": "file",
                             "id": "file-123",
-                            "name": "observations.nc",
+                            "name": "article.pdf",
+                            "content_type": "application/pdf",
                         }
                     ],
                     __metadata__=metadata,
@@ -249,8 +275,14 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                 {
                     "id": "file-123",
                     "type": "file",
-                    "name": "observations.nc",
-                }
+                    "name": "article.pdf",
+                    "content_type": "application/pdf",
+                },
+                {
+                    "id": "knowledge-123",
+                    "type": "collection",
+                    "name": "Literature",
+                },
             ],
         )
         self.assertTrue(payload["paperqa_enabled"])

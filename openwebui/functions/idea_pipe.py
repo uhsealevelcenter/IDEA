@@ -194,17 +194,36 @@ def _request_authorization(request: object | None) -> str | None:
 def _attached_resource_descriptors(
     files: list[dict] | None,
     metadata: dict | None,
+    body_files: list[dict] | None = None,
 ) -> list[dict]:
     """Return safe file/collection IDs without trusting client paths.
 
     Collection descriptors must survive the Pipe boundary so LangGraph can
     resolve their current members through Open WebUI using the current user's
     credential. LangGraph, not the model, performs that authorization.
+
+    Open WebUI supplies direct chat attachments through ``__files__`` and
+    injects an Assistant's persistent Knowledge collections into
+    request metadata and, transiently, ``body["files"]`` in legacy
+    function-calling mode, so all sources are required. LangGraph still
+    resolves every opaque ID through Open WebUI using the current user's
+    credential.
     """
     candidates = list(files or [])
+    candidates.extend(body_files or [])
     user_message = (metadata or {}).get("user_message")
     if isinstance(user_message, dict):
         candidates.extend(user_message.get("files") or [])
+    model = (metadata or {}).get("model")
+    if isinstance(model, dict):
+        model_info = model.get("info")
+        model_meta = (
+            model_info.get("meta")
+            if isinstance(model_info, dict)
+            else model.get("meta")
+        )
+        if isinstance(model_meta, dict):
+            candidates.extend(model_meta.get("knowledge") or [])
 
     descriptors: list[dict] = []
     seen: set[tuple[str, str]] = set()
@@ -486,6 +505,7 @@ class Pipe:
             "attached_files": _attached_resource_descriptors(
                 __files__,
                 __metadata__,
+                body.get("files"),
             ),
             # Used only by langgraph's final /outputs upload. It is never
             # added to model messages or persisted conversation history.

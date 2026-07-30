@@ -230,6 +230,8 @@ class TerminalAgent:
         self.is_guest = is_guest
         self.paperqa_enabled = bool(paperqa_enabled and not is_guest)
         self.paperqa_scope_id: str | None = None
+        self.paperqa_direct_scope_id: str | None = None
+        self.paperqa_direct_file_names: tuple[str, ...] = ()
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
         # The sandbox/shell is keyed by user_id (stable across page reloads
@@ -305,6 +307,10 @@ class TerminalAgent:
                     self.user_email or str(self.user_id)
                 ).strip(),
                 publish_media=self._publish_paperqa_media,
+                direct_scope_getter=lambda: self.paperqa_direct_scope_id,
+                direct_file_names_getter=(
+                    lambda: self.paperqa_direct_file_names
+                ),
             )
         self.all_tools = [
             self.run_terminal_tool,
@@ -978,6 +984,8 @@ class TerminalAgent:
                 authorization=self.openwebui_authorization or "",
             )
             self.paperqa_scope_id = library.scope_id
+            self.paperqa_direct_scope_id = library.direct_scope_id
+            self.paperqa_direct_file_names = library.direct_file_names
             emit_progress(
                 "syncing_paperqa",
                 f"PaperQA literature is ready ({library.paper_count} PDFs)",

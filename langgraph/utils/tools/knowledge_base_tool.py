@@ -39,6 +39,42 @@ _VISUAL_MEDIA_PATTERN = re.compile(
     r"photographs?|illustrations?|panels?)\b|\bfigs?\.",
     re.IGNORECASE,
 )
+_DIRECT_ATTACHMENT_PATTERN = re.compile(
+    r"\b(?:attached|attachment|attachments|uploaded|upload)\b|"
+    r"\bthis\s+(?:pdf|paper|document|file)\b|"
+    r"\bthe\s+(?:attached|uploaded)\s+(?:pdf|paper|document|file)\b",
+    re.IGNORECASE,
+)
+_MIXED_SOURCE_PATTERN = re.compile(
+    r"\b(?:compare|comparison|contrast|both|versus)\b|\bvs\.",
+    re.IGNORECASE,
+)
+
+
+def _select_knowledge_scope(
+    query: str,
+    combined_scope_id: str | None,
+    direct_scope_id: str | None,
+    direct_file_names: tuple[str, ...],
+) -> str | None:
+    """Route attachment-specific queries away from collection documents."""
+    if not direct_scope_id or _MIXED_SOURCE_PATTERN.search(query):
+        return combined_scope_id
+
+    normalized_query = query.casefold()
+    for filename in direct_file_names:
+        normalized_name = filename.casefold().strip()
+        if not normalized_name:
+            continue
+        if (
+            normalized_name in normalized_query
+            or Path(normalized_name).stem in normalized_query
+        ):
+            return direct_scope_id
+
+    if _DIRECT_ATTACHMENT_PATTERN.search(query):
+        return direct_scope_id
+    return combined_scope_id
 
 
 def _selected_media_context_ids(query: str, session: Any) -> set[str]:
@@ -227,6 +263,10 @@ def make_query_knowledge_base_tool(
     session_id: str,
     end_user_id: str,
     publish_media: Callable[[Path], str] | None = None,
+    direct_scope_getter: Callable[[], str | None] | None = None,
+    direct_file_names_getter: (
+        Callable[[], tuple[str, ...]] | None
+    ) = None,
 ):
     """Create a PaperQA tool bound to trusted server-side identity."""
 
@@ -242,7 +282,16 @@ def make_query_knowledge_base_tool(
         Args:
             query: The research question to ask about the attached papers.
         """
-        scope_id = scope_getter()
+        scope_id = _select_knowledge_scope(
+            query,
+            scope_getter(),
+            direct_scope_getter() if direct_scope_getter else None,
+            (
+                direct_file_names_getter()
+                if direct_file_names_getter
+                else ()
+            ),
+        )
         if not scope_id:
             return json.dumps({
                 "answer": (

@@ -10,12 +10,57 @@ sys.path.insert(0, str(LANGGRAPH_DIR))
 
 from utils.pqa.my_pqa_settings import create_pqa_settings  # noqa: E402
 from utils.tools.knowledge_base_tool import (  # noqa: E402
+    _select_knowledge_scope,
     _selected_media_context_ids,
     make_query_knowledge_base_tool,
 )
 
 
 class PaperQAToolTests(unittest.TestCase):
+    def test_attached_file_query_uses_direct_scope(self):
+        self.assertEqual(
+            _select_knowledge_scope(
+                "Summarize the attached Test_Paper.pdf.",
+                "combined",
+                "direct",
+                ("Test_Paper.pdf",),
+            ),
+            "direct",
+        )
+
+    def test_named_direct_file_uses_direct_scope(self):
+        self.assertEqual(
+            _select_knowledge_scope(
+                "What are the conclusions of Test_Paper?",
+                "combined",
+                "direct",
+                ("Test_Paper.pdf",),
+            ),
+            "direct",
+        )
+
+    def test_literature_query_uses_combined_scope(self):
+        self.assertEqual(
+            _select_knowledge_scope(
+                "Summarize the IDEA literature article.",
+                "combined",
+                "direct",
+                ("Test_Paper.pdf",),
+            ),
+            "combined",
+        )
+
+    def test_comparison_query_keeps_both_sources(self):
+        self.assertEqual(
+            _select_knowledge_scope(
+                "Compare the attached Test_Paper.pdf with the IDEA article.",
+                "combined",
+                "direct",
+                ("Test_Paper.pdf",),
+            ),
+            "combined",
+        )
+
     def test_ordinary_query_does_not_select_images(self):
         session = SimpleNamespace(
             raw_answer="Sea level rose [context-1].",
