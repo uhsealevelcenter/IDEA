@@ -159,8 +159,10 @@ cython_debug/
 
 *.pkl
 *.json
+!assistants/manifest.json
 *.csv
 *.png
+!assistants/assets/*.png
 
 /static/
 

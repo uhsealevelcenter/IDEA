@@ -10,7 +10,7 @@ from typing import Optional, Any
 from datetime import datetime
 from fastapi import Depends, FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import redis
 
 from multi_agent import ConversationOrchestrator
@@ -131,10 +131,15 @@ class ChatRequest(BaseModel):
     user_email: Optional[str] = None
     is_guest: bool
     message: str
-    model: Optional[str] = "gpt-5.5"
+    model: Optional[str] = "gpt-5.6-sol"
     temperature: Optional[float] = None
     max_iterations: Optional[int] = 20
     restore_history: Optional[bool] = True
+    assistant_id: Optional[str] = None
+    assistant_system_prompt: Optional[str] = None
+    attached_files: list[dict[str, Any]] = Field(default_factory=list)
+    openwebui_authorization: Optional[str] = None
+    paperqa_enabled: bool = False
 
 
 class ChatRunRequest(BaseModel):
@@ -143,7 +148,12 @@ class ChatRunRequest(BaseModel):
     user_email: Optional[str] = None
     is_guest: bool
     messages: list[dict[str, Any]]
-    model: Optional[str] = "gpt-5.5"
+    model: Optional[str] = "gpt-5.6-sol"
+    assistant_id: Optional[str] = None
+    assistant_system_prompt: Optional[str] = None
+    attached_files: list[dict[str, Any]] = Field(default_factory=list)
+    openwebui_authorization: Optional[str] = None
+    paperqa_enabled: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -159,6 +169,11 @@ def _run_chat_job(
     messages: list[dict[str, Any]],
     model: str,
     user_email: Optional[str] = None,
+    assistant_id: Optional[str] = None,
+    assistant_system_prompt: Optional[str] = None,
+    attached_files: Optional[list[dict[str, Any]]] = None,
+    openwebui_authorization: Optional[str] = None,
+    paperqa_enabled: bool = False,
 ):
     """Background job to execute chat and stream events to Redis"""
     session_key = f"{user_id}:{session_id}"
@@ -182,7 +197,12 @@ def _run_chat_job(
             model=model,
             temperature=None,
             max_iterations=20,
-            user_email=user_email
+            user_email=user_email,
+            assistant_id=assistant_id,
+            assistant_system_prompt=assistant_system_prompt,
+            attached_files=attached_files,
+            openwebui_authorization=openwebui_authorization,
+            paperqa_enabled=paperqa_enabled,
         )
         
         stored_messages = redis_client.get(f"langgraph_messages:{session_key}")
@@ -261,6 +281,11 @@ async def start_chat_run(request: ChatRunRequest):
             "is_guest": request.is_guest,
             "messages": request.messages,
             "model": request.model,
+            "assistant_id": request.assistant_id,
+            "assistant_system_prompt": request.assistant_system_prompt,
+            "attached_files": request.attached_files,
+            "openwebui_authorization": request.openwebui_authorization,
+            "paperqa_enabled": request.paperqa_enabled,
         },
         daemon=True,
     )
@@ -318,7 +343,12 @@ async def chat_endpoint(request: ChatRequest):
             model=request.model,
             temperature=request.temperature,
             max_iterations=request.max_iterations,
-            user_email=request.user_email
+            user_email=request.user_email,
+            assistant_id=request.assistant_id,
+            assistant_system_prompt=request.assistant_system_prompt,
+            attached_files=request.attached_files,
+            openwebui_authorization=request.openwebui_authorization,
+            paperqa_enabled=request.paperqa_enabled,
         )
         
         # Restore conversation history from Redis if requested

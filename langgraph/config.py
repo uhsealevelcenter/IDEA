@@ -37,9 +37,9 @@ INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
 # Originally defined in: tools/persistent_terminal.py
 # Number of lines kept from the start and end of a command's output when
 # it's sent back to the LLM inline; everything in between is elided with
-# a "[N line(s) omitted]" marker. The full, untruncated output is always
-# saved to a temp file regardless of this setting - see
-# TEMP_OUTPUT_DIR below and read_output_range_tool.
+# a "[N line(s) omitted]" marker. When this truncates the inline result,
+# the full output is saved to a temp file - see TEMP_OUTPUT_DIR below and
+# read_output_range_tool.
 OUTPUT_HEAD_TAIL_LINES = 10
 
 # Originally defined in: tools/persistent_terminal.py
@@ -50,8 +50,8 @@ OUTPUT_HEAD_TAIL_LINES = 10
 MAX_OUTPUT_TOKENS = 5000
 
 # Originally defined in: tools/persistent_terminal.py (as _TEMP_OUTPUT_DIR)
-# Directory inside the sandbox where each run_terminal_tool call's full,
-# untruncated output is saved as a temp file - readable afterward via
+# Directory inside the sandbox where truncated run_terminal_tool calls'
+# full output is saved as a temp file - readable afterward via
 # read_output_range_tool(filepath, offset, n_limit).
 TEMP_OUTPUT_DIR = "/tmp/idea_command_outputs"
 

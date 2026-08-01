@@ -4,6 +4,7 @@ A general-purpose AI agent with access to a persistent terminal session.
 """
 
 import os
+import re
 import time
 import uuid
 import base64
@@ -11,17 +12,50 @@ import hashlib
 import requests
 import threading
 import queue
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from typing import Dict, Any, Optional, Callable, Iterable, Iterator
 from pathlib import Path
+from urllib.parse import quote
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from tools.persistent_terminal import make_agent_tools, close_terminal, read_file_bytes, list_files, run_python
-from utils.tools import DATA_TOOLS
+from tools.persistent_terminal import (
+    make_agent_tools,
+    close_terminal,
+    read_file_bytes,
+    file_exists,
+    list_file_metadata,
+    run_python,
+    write_file_stream,
+)
+from utils.output_sync import (
+    changed_output_paths,
+    discover_html_output_references,
+    is_html_output,
+    referenced_output_paths,
+)
+from utils.artifact_registry import ArtifactRegistry
+from utils.skill_loader import (
+    BuiltinSkillLoader,
+    OpenWebUISkillLoader,
+    make_view_skill_tool,
+    summarize_skill_result,
+)
+from utils.pqa.openwebui_library import prepare_paperqa_library
+from utils.tools import (
+    DATA_TOOLS,
+    make_get_climate_indices_tool,
+    make_query_knowledge_base_tool,
+)
 from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
+from progress import (
+    progress_chunk,
+    tool_call_chunk_names,
+    tool_status_description,
+)
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
 
@@ -31,7 +65,132 @@ SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "utils" / "system_prompt.md"
 # TerminalAgent._sync_outputs_to_openwebui.
 OUTPUTS_DIR = "/outputs"
 OPENWEBUI_BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "http://openwebui:8080").rstrip("/")
-OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
+OUTPUT_SYNC_TIMEOUT_SECONDS = float(os.getenv("OUTPUT_SYNC_TIMEOUT_SECONDS", "30"))
+OUTPUT_SYNC_MAX_WORKERS = max(1, int(os.getenv("OUTPUT_SYNC_MAX_WORKERS", "4")))
+INPUTS_DIR = "/workspace/uploads"
+INPUT_SYNC_TIMEOUT_SECONDS = float(os.getenv("INPUT_SYNC_TIMEOUT_SECONDS", "120"))
+INPUT_SYNC_MAX_FILE_BYTES = int(
+    os.getenv("INPUT_SYNC_MAX_FILE_BYTES", str(1024 * 1024 * 1024))
+)
+INPUT_SYNC_CHUNK_BYTES = 1024 * 1024
+VISION_MAX_IMAGE_BYTES = int(
+    os.getenv("VISION_MAX_IMAGE_BYTES", str(20 * 1024 * 1024))
+)
+VISION_MAX_IMAGES_PER_TURN = max(
+    1,
+    int(os.getenv("VISION_MAX_IMAGES_PER_TURN", "8")),
+)
+VISION_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+def _safe_input_component(value: str, fallback: str, max_length: int = 180) -> str:
+    """Produce one non-traversing, shell-friendly sandbox path component."""
+    basename = str(value or "").replace("\\", "/").rsplit("/", 1)[-1]
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", basename).strip("._")
+    if not sanitized:
+        sanitized = fallback
+    return sanitized[:max_length]
+
+
+def _input_sandbox_path(file_id: str, filename: str) -> str:
+    safe_id = _safe_input_component(file_id, "", max_length=96)
+    if not safe_id or safe_id != file_id:
+        safe_id = hashlib.sha256(file_id.encode("utf-8")).hexdigest()[:32]
+    safe_name = _safe_input_component(filename, "upload")
+    return f"{INPUTS_DIR}/{safe_id}/{safe_name}"
+
+
+def _attached_files_context(synced_files: list[dict]) -> str:
+    if not synced_files:
+        return ""
+    lines = [
+        "Files attached by the user are available at these exact private "
+        "sandbox paths:"
+    ]
+    lines.extend(
+        f"- `{item['sandbox_path']}`"
+        for item in synced_files
+    )
+    lines.append(
+        "Use these exact paths for code and analysis. Keep derived working "
+        "files under /workspace and user-facing deliverables under /outputs."
+    )
+    return "\n".join(lines)
+
+
+def _detect_model_image_mime(data: bytes) -> str | None:
+    """Recognize image formats accepted by the configured vision model."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if (
+        len(data) >= 12
+        and data.startswith(b"RIFF")
+        and data[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+    return None
+
+
+def _is_model_image_candidate(item: dict) -> bool:
+    content_type = str(item.get("content_type") or "").lower()
+    if content_type.startswith("image/"):
+        return True
+    return Path(str(item.get("name") or "")).suffix.lower() in (
+        VISION_IMAGE_EXTENSIONS
+    )
+
+
+def _safe_message_log_content(message: object) -> str:
+    """Summarize multimodal messages without logging raw image data."""
+    content = getattr(message, "content", "")
+    if not isinstance(content, list):
+        return str(content)
+    text_chars = sum(
+        len(str(part.get("text", "")))
+        for part in content
+        if isinstance(part, dict)
+        and part.get("type") in {"text", "input_text"}
+    )
+    image_count = sum(
+        1
+        for part in content
+        if isinstance(part, dict)
+        and part.get("type") in {"image_url", "input_image"}
+    )
+    return (
+        f"[multimodal message: {text_chars} text characters, "
+        f"{image_count} image(s); image data omitted from logs]"
+    )
+
+
+def compose_system_prompt(
+    base_prompt: str,
+    assistant_system_prompt: Optional[str] = None,
+    builtin_skills_manifest: Optional[str] = None,
+) -> str:
+    """Append an Assistant specialization without replacing IDEA's base rules."""
+    sections = [base_prompt.rstrip()]
+    manifest = (builtin_skills_manifest or "").strip()
+    if manifest:
+        sections.append(
+            "# Available built-in IDEA skills\n\n"
+            f"{manifest}"
+        )
+    specialization = (assistant_system_prompt or "").strip()
+    if specialization:
+        sections.append(
+            "# Selected Assistant specialization and Open WebUI context\n\n"
+            "Apply the following role, domain, and skill instructions when "
+            "they are compatible with the shared IDEA execution, security, "
+            "sandbox, and artifact rules above. The shared rules take "
+            "precedence if they conflict.\n\n"
+            f"{specialization}"
+        )
+    return "\n\n".join(sections) + "\n"
 
 
 class TerminalAgent:
@@ -40,7 +199,21 @@ class TerminalAgent:
     The LLM can write code to files, run scripts, install packages, and solve tasks iteratively.
     """
     
-    def __init__(self, session_id: str, user_id: Optional[str] = None, user_email: Optional[str] = None, model: str = "gpt-5.5", temperature: Optional[float] = None, max_iterations: int = 20):
+    def __init__(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        model: str = "gpt-5.6-sol",
+        temperature: Optional[float] = None,
+        max_iterations: int = 20,
+        assistant_id: Optional[str] = None,
+        assistant_system_prompt: Optional[str] = None,
+        attached_files: Optional[list[dict[str, Any]]] = None,
+        openwebui_authorization: Optional[str] = None,
+        is_guest: bool = False,
+        paperqa_enabled: bool = False,
+    ):
         self.session_id = session_id
         self.user_id = user_id
         # Used only for LiteLLM per-end-user spend tracking (see
@@ -50,6 +223,15 @@ class TerminalAgent:
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
+        self.assistant_id = assistant_id
+        self.assistant_system_prompt = assistant_system_prompt
+        self.attached_files = list(attached_files or [])
+        self.openwebui_authorization = openwebui_authorization
+        self.is_guest = is_guest
+        self.paperqa_enabled = bool(paperqa_enabled and not is_guest)
+        self.paperqa_scope_id: str | None = None
+        self.paperqa_direct_scope_id: str | None = None
+        self.paperqa_direct_file_names: tuple[str, ...] = ()
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
         # The sandbox/shell is keyed by user_id (stable across page reloads
@@ -70,6 +252,16 @@ class TerminalAgent:
                 "per user and would risk multiple callers sharing a sandbox."
             )
         self.sandbox_id = str(user_id)
+        self.artifact_registry = ArtifactRegistry(self.sandbox_id)
+        self.builtin_skill_loader = BuiltinSkillLoader()
+        self.workspace_skill_loader = OpenWebUISkillLoader(
+            OPENWEBUI_BASE_URL,
+            self.openwebui_authorization,
+        )
+        self.view_skill_tool = make_view_skill_tool(
+            self.builtin_skill_loader,
+            self.workspace_skill_loader,
+        )
         
         # Terminal/filesystem tools bound to this user's own sandbox (or
         # local shell, if sandboxing is unavailable) - never shared with
@@ -77,7 +269,9 @@ class TerminalAgent:
         (
             self.run_terminal_tool,
             self.write_file_tool,
+            self.publish_artifact_tool,
             self.show_image_tool,
+            self.inspect_image_tool,
             self.read_output_range_tool,
             # run_python_tool now requires the oi-kernel image
             # (SANDBOX_IMAGE=idea/oi-kernel:slim or similar) - it degrades
@@ -96,14 +290,42 @@ class TerminalAgent:
             _grep_search_tool,
             _glob_search_tool,
         ) = make_agent_tools(self.sandbox_id)
+        self.get_climate_indices_tool = make_get_climate_indices_tool(
+            lambda filepath, data: write_file_stream(
+                filepath,
+                [data],
+                session_id=self.sandbox_id,
+                expected_size=len(data),
+            )
+        )
+        self.query_knowledge_base_tool = None
+        if getattr(self, "paperqa_enabled", False):
+            self.query_knowledge_base_tool = make_query_knowledge_base_tool(
+                lambda: self.paperqa_scope_id,
+                session_id=self.session_id,
+                end_user_id=(
+                    self.user_email or str(self.user_id)
+                ).strip(),
+                publish_media=self._publish_paperqa_media,
+                direct_scope_getter=lambda: self.paperqa_direct_scope_id,
+                direct_file_names_getter=(
+                    lambda: self.paperqa_direct_file_names
+                ),
+            )
         self.all_tools = [
             self.run_terminal_tool,
             self.write_file_tool,
+            self.publish_artifact_tool,
             self.show_image_tool,
+            self.inspect_image_tool,
             self.read_output_range_tool,
             self.run_python_tool,
+            self.view_skill_tool,
+            self.get_climate_indices_tool,
             *DATA_TOOLS,
         ]
+        if self.query_knowledge_base_tool is not None:
+            self.all_tools.append(self.query_knowledge_base_tool)
         self.tools_by_name = {t.name: t for t in self.all_tools}
         
         # Initialize LLM with tools
@@ -113,7 +335,7 @@ class TerminalAgent:
         # key shared by every user (a $50 total budget, not per-user), and
         # LITELLM_END_USER_HEADER carries this user's email so LiteLLM can
         # still attribute spend/usage per end user despite the shared key.
-        # Reasoning models (e.g., gpt-5.5) only support the provider default
+        # Reasoning models (e.g., gpt-5.6-sol) only support the provider default
         # temperature - omit the kwarg entirely when temperature is None.
         if not LITELLM_VIRTUAL_KEY:
             raise RuntimeError(
@@ -140,12 +362,291 @@ class TerminalAgent:
             (base64_content, format) tuple, e.g., (base64_str, "png")
         """
         image_data = read_file_bytes(filepath, session_id=self.sandbox_id)
-        
+
         b64_content = base64.b64encode(image_data).decode('utf-8')
         ext = Path(filepath).suffix.lower().lstrip('.')
         return b64_content, ext
+
+    def _publish_paperqa_media(self, source: Path) -> str:
+        """Copy trusted PaperQA media into this user's synced /outputs tree."""
+        session_hash = hashlib.sha256(
+            self.session_id.encode("utf-8")
+        ).hexdigest()[:16]
+        filename = _safe_input_component(source.name, "paperqa-image.png")
+        destination = f"{OUTPUTS_DIR}/paperqa/{session_hash}/{filename}"
+        expected_size = source.stat().st_size
+
+        def chunks() -> Iterator[bytes]:
+            with source.open("rb") as input_file:
+                while chunk := input_file.read(INPUT_SYNC_CHUNK_BYTES):
+                    yield chunk
+
+        written = write_file_stream(
+            destination,
+            chunks(),
+            session_id=self.sandbox_id,
+            expected_size=expected_size,
+            timeout=INPUT_SYNC_TIMEOUT_SECONDS,
+        )
+        if written != expected_size:
+            raise RuntimeError(
+                f"PaperQA media copy was incomplete: expected "
+                f"{expected_size} bytes, wrote {written}."
+            )
+        return destination
+
+    def _model_image_part(self, filepath: str) -> dict:
+        """Read and validate one sandbox image for a multimodal model call."""
+        image_data = read_file_bytes(
+            filepath,
+            session_id=self.sandbox_id,
+        )
+        if len(image_data) > VISION_MAX_IMAGE_BYTES:
+            raise ValueError(
+                f"image is {len(image_data)} bytes; vision limit is "
+                f"{VISION_MAX_IMAGE_BYTES} bytes"
+            )
+        mime_type = _detect_model_image_mime(image_data)
+        if not mime_type:
+            raise ValueError(
+                "unsupported or invalid image; use PNG, JPEG, GIF, or WebP"
+            )
+        encoded = base64.b64encode(image_data).decode("ascii")
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{mime_type};base64,{encoded}",
+                "detail": "high",
+            },
+        }
+
+    def _user_message_with_attached_images(
+        self,
+        text: str,
+        synced_files: list[dict],
+    ) -> HumanMessage:
+        """Build the initial user message with eligible attachment pixels."""
+        model_images: list[tuple[str, dict]] = []
+        notes: list[str] = []
+
+        for item in synced_files:
+            if not _is_model_image_candidate(item):
+                continue
+            filepath = item["sandbox_path"]
+            if len(model_images) >= VISION_MAX_IMAGES_PER_TURN:
+                notes.append(
+                    f"`{filepath}` was not included in model vision because "
+                    f"the per-turn limit is {VISION_MAX_IMAGES_PER_TURN} images."
+                )
+                continue
+            size = item.get("size")
+            if isinstance(size, int) and size > VISION_MAX_IMAGE_BYTES:
+                notes.append(
+                    f"`{filepath}` was not included in model vision because "
+                    f"it exceeds the {VISION_MAX_IMAGE_BYTES}-byte image limit."
+                )
+                continue
+            try:
+                image_part = self._model_image_part(filepath)
+            except Exception as exc:
+                notes.append(
+                    f"`{filepath}` could not be included in model vision: {exc}."
+                )
+                continue
+            model_images.append((filepath, image_part))
+
+        if notes:
+            text = (
+                f"{text.rstrip()}\n\nVision attachment notes:\n"
+                + "\n".join(f"- {note}" for note in notes)
+            )
+        if not model_images:
+            return HumanMessage(content=text)
+
+        content: list[dict] = [{"type": "text", "text": text}]
+        for filepath, image_part in model_images:
+            content.append({
+                "type": "text",
+                "text": f"Image attached at `{filepath}`:",
+            })
+            content.append(image_part)
+        return HumanMessage(content=content)
+
+    def _sync_inputs_from_openwebui(self) -> list[dict]:
+        """
+        Authorize and copy this turn's Open WebUI attachments into the
+        user's private sandbox before the model sees the prompt.
+
+        Input sync is intentionally fail-closed. Running without a requested
+        attachment would invite the model to guess about data it cannot read.
+        """
+        attached_files = list(getattr(self, "attached_files", []) or [])
+        if not attached_files:
+            return []
+        if not self.openwebui_authorization:
+            raise RuntimeError(
+                "Cannot prepare attached files because the current Open "
+                "WebUI user credential was not forwarded."
+            )
+
+        sync_deadline = time.monotonic() + INPUT_SYNC_TIMEOUT_SECONDS
+        headers = {"Authorization": self.openwebui_authorization}
+        synced: list[dict] = []
+        seen: set[str] = set()
+
+        for descriptor in attached_files:
+            if (
+                isinstance(descriptor, dict)
+                and descriptor.get("type") == "collection"
+            ):
+                continue
+            file_id = descriptor.get("id") if isinstance(descriptor, dict) else None
+            if not isinstance(file_id, str) or not file_id or file_id in seen:
+                continue
+            seen.add(file_id)
+
+            remaining = sync_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Timed out while preparing attached files for the sandbox."
+                )
+
+            encoded_id = quote(file_id, safe="")
+            try:
+                metadata_response = requests.get(
+                    f"{OPENWEBUI_BASE_URL}/api/v1/files/{encoded_id}",
+                    headers=headers,
+                    timeout=(min(5, remaining), remaining),
+                )
+                metadata_response.raise_for_status()
+                metadata = metadata_response.json()
+                if not isinstance(metadata, dict):
+                    raise ValueError("Open WebUI returned invalid file metadata")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not authorize attached file {file_id!r}: {exc}"
+                ) from exc
+
+            meta = metadata.get("meta") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+            filename = meta.get("name") or metadata.get("filename") or "upload"
+            content_type = meta.get("content_type")
+            if not isinstance(content_type, str):
+                content_type = None
+            size = meta.get("size")
+            if not isinstance(size, int) or size < 0:
+                size = None
+            if size is not None and size > INPUT_SYNC_MAX_FILE_BYTES:
+                raise RuntimeError(
+                    f"Attached file {filename!r} is {size} bytes; the sandbox "
+                    f"input limit is {INPUT_SYNC_MAX_FILE_BYTES} bytes."
+                )
+
+            sandbox_path = _input_sandbox_path(file_id, str(filename))
+            # Re-authorize above on every turn, even when this immutable file
+            # ID has already been copied into the persistent sandbox.
+            remaining = sync_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Timed out while preparing attached files for the sandbox."
+                )
+            if file_exists(
+                sandbox_path,
+                session_id=self.sandbox_id,
+                timeout=remaining,
+            ):
+                synced.append({
+                    "id": file_id,
+                    "name": str(filename),
+                    "content_type": content_type,
+                    "size": size,
+                    "sandbox_path": sandbox_path,
+                })
+                continue
+
+            remaining = sync_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Timed out while preparing attached files for the sandbox."
+                )
+
+            try:
+                content_response = requests.get(
+                    f"{OPENWEBUI_BASE_URL}/api/v1/files/{encoded_id}/content",
+                    headers=headers,
+                    stream=True,
+                    timeout=(min(5, remaining), remaining),
+                )
+                content_response.raise_for_status()
+                transferred = 0
+
+                def chunks() -> Iterator[bytes]:
+                    nonlocal transferred
+                    for chunk in content_response.iter_content(
+                        chunk_size=INPUT_SYNC_CHUNK_BYTES
+                    ):
+                        if time.monotonic() >= sync_deadline:
+                            raise RuntimeError(
+                                "Timed out while copying attached files "
+                                "into the sandbox."
+                            )
+                        if not chunk:
+                            continue
+                        transferred += len(chunk)
+                        if transferred > INPUT_SYNC_MAX_FILE_BYTES:
+                            raise RuntimeError(
+                                f"Attached file {filename!r} exceeds the "
+                                f"{INPUT_SYNC_MAX_FILE_BYTES}-byte sandbox "
+                                "input limit."
+                            )
+                        yield chunk
+
+                remaining = sync_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(
+                        "Timed out while preparing attached files for the sandbox."
+                    )
+                written = write_file_stream(
+                    sandbox_path,
+                    chunks(),
+                    session_id=self.sandbox_id,
+                    expected_size=size,
+                    timeout=remaining,
+                )
+                if written != transferred or (
+                    size is not None and transferred != size
+                ):
+                    raise RuntimeError(
+                        f"Attached file {filename!r} was not copied intact "
+                        f"(expected {size}, received {transferred}, wrote {written})."
+                    )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not copy attached file {filename!r} into the "
+                    f"sandbox: {exc}"
+                ) from exc
+            finally:
+                if "content_response" in locals():
+                    content_response.close()
+                    del content_response
+
+            synced.append({
+                "id": file_id,
+                "name": str(filename),
+                "content_type": content_type,
+                "size": transferred,
+                "sandbox_path": sandbox_path,
+            })
+            print(f"✓ Prepared Open WebUI attachment at {sandbox_path}")
+
+        return synced
     
-    def _sync_outputs_to_openwebui(self) -> list[dict]:
+    def _sync_outputs_to_openwebui(
+        self,
+        outputs_before_turn: dict[str, str] | None,
+        referenced_paths: set[str] | None = None,
+    ) -> list[dict]:
         """
         Scan this sandbox's OUTPUTS_DIR (final state, after the model has
         finished any mid-turn reorganizing/renaming) and upload each file
@@ -156,38 +657,178 @@ class TerminalAgent:
         Returns a list of {'filename', 'openwebui_file_id'} dicts for
         successfully synced files.
         """
-        # TODO: re-enable once sync latency/timeouts (blocking `run()` for
-        # up to 60s per file on a slow/unreachable Open WebUI, sometimes
-        # stalling the whole turn) are addressed - see msb_sandbox.py sync
-        # investigation. Disabled outright rather than gating on
-        # OPENWEBUI_API_KEY so it's a one-line flip to restore.
-        return []
-
-        if not OPENWEBUI_API_KEY:
+        if not self.openwebui_authorization:
+            print("⚠️  Skipping output sync: no Open WebUI user credential")
             return []
 
-        synced = []
-        for filepath in list_files(OUTPUTS_DIR, session_id=self.sandbox_id):
+        if outputs_before_turn is None:
+            print("⚠️  Skipping output sync: pre-turn output snapshot failed")
+            return []
+
+        outputs_after_turn = list_file_metadata(
+            OUTPUTS_DIR,
+            session_id=self.sandbox_id,
+        )
+        if outputs_after_turn is None:
+            print("⚠️  Skipping output sync: post-turn output snapshot failed")
+            return []
+
+        changed_paths = set(changed_output_paths(
+            outputs_before_turn,
+            outputs_after_turn,
+        ))
+        registry = getattr(self, "artifact_registry", None)
+        deleted_paths = set(outputs_before_turn) - set(outputs_after_turn)
+        if registry and deleted_paths:
             try:
-                data = read_file_bytes(filepath, session_id=self.sandbox_id)
+                registry.remove_many(deleted_paths)
+            except Exception as e:
+                print(f"⚠️  Artifact registry cleanup failed: {e}")
+
+        referenced_paths = {
+            path
+            for path in (referenced_paths or set())
+            if path in outputs_after_turn
+        }
+
+        reused: list[dict] = []
+        unresolved_references = set(referenced_paths)
+        if registry and referenced_paths:
+            try:
+                registry_records = registry.get_many(referenced_paths)
+                for filepath, record in registry_records.items():
+                    if (
+                        filepath not in changed_paths
+                        and record.signature == outputs_after_turn[filepath]
+                    ):
+                        reused.append({
+                            "filename": filepath,
+                            "openwebui_file_id": record.openwebui_file_id,
+                        })
+                        unresolved_references.discard(filepath)
+            except Exception as e:
+                print(f"⚠️  Artifact registry lookup failed: {e}")
+
+        # Preserve the existing behavior of attaching every new/changed
+        # output, and additionally recover a mapping for any unchanged file
+        # the final response explicitly references.
+        filepaths = sorted(changed_paths | unresolved_references)
+        if not filepaths:
+            return reused
+
+        sync_deadline = time.monotonic() + OUTPUT_SYNC_TIMEOUT_SECONDS
+        html_data: dict[str, bytes] = {}
+
+        # Self-contained HTML is required by system_prompt.md because a
+        # sandboxed preview cannot authenticate subresource requests. Check
+        # for accidental local dependencies, but never mutate the page.
+        for filepath in filepaths:
+            if not is_html_output(filepath):
+                continue
+            try:
+                remaining = sync_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                data = read_file_bytes(
+                    filepath,
+                    session_id=self.sandbox_id,
+                    timeout=remaining,
+                )
+                html_data[filepath] = data
+                local_references = discover_html_output_references(
+                    data,
+                    filepath,
+                )
+                if local_references:
+                    print(
+                        f"⚠️  {filepath} is not self-contained; sandboxed "
+                        f"browser previews cannot load local output "
+                        f"resource(s): {', '.join(sorted(local_references))}"
+                    )
+            except Exception as e:
+                print(
+                    f"⚠️  Could not validate self-contained HTML for "
+                    f"{filepath}: {e}"
+                )
+
+        def upload(filepath: str, data: bytes | None = None) -> dict | None:
+            try:
+                remaining = sync_deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                if data is None:
+                    data = read_file_bytes(
+                        filepath,
+                        session_id=self.sandbox_id,
+                        timeout=remaining,
+                    )
+                remaining = sync_deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
                 filename = Path(filepath).name
                 response = requests.post(
                     f"{OPENWEBUI_BASE_URL}/api/v1/files/",
-                    headers={"Authorization": f"Bearer {OPENWEBUI_API_KEY}"},
+                    headers={"Authorization": self.openwebui_authorization},
                     files={"file": (filename, data)},
                     params={"process": "false"},
-                    timeout=60,
+                    timeout=(min(5, remaining), remaining),
                 )
                 response.raise_for_status()
                 file_id = response.json().get("id")
                 if file_id:
-                    synced.append({"filename": filepath, "openwebui_file_id": file_id})
                     print(f"✓ Synced {filepath} to Open WebUI (file_id={file_id})")
+                    return {
+                        "filename": filepath,
+                        "openwebui_file_id": file_id,
+                    }
             except Exception as e:
                 print(f"⚠️  Failed to sync {filepath} to Open WebUI: {e}")
-                continue
+            return None
 
-        return synced
+        executor = ThreadPoolExecutor(
+            max_workers=min(OUTPUT_SYNC_MAX_WORKERS, len(filepaths)),
+            thread_name_prefix="idea-output-sync",
+        )
+        futures = [
+            executor.submit(upload, filepath, html_data.get(filepath))
+            for filepath in filepaths
+        ]
+        synced: list[dict] = []
+        try:
+            remaining = max(0, sync_deadline - time.monotonic())
+            for future in as_completed(futures, timeout=remaining):
+                result = future.result()
+                if result:
+                    synced.append(result)
+        except TimeoutError:
+            unfinished = sum(not future.done() for future in futures)
+            print(
+                "⚠️  Output sync reached its "
+                f"{OUTPUT_SYNC_TIMEOUT_SECONDS:g}s batch timeout; "
+                f"skipping {unfinished} unfinished file(s)"
+            )
+        finally:
+            for future in futures:
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        if registry:
+            for item in synced:
+                filepath = item["filename"]
+                try:
+                    registry.upsert(
+                        filepath,
+                        outputs_after_turn[filepath],
+                        item["openwebui_file_id"],
+                        Path(filepath).name,
+                    )
+                except Exception as e:
+                    print(
+                        f"⚠️  Artifact registry update failed for "
+                        f"{filepath}: {e}"
+                    )
+
+        return sorted(reused + synced, key=lambda item: item["filename"])
 
     @staticmethod
     def _invoke_with_heartbeat(
@@ -253,6 +894,14 @@ class TerminalAgent:
         Iteration 3 stall this was added for, where 2690 chunks arrived with
         response_content length 0, so the existing per-chunk
         stream_callback(chunk.content) call in run() never fired even once).
+
+        TODO: Base heartbeat timing on time since the last user-visible/SSE
+        event, rather than only on queue.get() timeouts. A model can emit
+        continuous tool-argument chunks with empty visible content, which
+        keeps this queue busy and suppresses heartbeats. Native progress
+        statuses now prevent the UI from appearing stalled, but a run that
+        stays in this state beyond a proxy read timeout could still lose its
+        transport connection.
         """
         _SENTINEL = object()
         q: "queue.Queue" = queue.Queue()
@@ -304,17 +953,76 @@ class TerminalAgent:
             Dictionary containing the result, messages, and metadata
         """
         
+        def emit_progress(
+            phase: str,
+            description: str,
+            *,
+            done: bool = False,
+            tool_name: Optional[str] = None,
+        ) -> None:
+            if stream_callback:
+                stream_callback(
+                    progress_chunk(
+                        phase,
+                        description,
+                        done=done,
+                        tool_name=tool_name,
+                    )
+                )
+
         self._shown_image_hashes.clear()
+        if getattr(self, "paperqa_enabled", False):
+            emit_progress(
+                "syncing_paperqa",
+                "Preparing the attached literature collection…",
+            )
+            library = prepare_paperqa_library(
+                user_id=str(self.user_id),
+                assistant_id=str(self.assistant_id or "assistant"),
+                session_id=self.session_id,
+                resources=self.attached_files,
+                authorization=self.openwebui_authorization or "",
+            )
+            self.paperqa_scope_id = library.scope_id
+            self.paperqa_direct_scope_id = library.direct_scope_id
+            self.paperqa_direct_file_names = library.direct_file_names
+            emit_progress(
+                "syncing_paperqa",
+                f"PaperQA literature is ready ({library.paper_count} PDFs)",
+            )
+        if getattr(self, "attached_files", None):
+            emit_progress("syncing_inputs", "Preparing attached files…")
+            synced_inputs = self._sync_inputs_from_openwebui()
+            emit_progress(
+                "syncing_inputs",
+                "Attached files are ready",
+            )
+        else:
+            synced_inputs = []
+        outputs_before_turn = list_file_metadata(
+            OUTPUTS_DIR,
+            session_id=self.sandbox_id,
+        )
         
         # Load system prompt from the consolidated markdown file
-        system_prompt = SYSTEM_PROMPT_PATH.read_text()
+        system_prompt = compose_system_prompt(
+            SYSTEM_PROMPT_PATH.read_text(),
+            self.assistant_system_prompt,
+            self.builtin_skill_loader.render_manifest(),
+        )
 
         user_prompt = prompt
+        attached_context = _attached_files_context(synced_inputs)
+        if attached_context:
+            user_prompt = f"{prompt.rstrip()}\n\n{attached_context}"
         
         # Initialize conversation
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
+            self._user_message_with_attached_images(
+                user_prompt,
+                synced_inputs,
+            ),
         ]
         
         # Log initial messages
@@ -322,8 +1030,14 @@ class TerminalAgent:
         print("🚀 STARTING TERMINAL AGENT")
         print(f"{'='*80}")
         print(f"\n📋 SYSTEM PROMPT:")
+        if self.assistant_id:
+            print(f"Selected Assistant: {self.assistant_id}")
         print(f"{'─'*80}")
-        print(system_prompt)
+        print(
+            f"System prompt prepared ({len(system_prompt)} characters). "
+            "Full content is not logged because it may contain private "
+            "Open WebUI Workspace skill instructions."
+        )
         print(f"{'─'*80}")
         print(f"\n👤 USER PROMPT:")
         print(f"{'─'*80}")
@@ -336,23 +1050,38 @@ class TerminalAgent:
         total_tokens = 0
         input_tokens = 0
         output_tokens = 0
-        
+        sensitive_tool_call_ids: set[str] = set()
+
         while iterations < self.max_iterations and not task_complete:
             iterations += 1
             print(f"\n{'='*60}")
             print(f"Iteration {iterations}")
             print(f"{'='*60}")
+            emit_progress("thinking", "Thinking…")
             
             # Get LLM response with streaming
             if stream_callback:
                 response_content = ""
                 aggregated_chunks = None
                 chunk_count = 0
+                announced_tool_names: set[str] = set()
                 for chunk in self._iter_with_heartbeat(self.llm.stream(messages), stream_callback):
                     chunk_count += 1
                     if hasattr(chunk, 'content') and chunk.content:
                         response_content += chunk.content
                         stream_callback(chunk.content)
+                    for tool_name in tool_call_chunk_names(chunk):
+                        if tool_name in announced_tool_names:
+                            continue
+                        announced_tool_names.add(tool_name)
+                        emit_progress(
+                            "preparing_tool",
+                            tool_status_description(
+                                tool_name,
+                                preparing=True,
+                            ),
+                            tool_name=tool_name,
+                        )
                     # Accumulate chunks properly for tool calls
                     if aggregated_chunks is None:
                         aggregated_chunks = chunk
@@ -426,9 +1155,18 @@ class TerminalAgent:
             # Check if LLM wants to use tools
             if response.tool_calls:
                 print(f"\n🔧 LLM wants to use {len(response.tool_calls)} tool(s)")
+                pending_model_images: list[tuple[str, dict]] = []
                 for i, tool_call in enumerate(response.tool_calls, 1):
                     tool_name = tool_call['name']
                     print(f"\n→ Tool Call #{i}: {tool_name}")
+                    emit_progress(
+                        "running_tool",
+                        tool_status_description(
+                            tool_name,
+                            preparing=False,
+                        ),
+                        tool_name=tool_name,
+                    )
                     
                     # Display tool arguments and stream to frontend
                     if tool_name == 'run_terminal_tool':
@@ -554,6 +1292,36 @@ class TerminalAgent:
                                 'end': True
                             })
 
+                    elif tool_name == 'inspect_image_tool':
+                        image_path = tool_call['args']['filepath']
+                        print(
+                            "\n👁️  LLM requested model vision for image: "
+                            f"{image_path}"
+                        )
+                        result = self.inspect_image_tool.invoke(
+                            tool_call['args']
+                        )
+                        if result.startswith("✓"):
+                            try:
+                                pending_model_images.append((
+                                    image_path,
+                                    self._model_image_part(image_path),
+                                ))
+                            except Exception as exc:
+                                result = (
+                                    f"✗ Failed to prepare {image_path} for "
+                                    f"model vision: {exc}"
+                                )
+                        if stream_callback:
+                            stream_callback({
+                                'role': 'computer',
+                                'type': 'console',
+                                'format': 'output',
+                                'content': result,
+                                'start': True,
+                                'end': True
+                            })
+
                     elif tool_name == 'run_python_tool':
                         code = tool_call['args']['code']
                         print(f"\n🐍 Python code to execute (persistent kernel):")
@@ -628,8 +1396,30 @@ class TerminalAgent:
                             result = (result + f"\n[{image_count} image(s) generated and shown to the user]").strip()
                         result = result or "(no output)"
 
+                    elif tool_name == 'view_skill':
+                        print(f"\n📝 Args: {tool_call['args']}")
+                        try:
+                            result = self.view_skill_tool.invoke(
+                                tool_call['args']
+                            )
+                            displayed_result = summarize_skill_result(result)
+                        except Exception as e:
+                            result = f"✗ view_skill failed: {e}"
+                            displayed_result = result
+
+                        if stream_callback:
+                            stream_callback({
+                                'role': 'computer',
+                                'type': 'console',
+                                'format': 'output',
+                                'content': displayed_result,
+                                'start': True,
+                                'end': True
+                            })
+
                     elif tool_name in self.tools_by_name:
-                        # Generic dispatch for data tools (datetime, station, climate, web search, knowledge base)
+                        # Generic dispatch for data tools (datetime, station,
+                        # batched climate data, web search, knowledge base).
                         print(f"\n📝 Args: {tool_call['args']}")
 
                         if stream_callback:
@@ -660,10 +1450,17 @@ class TerminalAgent:
                     else:
                         # Unknown tool execution
                         result = f"Unknown tool: {tool_name}"
+
+                    displayed_result = (
+                        summarize_skill_result(result)
+                        if tool_name == 'view_skill'
+                        and not str(result).startswith("✗")
+                        else result
+                    )
                     
                     print(f"\n✉️  Tool Result:")
                     print(f"{'─'*60}")
-                    print(result)
+                    print(displayed_result)
                     print(f"{'─'*60}")
                     
                     # Add tool result to messages
@@ -672,11 +1469,26 @@ class TerminalAgent:
                     if not tool_call_id:
                         tool_call_id = str(uuid.uuid4())
                         tool_call['id'] = tool_call_id
+                    if tool_name == 'view_skill':
+                        sensitive_tool_call_ids.add(tool_call_id)
                     
                     messages.append(ToolMessage(
                         content=result,
                         tool_call_id=tool_call_id
                     ))
+                if pending_model_images:
+                    vision_content: list[dict] = []
+                    for image_path, image_part in pending_model_images:
+                        vision_content.append({
+                            "type": "text",
+                            "text": (
+                                "Image requested with inspect_image_tool at "
+                                f"`{image_path}`. Inspect the actual pixels "
+                                "before continuing."
+                            ),
+                        })
+                        vision_content.append(image_part)
+                    messages.append(HumanMessage(content=vision_content))
             else:
                 # LLM responded without calling tools - task is complete
                 print(f"\n💬 LLM Response (no tool calls):")
@@ -694,7 +1506,19 @@ class TerminalAgent:
         # WebUI's own Files storage, once per turn (not per write - see
         # system_prompt.md and _sync_outputs_to_openwebui docstring), and
         # let the user know they're available as downloads.
-        synced_files = self._sync_outputs_to_openwebui()
+        emit_progress("syncing_outputs", "Finalizing outputs…")
+        final_response = next(
+            (
+                message.content
+                for message in reversed(messages)
+                if isinstance(message, AIMessage)
+            ),
+            "",
+        )
+        synced_files = self._sync_outputs_to_openwebui(
+            outputs_before_turn,
+            referenced_paths=referenced_output_paths(str(final_response)),
+        )
         if stream_callback:
             for synced in synced_files:
                 stream_callback({
@@ -705,6 +1529,7 @@ class TerminalAgent:
                     'start': True,
                     'end': True
                 })
+        emit_progress("completed", "Finished", done=True)
         
         # Determine success based on completion
         success = task_complete or iterations < self.max_iterations
@@ -727,8 +1552,19 @@ class TerminalAgent:
         for i, msg in enumerate(messages, 1):
             msg_type = type(msg).__name__
             if hasattr(msg, 'content'):
-                # Show FULL content, no truncation
-                content = str(msg.content)
+                if isinstance(msg, SystemMessage):
+                    content = (
+                        f"[system prompt omitted from logs; "
+                        f"{len(str(msg.content))} characters]"
+                    )
+                elif (
+                    isinstance(msg, ToolMessage)
+                    and msg.tool_call_id in sensitive_tool_call_ids
+                    and not str(msg.content).startswith("✗")
+                ):
+                    content = summarize_skill_result(str(msg.content))
+                else:
+                    content = _safe_message_log_content(msg)
                 print(f"  {i}. {msg_type}: {content}")
             else:
                 print(f"  {i}. {msg_type}")
@@ -750,7 +1586,7 @@ class TerminalAgent:
                     'total_cost': total_cost
                 }
             },
-            'final_response': messages[-1].content if messages else None
+            'final_response': final_response or None,
         }
     
     def reset(self):

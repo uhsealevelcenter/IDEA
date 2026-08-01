@@ -24,5 +24,4 @@ services:
       # - ./certbot/conf:/etc/letsencrypt:ro   # cert storage, once TLS is set up
       # - ./certbot/www:/var/www/certbot:ro    # certbot's renewal challenge path
     depends_on:
-      - web
       - openwebui

@@ -12,7 +12,7 @@ from litellm import responses
 
 from ..data.station_list_appendix import STATION_LIST_APPENDIX
 
-STATION_LOOKUP_MODEL = "openai/gpt-5.5"
+STATION_LOOKUP_MODEL = "openai/gpt-5.6-sol"
 
 
 def _extract_text_from_station_response(response: Any) -> Optional[str]:

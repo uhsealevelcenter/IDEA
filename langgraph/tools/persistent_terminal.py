@@ -12,15 +12,18 @@ sandbox_service instead of in this process.
 
 import json
 import os
+import posixpath
+import shlex
 import time
 import uuid
-from typing import Optional
+from typing import Iterable, Optional
 import httpx
 from langchain_core.tools import tool
 
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
+from utils.output_sync import parse_file_metadata_output
 from config import (
     SANDBOX_SERVICE_URL,
     SANDBOX_HTTP_CONNECT_TIMEOUT_SECONDS,
@@ -164,8 +167,8 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
     Returns:
         The output from running the command (stdout/stderr), truncated to
         its first/last OUTPUT_HEAD_TAIL_LINES lines and MAX_OUTPUT_TOKENS
-        tokens - the full output is saved to a temp file in the sandbox
-        (see read_output_range for paging through it).
+        tokens. When truncation occurs, the full output is saved to a temp
+        file in the sandbox (see read_output_range for paging through it).
     """
     try:
         response = _client.post(f"/sandboxes/{session_id}/exec", json={"command": command})
@@ -188,11 +191,6 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
     if not output:
         return f"{status_line}\nOutput:\n(no output)"
 
-    ext = _guess_output_extension(output)
-    output_filepath = f"{_TEMP_OUTPUT_DIR}/output_{int(time.time())}_{uuid.uuid4().hex[:8]}.{ext}"
-    write_result = write_file(output_filepath, output, session_id=session_id)
-    saved_ok = write_result.startswith("✓")
-
     truncated_output = _truncate_output(output)
     was_truncated = truncated_output != output
 
@@ -202,14 +200,24 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
             f"\n(Output truncated to first/last {OUTPUT_HEAD_TAIL_LINES} lines, "
             f"max {MAX_OUTPUT_TOKENS} tokens.)"
         )
-    if saved_ok:
-        parts.append(f"\nFull output saved to: {output_filepath}")
-        parts.append(
-            "Use read_output_range_tool(filepath, offset, n_limit) to read "
-            "specific character ranges of this file if you need more detail."
+        ext = _guess_output_extension(output)
+        output_filepath = (
+            f"{_TEMP_OUTPUT_DIR}/output_{int(time.time())}_"
+            f"{uuid.uuid4().hex[:8]}.{ext}"
         )
-    else:
-        parts.append(f"\n(Failed to save full output to a temp file: {write_result})")
+        write_result = write_file(
+            output_filepath, output, session_id=session_id
+        )
+        if write_result.startswith("✓"):
+            parts.append(f"\nFull output saved to: {output_filepath}")
+            parts.append(
+                "Use read_output_range_tool(filepath, offset, n_limit) to read "
+                "specific character ranges of this file if you need more detail."
+            )
+        else:
+            parts.append(
+                f"\n(Failed to save full output to a temp file: {write_result})"
+            )
 
     return "\n".join(parts)
 
@@ -238,9 +246,43 @@ def write_file(filepath: str, content: str, session_id: str, append: bool = Fals
     return f"✓ {action} {chars} characters ({lines} lines) to {filepath}"
 
 
-def read_file_bytes(filepath: str, session_id: str) -> bytes:
+def write_file_stream(
+    filepath: str,
+    chunks: Iterable[bytes],
+    session_id: str,
+    expected_size: int | None = None,
+    timeout: httpx.Timeout | float | None = None,
+) -> int:
+    """Stream arbitrary bytes into a sandbox without JSON/base64 encoding."""
+    response = _client.put(
+        f"/sandboxes/{session_id}/files/content",
+        params={
+            "filepath": filepath,
+            **(
+                {"expected_size": expected_size}
+                if expected_size is not None
+                else {}
+            ),
+        },
+        headers={"Content-Type": "application/octet-stream"},
+        content=chunks,
+        timeout=timeout or _HTTP_TIMEOUT,
+    )
+    response.raise_for_status()
+    return int(response.json().get("size", 0))
+
+
+def read_file_bytes(
+    filepath: str,
+    session_id: str,
+    timeout: httpx.Timeout | float | None = None,
+) -> bytes:
     """Read raw file bytes from inside the session's sandbox (via sandbox_service)."""
-    response = _client.get(f"/sandboxes/{session_id}/files/content", params={"filepath": filepath})
+    response = _client.get(
+        f"/sandboxes/{session_id}/files/content",
+        params={"filepath": filepath},
+        timeout=timeout or _HTTP_TIMEOUT,
+    )
     response.raise_for_status()
     return response.content
 
@@ -273,14 +315,80 @@ def read_output_range(filepath: str, session_id: str, offset: int = 0, n_limit: 
     return f"Characters {offset}-{end} of {total_len} total in {filepath}:\n\n{chunk}"
 
 
-def file_exists(filepath: str, session_id: str) -> bool:
+def file_exists(
+    filepath: str,
+    session_id: str,
+    timeout: httpx.Timeout | float | None = None,
+) -> bool:
     """Check whether filepath exists in the session's sandbox (via sandbox_service)."""
     try:
-        response = _client.get(f"/sandboxes/{session_id}/files/exists", params={"filepath": filepath})
+        response = _client.get(
+            f"/sandboxes/{session_id}/files/exists",
+            params={"filepath": filepath},
+            timeout=timeout or _HTTP_TIMEOUT,
+        )
         response.raise_for_status()
         return response.json().get("exists", False)
     except httpx.HTTPError:
         return False
+
+
+def normalize_publish_paths(
+    source_path: str,
+    output_path: str | None = None,
+) -> tuple[str, str]:
+    """Validate and normalize an explicit /workspace -> /outputs publish."""
+    source = posixpath.normpath(source_path.strip())
+    if source == "/workspace" or not source.startswith("/workspace/"):
+        raise ValueError("source_path must name a file under /workspace")
+
+    if output_path and output_path.strip():
+        destination = posixpath.normpath(output_path.strip())
+    else:
+        relative = posixpath.relpath(source, "/workspace")
+        destination = posixpath.normpath(posixpath.join("/outputs", relative))
+
+    if destination == "/outputs" or not destination.startswith("/outputs/"):
+        raise ValueError("output_path must name a file under /outputs")
+    return source, destination
+
+
+def publish_artifact(
+    source_path: str,
+    session_id: str,
+    output_path: str | None = None,
+) -> str:
+    """
+    Copy one explicitly selected workspace file into the publish-only
+    /outputs tree without exposing or scanning the rest of /workspace.
+    """
+    try:
+        source, destination = normalize_publish_paths(source_path, output_path)
+    except ValueError as exc:
+        return f"✗ {exc}"
+
+    source_q = shlex.quote(source)
+    destination_q = shlex.quote(destination)
+    destination_parent_q = shlex.quote(posixpath.dirname(destination))
+    command = (
+        "set -eu; "
+        "mkdir -p -- /workspace /outputs; "
+        f"source_real=$(realpath -e -- {source_q}); "
+        "workspace_real=$(realpath -e -- /workspace); "
+        'case "$source_real" in "$workspace_real"/*) ;; '
+        "*) echo 'Source escapes /workspace' >&2; exit 64 ;; esac; "
+        '[ -f "$source_real" ] || { echo "Source is not a regular file" >&2; exit 66; }; '
+        f"mkdir -p -- {destination_parent_q}; "
+        "outputs_real=$(realpath -e -- /outputs); "
+        f"destination_parent_real=$(realpath -e -- {destination_parent_q}); "
+        'case "$destination_parent_real" in "$outputs_real"|"$outputs_real"/*) ;; '
+        "*) echo 'Destination escapes /outputs' >&2; exit 64 ;; esac; "
+        f"[ ! -L {destination_q} ] || "
+        "{ echo 'Destination may not be a symbolic link' >&2; exit 64; }; "
+        f"cp -- \"$source_real\" {destination_q}; "
+        f"printf 'Published %s\\n' {destination_q}"
+    )
+    return run_terminal(command, session_id=session_id)
 
 
 def list_files(directory: str, session_id: str) -> list[str]:
@@ -307,6 +415,39 @@ def list_files(directory: str, session_id: str) -> list[str]:
 
     output = result.get("output", "") or ""
     return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def list_file_metadata(
+    directory: str,
+    session_id: str,
+) -> dict[str, str] | None:
+    """
+    Snapshot regular files under `directory` as path -> size/mtime signature.
+
+    Returns None when the sandbox cannot be inspected, allowing callers to
+    distinguish a failed snapshot from a valid empty directory.
+    """
+    quoted_directory = shlex.quote(directory)
+    command = (
+        f"if [ -d {quoted_directory} ]; then "
+        f"find {quoted_directory} -type f "
+        r"-printf '%p\t%s\t%T@\n'; "
+        "fi"
+    )
+    try:
+        response = _client.post(
+            f"/sandboxes/{session_id}/exec",
+            json={"command": command},
+        )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPError:
+        return None
+
+    if not result.get("success", False):
+        return None
+
+    return parse_file_metadata_output(result.get("output", "") or "")
 
 
 def run_python(code: str, session_id: str) -> list[dict]:
@@ -392,8 +533,8 @@ def glob_search(
 def make_agent_tools(session_id: str):
     """
     Build a run_terminal_tool / write_file_tool / show_image_tool /
-    read_output_range_tool set bound to one specific session's terminal
-    (local shell or microsandbox microVM).
+    inspect_image_tool / read_output_range_tool set bound to one specific
+    session's terminal (local shell or microsandbox microVM).
 
     Every TerminalAgent must build its own set via this factory instead of
     sharing module-level tool instances, so concurrent users never end up
@@ -435,6 +576,31 @@ def make_agent_tools(session_id: str):
             - write_file_tool("data.txt", "new line\\n", append=True)
         """
         return write_file(filepath, content, session_id=session_id, append=append)
+
+    @tool
+    def publish_artifact_tool(
+        source_path: str,
+        output_path: str = "",
+    ) -> str:
+        """
+        Publish one existing workspace file as a user deliverable by safely
+        copying it from /workspace into /outputs. Use this instead of making
+        /workspace directly downloadable. The source must be a regular file
+        under /workspace. The optional destination must be under /outputs;
+        when omitted, the workspace-relative path is preserved.
+
+        Args:
+            source_path: Existing file under /workspace.
+            output_path: Optional destination under /outputs.
+
+        Returns:
+            The published /outputs path, or a validation/copy error.
+        """
+        return publish_artifact(
+            source_path,
+            session_id=session_id,
+            output_path=output_path or None,
+        )
 
     @tool
     def read_output_range_tool(filepath: str, offset: int = 0, n_limit: int = 2000) -> str:
@@ -522,6 +688,33 @@ def make_agent_tools(session_id: str):
         return f"✓ Image ready to display: {filepath}"
 
     @tool
+    def inspect_image_tool(filepath: str) -> str:
+        """
+        Load an image file into model vision so you can visually inspect and
+        describe it. Use this for images already in the sandbox, including
+        generated plots that you need to validate. This does not display the
+        image to the user; call show_image_tool separately when the user
+        should see it.
+
+        Args:
+            filepath: Path to a PNG, JPEG, GIF, or WebP image.
+
+        Returns:
+            A readiness message. The agent loop supplies the actual pixels
+            to model vision in the next iteration.
+        """
+        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext not in valid_extensions:
+            return (
+                f"✗ Unsupported model-vision image extension '{ext}' for "
+                f"{filepath}; convert it to PNG, JPEG, GIF, or WebP first"
+            )
+        if not file_exists(filepath, session_id):
+            return f"✗ Image not found: {filepath}"
+        return f"✓ Image ready for model inspection: {filepath}"
+
+    @tool
     def grep_search_tool(
         query: str,
         path: str = ".",
@@ -605,7 +798,9 @@ def make_agent_tools(session_id: str):
     return (
         run_terminal_tool,
         write_file_tool,
+        publish_artifact_tool,
         show_image_tool,
+        inspect_image_tool,
         read_output_range_tool,
         run_python_tool,
         grep_search_tool,

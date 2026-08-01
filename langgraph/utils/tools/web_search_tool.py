@@ -11,7 +11,7 @@ from typing import Any
 from langchain_core.tools import tool
 from litellm import responses
 
-WEB_SEARCH_MODEL = "openai/gpt-5.5"
+WEB_SEARCH_MODEL = "openai/gpt-5.6-sol"
 
 
 def _extract_web_query_response(web_query_response: Any) -> dict:

@@ -349,7 +349,7 @@ langgraph/utils/
 ├── tools/                    # LangChain @tool-decorated data functions
 │   ├── datetime_tool.py      # get_datetime_tool
 │   ├── station_tool.py       # get_station_info_tool
-│   ├── climate_tool.py       # get_climate_index_tool (returns CSV text)
+│   ├── climate_tool.py       # batched climate fetch -> sandbox CSV/provenance
 │   ├── web_search_tool.py    # web_search_tool
 │   ├── knowledge_base_tool.py# query_knowledge_base_tool (PaperQA2)
 │   └── __init__.py           # exports DATA_TOOLS list
@@ -362,7 +362,10 @@ langgraph/utils/
 ```
 
 **Key architecture difference from Open Interpreter:** OI pre-injects these as plain Python functions into a persistent REPL (`interpreter.computer.run("python", custom_tool)`), so LLM-generated code calls them directly and gets back live Python objects (e.g., a DataFrame). LangGraph's `TerminalAgent` instead uses LLM function-calling — tools are invoked by the LLM directly and must return text. So:
-- `get_climate_index_tool` returns CSV text (the agent saves it via `write_file_tool` before plotting/analyzing).
+- `get_climate_indices_tool` batches one or more indices and writes a
+  long-form CSV plus provenance JSON directly into the current user's
+  `/workspace`; only compact paths, coverage, row counts, source URLs, and
+  checksums return through model context.
 - `get_station_info_tool` / `web_search_tool` / `query_knowledge_base_tool` return text/JSON strings.
 
 **Wired into `agents/terminal_agent.py`:**
@@ -374,11 +377,347 @@ langgraph/utils/
 - `Dockerfile` now `COPY utils/ ./utils/`.
 - `requirements.txt` updated with `litellm`, `beautifulsoup4`, `nest-asyncio`, `paper-qa`, `paper-qa-pymupdf`, and previously-missing `pexpect`, `langchain-core`, `langchain-openai`, `numpy`.
 
-**Still NOT wired (see gaps below):** MCP tools, automatic user/session context injection into the system prompt, per-user active prompt (PromptManager), guest-vs-registered model selection, vision support, reasoning-model LLM config.
+**Still NOT wired (see gaps below):** MCP tools, automatic user/session
+context injection into the system prompt, per-user active prompt
+(PromptManager), guest-vs-registered model selection, and remaining
+reasoning-model configuration.
 
 ---
 
 ## 🔨 TODO
+
+### MAJOR TODO (Jul 29, 2026): Make Open WebUI the authoritative conversation context
+
+**Status:** proposal for dev-team consideration; investigated, not implemented.
+
+Open WebUI and LangGraph currently maintain competing versions of a
+conversation:
+
+1. Open WebUI reconstructs the exact message branch leading to the current
+   user message from its database. This is the branch-aware history that
+   reflects edits, regenerations, and alternative responses.
+2. Open WebUI applies its persisted context-compaction checkpoint, retaining
+   recent messages and injecting the accumulated `[CONVERSATION SUMMARY]`.
+3. `openwebui/functions/idea_pipe.py` receives those structured messages but
+   currently keeps only the latest user text and concatenated system text.
+4. `langgraph_service.py` independently restores the linear
+   `langgraph_messages:{session_key}` transcript from Redis.
+5. `ConversationOrchestrator.chat()` appends the current user message and
+   `_build_agent_context()` then repeats it under `Current task`. It flattens
+   all recent user/assistant roles into one synthesized `HumanMessage`.
+
+Consequences:
+
+- An abandoned or regenerated Open WebUI branch can remain in Redis and
+  influence a later response.
+- Message edits, branch selection, chat deletion, and Open WebUI compaction
+  are not reconciled with LangGraph history.
+- The current user prompt is duplicated in the terminal-agent input.
+- Open WebUI's compaction summary competes with an unrelated Redis
+  "last 10 messages" window.
+- Changing the selected Assistant creates a separate hidden Redis history,
+  even though Open WebUI presents one visible conversation branch.
+- Redis history omits useful durable execution facts while its conversation
+  keys currently have no TTL.
+
+#### Recommended target
+
+Treat the post-branch-selection, post-compaction `body["messages"]` supplied
+by Open WebUI as the sole authoritative conversational history. Forward
+structured roles to LangGraph instead of rebuilding a transcript string.
+Keep Redis only for transient chat-run status/events and task-queue needs,
+not conversation memory.
+
+The LangGraph request should carry:
+
+- `messages`: the normalized structured Open WebUI messages;
+- `chat_id` and a separately named sandbox/workspace identity;
+- the currently selected Assistant identity/instructions, applied once; and
+- a bounded, machine-readable `idea_state` snapshot for durable execution
+  facts.
+
+`TerminalAgent.run()` should compose IDEA's invariant execution/security
+system prompt, the current Assistant instructions, and the structured Open
+WebUI history. Attachments should be added only to the latest user message.
+The current user prompt must appear exactly once with its original `user`
+role.
+
+Assistant selection and workspace identity should not double as conversation
+storage keys. A change of Assistant should apply the newly selected
+instructions to the visible branch, rather than switching to a hidden
+transcript. The dev team should separately decide whether sandbox workspaces
+remain per-user (current behavior), become per-chat, or support an explicit
+workspace scope.
+
+#### Compact IDEA state
+
+Open WebUI assistant messages already support structured `meta`, `files`,
+`sources`, `output`, and `context_summary` fields. Its event emitter can
+currently persist content/status/files/sources but cannot merge custom
+message metadata. Add a narrowly scoped event such as `message_meta` that
+may update only a versioned `meta.idea_context` object.
+
+Store a bounded cumulative snapshot, not raw tool output. Candidate fields:
+
+- datasets: sandbox path, provenance path, source URL, row count, date range,
+  and optional content hash;
+- artifacts: sandbox path, Open WebUI file ID, media type, and short
+  description;
+- scripts/commands: executed script path or command hash and final status;
+- generated image/file references; and
+- schema version, entry limits, and total serialized-size limit.
+
+Before compaction, Open WebUI should select the latest IDEA state snapshot
+from the active branch and pass it to the IDEA Pipe separately from
+conversation text. This lets conversation summaries and machine state be
+compacted independently. Raw CSV, long console output, credentials, and
+complete tool transcripts must not be persisted in conversational content
+or IDEA state. Full data and reproducible outputs remain available in the
+user sandbox; live execution details can use transient status events or
+strictly bounded excerpts.
+
+#### Proposed implementation sequence
+
+1. **Structured request contract:** add `messages` and `idea_state` to
+   `ChatRequest`/`ChatRunRequest`, with strict role/content/size validation.
+   Temporarily retain the legacy `message`/`restore_history` fields for
+   rollback compatibility.
+2. **Pipe propagation:** forward the normalized `body["messages"]` already
+   supplied by Open WebUI. Stop reducing the request to only
+   `_latest_user_content()` and stop treating the conversation summary as
+   part of the selected Assistant's policy.
+3. **Role-preserving LangGraph execution:** make
+   `ConversationOrchestrator.chat()` and `TerminalAgent.run()` accept
+   structured messages. Remove `conversation_history`,
+   `_build_agent_context()`, the current-message append, and the
+   `Recent conversation context`/`Current task` wrapper. Apply the same path
+   to `/chat` and `/chat-runs`.
+4. **IDEA state persistence:** add the restricted Open WebUI metadata event,
+   have LangGraph emit a versioned turn-state delta/snapshot, and have the
+   Pipe persist it on the assistant message. Ensure compaction carries the
+   latest state independently.
+5. **Controlled Redis cutover:** introduce
+   `IDEA_HISTORY_SOURCE=redis|shadow|openwebui`. In `shadow` mode, use Open
+   WebUI for the response and compare only message counts, roles, sizes, and
+   hashes—never private content. Then stop reading/writing
+   `langgraph_messages:*`, retain old keys for a rollback window, and expire
+   or remove them in a separately reviewed cleanup.
+6. **Documentation/operations cleanup:** redefine `/clear` as ephemeral
+   run-state cleanup (or deprecate it), document that Open WebUI chat
+   deletion is authoritative, and keep Redis run-event storage distinct
+   from conversational persistence.
+
+#### Required acceptance tests
+
+- The current user prompt reaches the model exactly once.
+- User, assistant, and system roles remain structured.
+- Editing or regenerating excludes the abandoned branch.
+- Assistant switching uses the current instructions and visible branch,
+  without hidden history.
+- Compaction supplies one accumulated summary plus retained recent turns.
+- Compact IDEA state survives conversation compaction.
+- Raw CSV and long console output never enter persisted model context.
+- Malformed or oversized IDEA metadata is rejected or safely bounded.
+- Attachments and authorization remain scoped to the current request and
+  credentials never enter messages/state.
+- Service restarts and replica changes do not alter conversational memory.
+- `/chat` and `/chat-runs` have identical context semantics.
+- Deleting a chat leaves no independent durable LangGraph transcript.
+
+This work should be split into reviewable changes: structured-message
+propagation first, compact IDEA-state persistence second, and Redis
+cutover/legacy cleanup third.
+
+### MAJOR TODO (Jul 29, 2026): Separate workspace, kernel, and run identities
+
+**Status:** proposal for dev-team consideration; investigated, not implemented.
+
+The dedicated-per-user sandbox work correctly makes each user's filesystem
+persistent across chats and page reloads, but it also unintentionally gives
+all of that user's conversations one Python kernel:
+
+1. The Open WebUI Pipe creates a `session_key` containing user, chat, and
+   Assistant IDs.
+2. LangGraph passes that session through `ConversationOrchestrator`, but
+   `TerminalAgent` deliberately derives `sandbox_id` from only `user_id`.
+3. All tools are bound to that per-user `sandbox_id`.
+4. `POST /sandboxes/{sandbox_id}/run-python` accepts only source code, with
+   no separate kernel identity.
+5. The in-VM kernel daemon caches one `PythonLanguage` runner under the
+   `"python"` language key, so variables, imports, matplotlib state, monkey
+   patches, and other process globals are shared by every chat for that user.
+
+The sandbox service's current per-`sandbox_id` lock prevents two individual
+tool operations from running simultaneously, but it does not lock an entire
+agent response. Calls from separate chats can alternate against the common
+kernel. For example, chat A can load `df`, chat B can replace `df`, and chat
+A can then unknowingly plot B's data.
+
+The production microsandbox shell starts a fresh shell command for each
+call, so the state leak is principally the persistent Python kernel and the
+intentionally shared filesystem/packages. The local fallback additionally
+has one persistent shell per user and needs equivalent isolation.
+
+#### Legacy comparison
+
+The legacy `CIndRA-skills` system creates an `OpenInterpreter` per
+`user_id:session_id` and holds a per-session lock for the complete agent
+run. This provides separate Python state and prevents requests within one
+session from interleaving. Its frontend-generated session ID changes on a
+page load, however, so it is tab/session-oriented rather than a durable
+conversation identity. Open WebUI's stable chat ID gives the new system an
+opportunity to preserve that isolation without inheriting the legacy
+lifecycle problem.
+
+#### Recommended identity model
+
+Use three explicit identities:
+
+| Identity | Recommended scope | Purpose |
+| --- | --- | --- |
+| `workspace_id` | user | persistent microVM, filesystem, packages, uploads |
+| `kernel_id` | user + chat + Assistant | Python variables, imports, figures |
+| `run_id` | one response execution | whole-run serialization/cancellation |
+
+Keep kernel scope configurable while the dev team decides Assistant-switch
+semantics:
+
+- `IDEA_KERNEL_SCOPE=chat` retains Python state when a chat changes
+  Assistants.
+- `IDEA_KERNEL_SCOPE=chat_assistant` starts isolated Python state for each
+  Assistant in a chat. This is the safer proposed default.
+
+Derive a bounded `kernel_id` server-side from authenticated identity, a
+stable Open WebUI chat ID, and (when configured) Assistant ID. Use a
+versioned hash rather than accepting a caller-composed runtime name. The LLM
+must never supply or modify workspace/kernel identifiers. The Pipe's
+current shared `"anonymous"` fallback is not acceptable for execution
+identity: guests need a stable unique identity or execution must fail
+closed.
+
+This identity split complements the authoritative-conversation-context TODO
+above: Open WebUI owns conversational history, `workspace_id` owns durable
+user files, and `kernel_id` owns best-effort in-memory computation state.
+
+#### Proposed implementation sequence
+
+1. **Define and derive identities:** add a stable `chat_id` to both
+   `ChatRequest` and `ChatRunRequest`; derive `workspace_id` and `kernel_id`
+   inside LangGraph. Retain the old user-scoped kernel behind
+   `IDEA_KERNEL_SCOPE=user` for rollback.
+2. **Plumb kernel identity:** pass `kernel_id` through
+   `ConversationOrchestrator`, `TerminalAgent`, `make_agent_tools`,
+   `run_python`, `RunPythonRequest`, `terminal_registry.run_python`,
+   `MicrosandboxTerminal.run_python`, and the in-VM client. Filesystem,
+   shell, uploads, artifacts, and package installation continue to use only
+   `workspace_id`.
+3. **Make the daemon multi-kernel:** replace the singleton language map with
+   named kernel records containing a `PythonLanguage` runner, per-kernel
+   execution lock, and last-used timestamp. Include validated `kernel_id` in
+   `/run`; add a kernel-reset path that calls
+   `PythonLanguage.terminate()`. Replace the daemon's global execution lock
+   with per-kernel locks while retaining defense-in-depth serialization
+   within each kernel.
+4. **Serialize complete runs:** add a distributed LangGraph run lock keyed
+   by `kernel_id`, covering the whole agent turn for both `/chat` and
+   `/chat-runs`. Redis is appropriate for this transient coordination even
+   if it is retired as a conversation store. Use a unique owner token,
+   expiry, renewal while alive, token-safe release in `finally`, and a
+   waiting/busy status. A worker crash must release through TTL rather than
+   permanently blocking the chat.
+5. **Keep conservative sandbox locking initially:** retain the current
+   per-user sandbox operation lock during the first isolation rollout. It
+   may limit parallelism between a user's chats, but avoids changing VM and
+   filesystem concurrency at the same time. Split lifecycle, shell/file,
+   and kernel locks only after stress testing shows that the microsandbox SDK
+   and shared-workspace operations are safe under greater concurrency.
+6. **Match the local fallback:** key local shell/runtime instances by
+   `(workspace_id, kernel_id)` while keeping their files in the same
+   user-scoped workspace. Development and production must not have different
+   cross-chat state behavior.
+7. **Add explicit lifecycle operations:** distinguish reset-current-kernel,
+   reset-all-user-kernels, stop-user-sandbox (files preserved), and
+   destroy-user-workspace (explicitly destructive). Open WebUI chat deletion
+   may trigger kernel cleanup, but reliable idle eviction must handle chats
+   deleted without a hook.
+
+#### Resource and lifecycle requirements
+
+Production user VMs currently default to one CPU and 1 GiB RAM. A Jupyter
+process per chat cannot grow without bounds. Before enabling scoped kernels,
+add:
+
+- `MAX_KERNELS_PER_SANDBOX` (initial value determined by memory testing);
+- `KERNEL_IDLE_TIMEOUT_SECONDS`;
+- LRU eviction of idle, unlocked kernels;
+- protection against evicting a running/leased kernel; and
+- metrics for active kernels, memory pressure, creation latency, resets, and
+  evictions.
+
+Kernel variables are best-effort runtime state, not durable data. Stopping
+or restarting a microVM, restarting the daemon, image replacement, a crash,
+or LRU eviction can remove variables. The per-user filesystem remains the
+authoritative durable state, and scripts/data needed for reproducibility
+must be written there.
+
+#### Non-destructive rollout requirement
+
+Existing microsandboxes do not adopt a new `SANDBOX_IMAGE` automatically.
+The current `interpreter_kernel/refresh_sandboxes.sh` destroys and recreates
+them, which wipes writable filesystem state. It must not be used blindly for
+this feature.
+
+Before migrating existing users, provide either:
+
+- a versioned kernel-runtime update that can be installed into the existing
+  VM overlay without recreating the workspace; or
+- a verified snapshot/recreate/restore workflow that preserves the user's
+  required files and clearly handles installed packages.
+
+New sandboxes can use the updated image immediately. Existing users can
+remain temporarily on `IDEA_KERNEL_SCOPE=user` until migrated safely.
+Singleton kernel variables require no migration because they are already
+ephemeral; user files must be preserved.
+
+#### Required acceptance tests
+
+- Chat A can retain a variable across its turns, while chat B cannot access
+  it.
+- Assistant switching follows the configured `chat` or `chat_assistant`
+  policy.
+- Separate kernels for one user can read the same workspace file.
+- Resetting a kernel removes variables but preserves workspace files.
+- Two overlapping runs for one kernel serialize for their complete turns.
+- A crashed run lock expires and does not permanently block the chat.
+- Different users never share kernels or files.
+- Kernel count/idle limits are enforced without evicting active work.
+- VM restart loses kernel variables but preserves filesystem state.
+- Local fallback behavior matches production isolation.
+- Invalid identities and shared anonymous execution are rejected.
+- `/chat` and `/chat-runs` derive the same kernel identity and locking scope.
+
+This should be split into reviewable changes: identity plumbing and
+isolation tests first, multi-kernel daemon/lifecycle second, and distributed
+whole-run locking plus non-destructive rollout tooling third.
+
+### Deferred: heartbeat timing during invisible tool-call generation
+
+Native Open WebUI progress statuses now keep long LangGraph work visibly
+active (`Working`, `Thinking`, tool preparation/execution, output
+finalization, and completion). This resolves the user-facing appearance of a
+stalled process, but does not completely replace transport heartbeats.
+
+`TerminalAgent._iter_with_heartbeat()` currently emits a heartbeat only when
+its raw model-chunk queue is empty for the configured interval. A model can
+continuously emit structured tool-argument chunks whose visible `.content`
+is empty; those chunks keep the queue busy and suppress heartbeats even
+though no response bytes are being produced for the user-facing stream.
+
+**Potential follow-up:** base heartbeat timing on elapsed time since the last
+user-visible/SSE event rather than on `queue.get()` timeouts. This is lower
+priority now that progress statuses address the UX problem, but remains
+worth doing as connection-reliability hardening for runs that could remain
+in invisible tool generation beyond a proxy read timeout.
 
 ### 1. Update `app.py` to use Orchestrator
 
@@ -575,12 +914,18 @@ conversation = conversation_crud.create_conversation(
 **Location in OI:** `utils/custom_functions.py`
 **New location:** `langgraph/utils/tools/`
 - ✅ `query_knowledge_base_tool(query, user_id, session_id)` - PaperQA2 RAG integration (`knowledge_base_tool.py`)
-- ✅ `get_climate_index_tool(name)` - Climate data (ONI, RONI, PDO, PNA, etc.) (`climate_tool.py`)
+- ✅ `get_climate_indices_tool(names, output_path)` - Batched climate data
+  (ONI, RONI, PDO, PNA, etc.) written directly to the user's sandbox
+  (`climate_tool.py`)
 - ✅ `get_station_info_tool(query)` - UHSLC tide gauge station lookup (`station_tool.py`)
 - ✅ `web_search_tool(query)` - LiteLLM web search with citations (`web_search_tool.py`)
 - ✅ `get_datetime_tool()` - UTC datetime utilities (`datetime_tool.py`)
 
-**Implemented as:** LangChain `@tool`-decorated functions bound to `TerminalAgent`'s LLM (function-calling), not pre-injected into a Python REPL — see the langgraph/utils update above for the architecture rationale. All 5 are exported via `DATA_TOOLS` in `langgraph/utils/tools/__init__.py` and wired into `TerminalAgent.bind_tools()`.
+**Implemented as:** LangChain `@tool`-decorated functions bound to
+`TerminalAgent`'s LLM (function-calling), not pre-injected into a Python
+REPL. Four stateless tools are exported via `DATA_TOOLS`; the climate tool
+is created separately for each `TerminalAgent` so its trusted byte writer is
+bound to the correct user's sandbox.
 
 #### 2. **MCP (Model Context Protocol) Tools**
 **Location in OI:** `app.py:186-210`, `mcp_tools.py`
@@ -592,12 +937,21 @@ conversation = conversation_crud.create_conversation(
 
 **Action Required:** Integrate with existing MCP manager, expose tools in agent environment
 
-#### 3. **Skills System** (9 specialized skills) — ✅ DONE
+#### 3. **Skills System** (9 flat skills + CIndRA package) — ✅ DONE
 **Location in OI:** `skills/*/SKILL.md`, `utils/system_prompt.py:122-172`
 **New location:** `langgraph/utils/skills/`
 - ✅ Skills copied into `langgraph/utils/skills/<skill-name>/SKILL.md`
 - ✅ Skills: `frontend-design`, `review-code`, `latex`, `poster-design`, `co-ops-api`, `co-ops-tadc`, `cora-aws-beta`, `aquaview-ocean-data`, `skill-creator`
-- ✅ Skill activation instructions in `langgraph/utils/system_prompt.md` (`cat langgraph/utils/skills/<skill-name>/SKILL.md`)
+- ✅ Built-in catalog generated from each skill's YAML frontmatter
+- ✅ `view_skill(source="builtin", id=...)` reads the authoritative LangGraph copy in full without routing through terminal-output truncation
+- ✅ General hierarchical built-in package schema supports a root skill, shared references, modular skills, explicit dependencies, and advertised routes
+- ✅ Package routes resolve dependency-first with deterministic ordering and deduplication, then return the complete bundle atomically
+- ✅ Package validation rejects traversal, symlinks, duplicate/unknown IDs, cycles, and configured component/depth/byte limit violations
+- ✅ CIndRA ported from the legacy `CIndRA-skills` branch as the first hierarchical package; its unresolved external source/helper requirements remain explicit in its manifest
+- ✅ `view_skill(source="workspace", id=...)` loads active Open WebUI Workspace skills through the current user's authenticated Skills API
+- 🟡 Open WebUI Workspace skills remain flat pending package-level persistence, authorization, and version semantics
+- ✅ Complete `$`-mentioned and per-chat Open WebUI skills remain available through forwarded system context; model-attached skill manifests load lazily through `view_skill`
+- ✅ Skill loading rejects traversal, source fallback, inactive or unauthorized Workspace skills, and silent partial reads
 
 #### 4. **Comprehensive System Prompts** — 🟡 PARTIAL
 **Location in OI:** `utils/system_prompt.py` (195 lines), `utils/custom_instructions_v04_2026.py` (183 lines)
@@ -607,18 +961,23 @@ conversation = conversation_crud.create_conversation(
 - ✅ Security policies (guarddog, destructive ops prevention)
 - ✅ Math formatting (MathJax), mapping (folium), data output guidelines
 - ✅ Data tool usage guidance (the 5 ported functions)
-- ❌ Vision support instructions (image viewing, OCR, `plt.show()`) — not yet added, no vision wiring on the LLM side either (see #7)
+- ✅ Vision instructions distinguish automatic uploaded-image vision,
+  `inspect_image_tool` (model inspection), and `show_image_tool` (user
+  display)
 - ❌ Codex CLI integration instructions — not applicable to `TerminalAgent`'s architecture yet
 - ❌ User-specific active prompts from `PromptManager` — not wired (see #5)
 
-**Action Required:** Add vision instructions once vision support is wired (#7); decide whether/how to surface per-user active prompts (#5) in the orchestrator.
+**Action Required:** Decide whether/how to surface per-user active prompts
+(#5) in the orchestrator.
 
 #### 5. **User Context Injection**
 **Location in OI:** `app.py:2331`, `custom_instructions_v04_2026.py:33-37`
 - ❌ `user_id` in custom instructions
 - ❌ `session_id` in custom instructions
 - ❌ `user_first_name` personalization
-- ❌ Upload directory paths: `/app/static/{user_id}/{session_id}/uploads/`
+- ✅ Open WebUI attachment paths are injected per turn as
+  `/workspace/uploads/<file-id>/<sanitized-original-name>` after the file
+  is authorized and copied into that user's sandbox
 - ❌ Output directory paths: `/app/static/{user_id}/{session_id}/`
 - ❌ Host URL for file link generation
 
@@ -638,12 +997,23 @@ conversation = conversation_crud.create_conversation(
 
 #### 7. **Vision Support**
 **Location in OI:** `app.py:1765`
-- ❌ `interpreter.llm.supports_vision = True`
-- ❌ Image viewing capabilities
-- ❌ Plot display via `plt.show()`
-- ❌ OCR instructions (no separate extraction step)
+- ✅ The configured `gpt-5.6-sol` route advertises `supports_vision: true`
+  through LiteLLM model metadata
+- ✅ Authorized PNG/JPEG/GIF/WebP uploads are included as high-detail
+  multimodal content in the initial model message
+- ✅ `inspect_image_tool` feeds an existing sandbox image into the next
+  model iteration; `show_image_tool` remains display-only
+- ✅ Image magic-byte validation, per-image byte limits, per-turn image
+  count limits, and application-log redaction for data URIs
+- 🟡 `plt.show()` output is displayed to the user by `run_python_tool`, but
+  must be saved and passed to `inspect_image_tool` for model inspection
+- ❌ Dedicated OCR/cropping workflow for exceptionally dense scientific
+  imagery
 
-**Action Required:** Enable vision in LLM config, add vision instructions to prompt
+**Privacy TODO:** LiteLLM currently persists prompts/completions to its spend
+logs. Redact or omit image data-URI payloads there before declaring this
+suitable for sensitive-image deployments. The application itself omits
+multimodal image data from its terminal-agent summary logs.
 
 #### 8. **Pre-loaded Python Environment**
 **Location in OI:** `app.py:1807`, `utils/custom_functions.py:1-16`
@@ -770,6 +1140,32 @@ handling) remain unaddressed.
 
 ---
 
+## 📥 Open WebUI Input Attachment Sync (Jul 28, 2026) — IMPLEMENTED
+
+Files attached in Open WebUI are now usable by code running inside the
+user's terminal sandbox:
+
+- `openwebui/functions/idea_pipe.py` accepts Open WebUI's injected
+  `__files__`, keeps only safe file/image IDs, deduplicates them, and
+  forwards the descriptors plus the current user's credential.
+- The request models and `ConversationOrchestrator` pass those descriptors
+  to `TerminalAgent` without adding credentials to Redis history or model
+  messages.
+- Before model execution, `TerminalAgent` re-authorizes each file ID using
+  Open WebUI's owner/share checks, downloads the raw content as a stream,
+  and copies it atomically to
+  `/workspace/uploads/<file-id>/<sanitized-original-name>`.
+- The sandbox service has a token-protected binary streaming write route;
+  both local and Microsandbox backends write a temporary file and rename it
+  only after the complete transfer succeeds. Binary files are never routed
+  through JSON or text decoding.
+- The exact sandbox paths are appended to only the current turn's model
+  context. Input sync is fail-closed, rechecks authorization even for an
+  already-copied ID, and enforces `INPUT_SYNC_TIMEOUT_SECONDS` plus
+  `INPUT_SYNC_MAX_FILE_BYTES` (1 GiB by default).
+
+---
+
 ## Summary
 
 **Completed:**
@@ -790,7 +1186,10 @@ handling) remain unaddressed.
 
 **Remaining for Full Feature Parity with Open Interpreter:**
 - 🟡 4 of 12 capability gaps closed or partially closed (Custom functions ✅, Skills ✅, System prompts 🟡, PQA integration 🟡)
-- ❌ 8 remaining gaps: MCP tools, user context auto-injection, vision support, pre-loaded Python env (superseded by tool-calling architecture), guest/security model selection, advanced conversation features, file/URL management, reasoning model config
+- ❌ Remaining gaps: MCP tools, user context auto-injection, pre-loaded
+  Python env (superseded by tool-calling architecture), guest/security model
+  selection, advanced conversation features, file/URL management, and
+  remaining reasoning-model configuration
 - ❌ Most critical remaining: MCP tools, user context auto-injection, reasoning model config
 
 **Total Implementation Time:** 
