@@ -9,13 +9,34 @@ Use this skill when drafting proposed IDEA skills. Skills are concise, self-cont
 
 IDEA users cannot directly alter IDEA's runtime `utils`, `/app/skills`, or available-skills registry from within a normal IDEA session. Draft the skill content and present it to the user for review or download instead of attempting to install or register it.
 
-## Required Structure
+## Choose a Structure
 
-Draft one skill file:
+Use a flat skill unless the requested workflow has independently selectable
+modules, shared policy/reference documents, or dependency relationships.
+
+For a flat skill, draft one file:
 
 - `SKILL.md`
 
-If saving a file for the user, save it under IDEA's standard output directory with a clear path such as `<skill-name>/SKILL.md` or `<skill-name>_SKILL.md`, then provide a clickable download link.
+For a hierarchical package, draft:
+
+- A root `SKILL.md` containing scope, precedence, routing, and package-wide policy.
+- A `manifest.yaml` using `schema_version: 1`.
+- Shared reference documents under `shared/`.
+- Modular skills under `skills/<component-id>/SKILL.md`.
+
+The manifest must use package-local lowercase kebab-case IDs and relative
+paths. Declare references and modular components separately, express policy
+or prerequisite relationships with `requires`, and advertise useful named
+routes. Every route must have a description and at least one component.
+Dependencies must be acyclic. Do not use absolute paths, `..`, symlinks, or
+undeclared file discovery. Keep required external resources in an
+`external_requirements` list with an explicit status.
+
+If saving files for the user, save them under IDEA's standard output
+directory with a clear path such as `<skill-name>/SKILL.md`,
+`<skill-name>_SKILL.md`, or a complete `<package-name>/` directory, then
+provide clickable download links.
 
 The skill name should be lowercase kebab-case, specific, and stable. Avoid spaces, underscores, broad names, or names that duplicate an existing skill unless the user is revising that skill.
 
@@ -24,7 +45,10 @@ Every `SKILL.md` must begin with YAML frontmatter:
 - `name`: exact skill folder/name.
 - `description`: when to use the skill, including important trigger phrases and exclusions.
 
-The body should contain only instructions IDEA would need at runtime. Do not add README, changelog, installation notes, or process documentation unless the user explicitly asks for them.
+The body should contain only instructions IDEA would need at runtime. For a
+package, the root must tell IDEA to select an advertised package route rather
+than searching the filesystem. Do not add README, changelog, installation
+notes, or process documentation unless the user explicitly asks for them.
 
 ## Writing Guidelines
 
@@ -38,7 +62,7 @@ The body should contain only instructions IDEA would need at runtime. Do not add
 ## Drafting Workflow
 
 - Ask for missing purpose, trigger conditions, data sources, tools, expected inputs, expected outputs, and caveats only when they cannot be reasonably inferred.
-- Draft the complete `SKILL.md` content.
+- Draft the complete flat `SKILL.md`, or every file in the package.
 - Show the draft to the user in the response, unless it is too long; for long drafts, summarize and provide a download link.
 - When file output is useful, save the draft under IDEA's standard output directory and provide a clickable link.
 - Do not modify `/app/skills`, `utils/system_prompt.py`, or other IDEA source files from an IDEA user session.
@@ -52,6 +76,11 @@ Tell the user they may recommend that a new skill be included in IDEA by emailin
 Before finishing:
 
 - Confirm the proposed skill name and frontmatter `name` match.
+- For a package, confirm the directory, manifest `id`, and root frontmatter
+  `name` match; every modular skill's frontmatter `name` must match its
+  component ID.
+- For a package, verify all declared paths and dependencies, reject cycles,
+  and confirm each route resolves to the intended complete document set.
 - Confirm `description` clearly says when to use the skill.
 - Confirm the draft does not claim to be installed or registered.
 - Check that the skill does not require unavailable files or tools.

@@ -51,10 +51,15 @@ class ConversationOrchestrator:
         session_id: str,
         is_guest: bool,
         db: Optional[Session] = None,
-        model: str = "gpt-5.5",
+        model: str = "gpt-5.6-sol",
         temperature: Optional[float] = None,
         max_iterations: int = 20,
-        user_email: Optional[str] = None
+        user_email: Optional[str] = None,
+        assistant_id: Optional[str] = None,
+        assistant_system_prompt: Optional[str] = None,
+        attached_files: Optional[list[dict[str, Any]]] = None,
+        openwebui_authorization: Optional[str] = None,
+        paperqa_enabled: bool = False,
     ):
         self.user_id = user_id
         # Passed through to TerminalAgent for LiteLLM per-end-user spend
@@ -67,6 +72,11 @@ class ConversationOrchestrator:
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
+        self.assistant_id = assistant_id
+        self.assistant_system_prompt = assistant_system_prompt
+        self.attached_files = list(attached_files or [])
+        self.openwebui_authorization = openwebui_authorization
+        self.paperqa_enabled = bool(paperqa_enabled and not is_guest)
         
         # Conversation management
         self.conversation_history: list[dict] = []
@@ -76,7 +86,6 @@ class ConversationOrchestrator:
         
         # System prompt and instructions
         self.system_message = ""
-        self.custom_instructions = ""
         
         # NOTE: Conversation persistence is handled via Redis (like current system)
         # Database conversations are created manually via API endpoints
@@ -94,9 +103,6 @@ class ConversationOrchestrator:
         
         if self.system_message:
             context_parts.append(self.system_message)
-        
-        if self.custom_instructions:
-            context_parts.append(f"\nAdditional Instructions:\n{self.custom_instructions}")
         
         # Include relevant conversation history (last N messages for context)
         # TODO: Smart context selection (not all history, just relevant parts)
@@ -144,7 +150,13 @@ class ConversationOrchestrator:
                 user_email=self.user_email,
                 model=self.model,
                 temperature=self.temperature,
-                max_iterations=self.max_iterations
+                max_iterations=self.max_iterations,
+                assistant_id=self.assistant_id,
+                assistant_system_prompt=self.assistant_system_prompt,
+                attached_files=self.attached_files,
+                openwebui_authorization=self.openwebui_authorization,
+                is_guest=self.is_guest,
+                paperqa_enabled=self.paperqa_enabled,
             )
         
         # Stream agent execution in real time.
@@ -286,7 +298,7 @@ class ConversationOrchestrator:
 def run_agent_task(
     prompt: str,
     session_id: Optional[str] = None,
-    model: str = "gpt-5.5",
+    model: str = "gpt-5.6-sol",
     temperature: Optional[float] = None,
     max_iterations: int = 20,
     stream_callback: Optional[Callable[[str], None]] = None
@@ -325,7 +337,7 @@ if __name__ == "__main__":
         prompt="Create a Python script that prints 'Hello from Terminal Agent!' and run it.",
         max_iterations=10,
         stream_callback=stream_output,
-        model="gpt-5.5"
+        model="gpt-5.6-sol"
     )
     
     print(f"\n{'='*80}")

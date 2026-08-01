@@ -1,21 +1,38 @@
 # LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
 # `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
 # endpoint that langgraph/ already talks to directly (see
-# langgraph/agents/terminal_agent.py) - only gpt-5.5 is exposed here.
+# langgraph/agents/terminal_agent.py). gpt-5.6-sol serves the IDEA agent;
+# gpt-5.6-luna is available to Open WebUI for background task generation.
 
 model_list:
-  - model_name: gpt-5.5
+  - model_name: gpt-5.6-sol
     litellm_params:
       # "openai/" provider (not "azure/") since OPENAI_BASE_URL is the
       # unified Azure AI Foundry OpenAI-compatible endpoint (e.g.
       # https://<resource>.services.ai.azure.com/openai/v1), not the
       # legacy Azure OpenAI SDK endpoint that needs api_version/deployment
       # IDs - same convention langgraph's ChatOpenAI usage relies on.
-      model: openai/gpt-5.5
+      model: openai/gpt-5.6-sol
       api_base: os.environ/OPENAI_BASE_URL
       api_key: os.environ/OPENAI_API_KEY
     model_info:
       mode: chat
+
+  - model_name: gpt-5.6-luna
+    litellm_params:
+      model: openai/gpt-5.6-luna
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: embedding
 
 general_settings:
   # Admin/virtual-key auth for this proxy - see example.env's
@@ -40,6 +57,10 @@ general_settings:
   allow_requests_on_db_unavailable: false
 
   # Persist prompts/completions in the spend-logs table (DB).
+  # TODO(vision-privacy): redact or omit image data-URI payloads from spend
+  # logs before treating uploaded-image vision as suitable for sensitive
+  # deployments. This follow-up is intentionally deferred; see
+  # langgraph/IMPLEMENTATION_STATUS.md.
   store_prompts_in_spend_logs: true
 
   proxy_batch_write_at: 60 # Batch-write spend updates every 60s.

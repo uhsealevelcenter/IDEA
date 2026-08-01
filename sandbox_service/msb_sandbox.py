@@ -30,6 +30,18 @@ _KVM_GET_API_VERSION = 0xAE00
 DEFAULT_IMAGE = os.getenv("SANDBOX_IMAGE", "python")
 DEFAULT_CPUS = int(os.getenv("SANDBOX_CPUS", "1"))
 DEFAULT_MEMORY_MB = int(os.getenv("SANDBOX_MEMORY_MB", "1024"))
+# Optional absolute directory inside the sandbox-service container which is
+# exposed read-only at /app/data in every microVM. docker-compose.yml mounts
+# the administrator-managed idea_shared_data volume here. Leaving it unset
+# preserves standalone/non-Compose behavior.
+DEFAULT_SHARED_DATA_HOST_PATH = os.getenv("SHARED_DATA_HOST_PATH", "").strip()
+SHARED_DATA_GUEST_PATH = "/app/data"
+SHARED_DATA_REQUIRED_PATHS = (
+    "metadata/fd_metadata.geojson",
+    "benchmarks/all_benchmarks.json",
+    "altimetry/cmems_altimetry_regrid.nc",
+    "InSight",
+)
 
 # Path to client.py *inside* the VM image - see ../interpreter_kernel/.
 # Only meaningful when SANDBOX_IMAGE is that image (or one built on top of
@@ -52,6 +64,38 @@ _IDLE_TIMEOUT_ENV = os.getenv("SANDBOX_IDLE_TIMEOUT_SECONDS", "1800")
 _MAX_DURATION_ENV = os.getenv("SANDBOX_MAX_DURATION_SECONDS", "")
 DEFAULT_IDLE_TIMEOUT = int(_IDLE_TIMEOUT_ENV) if _IDLE_TIMEOUT_ENV else None
 DEFAULT_MAX_DURATION = int(_MAX_DURATION_ENV) if _MAX_DURATION_ENV else None
+
+
+def shared_data_volumes(host_path: str) -> dict:
+    """Build the read-only Microsandbox mount mapping for shared data."""
+    if not host_path:
+        return {}
+    shared_data_path = os.path.abspath(host_path)
+    if not os.path.isdir(shared_data_path):
+        raise RuntimeError(
+            f"SHARED_DATA_HOST_PATH is not a directory: {shared_data_path}"
+        )
+    missing = [
+        relative_path
+        for relative_path in SHARED_DATA_REQUIRED_PATHS
+        if not os.path.exists(os.path.join(shared_data_path, relative_path))
+    ]
+    if missing:
+        raise RuntimeError(
+            "Shared data is not initialized; missing "
+            f"{', '.join(missing)}. See shared_data/README.md."
+        )
+    from microsandbox import Volume
+
+    return {
+        SHARED_DATA_GUEST_PATH: Volume.bind(
+            shared_data_path,
+            readonly=True,
+            noexec=True,
+            nosuid=True,
+            nodev=True,
+        )
+    }
 
 
 def _kvm_functional(path: str = "/dev/kvm") -> bool:
@@ -116,6 +160,7 @@ class MicrosandboxTerminal:
         memory: int = DEFAULT_MEMORY_MB,
         idle_timeout: Optional[int] = DEFAULT_IDLE_TIMEOUT,
         max_duration: Optional[int] = DEFAULT_MAX_DURATION,
+        shared_data_host_path: str = DEFAULT_SHARED_DATA_HOST_PATH,
     ):
         self.session_id = session_id
         self.image = image
@@ -123,6 +168,7 @@ class MicrosandboxTerminal:
         self.memory = memory
         self.idle_timeout = idle_timeout
         self.max_duration = max_duration
+        self.shared_data_host_path = shared_data_host_path
         self._sandbox = None
         self._open_terminal_key: Optional[str] = None
         self._cwd: Optional[str] = None
@@ -217,6 +263,9 @@ class MicrosandboxTerminal:
                     create_kwargs["idle_timeout"] = self.idle_timeout
                 if self.max_duration is not None:
                     create_kwargs["max_duration"] = self.max_duration
+                volumes = shared_data_volumes(self.shared_data_host_path)
+                if volumes:
+                    create_kwargs["volumes"] = volumes
                 return await Sandbox.create(self.session_id, **create_kwargs)
 
             await handle.refresh()
@@ -434,21 +483,62 @@ class MicrosandboxTerminal:
     def write_file(self, filepath: str, content: str, append: bool = False) -> None:
         """Write content to a file inside the sandbox's filesystem."""
         filepath = self._resolve_path(filepath)
+        parent = os.path.dirname(filepath)
+        if parent:
+            quoted_parent = shlex.quote(parent)
+            self._exec(
+                lambda: self._sandbox.shell(f"mkdir -p -- {quoted_parent}")
+            )
         data = content.encode("utf-8")
-        # fs.write()/fs.exists() (unlike shell's `>`/`>>` redirection) does
-        # not create missing parent directories on its own, so a first
-        # write into a not-yet-existing directory (e.g. TEMP_OUTPUT_DIR in
-        # langgraph/tools/persistent_terminal.py) fails with ENOENT.
-        dirpath = os.path.dirname(filepath)
-        if dirpath and dirpath != "/":
-            self._exec(lambda: self._sandbox.shell(f"mkdir -p {shlex.quote(dirpath)}"))
         if append:
             # No native append API - emulate via shell so it stays atomic
             # inside the sandbox rather than round-tripping bytes twice.
             escaped = content.replace("'", "'\\''")
-            self._exec(lambda: self._sandbox.shell(f"printf '%s' '{escaped}' >> {filepath}"))
+            quoted_filepath = shlex.quote(filepath)
+            self._exec(
+                lambda: self._sandbox.shell(
+                    f"printf '%s' '{escaped}' >> {quoted_filepath}"
+                )
+            )
         else:
             self._exec(lambda: self._sandbox.fs.write(filepath, data))
+
+    def write_file_bytes(self, filepath: str, source) -> None:
+        """Atomically stream a binary file into the sandbox filesystem."""
+        filepath = self._resolve_path(filepath)
+        parent = os.path.dirname(filepath)
+        if parent:
+            quoted_parent = shlex.quote(parent)
+            self._exec(
+                lambda: self._sandbox.shell(f"mkdir -p -- {quoted_parent}")
+            )
+
+        temporary_path = f"{filepath}.idea-upload-{uuid.uuid4().hex}"
+        sink = self._exec(
+            lambda: self._sandbox.fs.write_stream(temporary_path)
+        )
+        try:
+            while True:
+                chunk = source.read(1024 * 1024)
+                if not chunk:
+                    break
+                self._exec(lambda chunk=chunk: sink.write(chunk))
+            self._exec(lambda: sink.close())
+            self._exec(
+                lambda: self._sandbox.fs.rename(temporary_path, filepath)
+            )
+        except Exception:
+            try:
+                self._exec(lambda: sink.close())
+            except Exception:
+                pass
+            try:
+                self._exec(
+                    lambda: self._sandbox.fs.remove(temporary_path)
+                )
+            except Exception:
+                pass
+            raise
 
     def read_file(self, filepath: str) -> bytes:
         """Read raw bytes of a file from inside the sandbox (e.g. for image display)."""

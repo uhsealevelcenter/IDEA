@@ -10,7 +10,7 @@ own. It combines two things inside one VM:
    `grep`/`find` shelling.
 2. **This repo's own persistent Python kernel** (`daemon.py`), reusing Open
    Interpreter's *execution engine only*
-   (`../interpreter/core/computer/terminal/languages/python.py`, a real
+   (`interpreter/core/computer/terminal/languages/python.py`, a real
    `jupyter_client`-backed IPython kernel) - gives `run_python_tool` real
    stateful-kernel semantics: variables, imports, and matplotlib figures
    created in one turn are still there on the next. Open Terminal's own
@@ -62,9 +62,12 @@ not through Open Terminal, since that already works and Open Terminal's
 
 ## Building
 
+This directory is a self-contained build context (the vendored
+`interpreter/core/computer/` tree lives inside it):
+
 ```bash
-# From the repo root (needs interpreter/core/computer/ in the build context):
-docker build -f interpreter_kernel/Dockerfile -t idea/oi-kernel:slim .
+docker build -f interpreter_kernel/Dockerfile -t idea/oi-kernel:slim interpreter_kernel
+# (or: cd interpreter_kernel && docker build -t idea/oi-kernel:slim .)
 msb pull idea/oi-kernel:slim   # or push to a registry microsandbox can pull from
 ```
 
@@ -87,7 +90,7 @@ When pushing a rebuilt image to the registry (e.g.
    ```bash
    docker buildx build --platform linux/amd64,linux/arm64 \
      -f interpreter_kernel/Dockerfile \
-     -t ghcr.io/uhsealevelcenter/idea-oi-kernel:slim --push .
+     -t ghcr.io/uhsealevelcenter/idea-oi-kernel:slim --push interpreter_kernel
    ```
    Building on Apple Silicon without `--platform linux/amd64` will silently
    produce an arm64-only image, which fails to pull on a typical amd64

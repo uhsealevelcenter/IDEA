@@ -40,6 +40,17 @@ A production-ready AI agent microservice built on LangGraph and LangChain, provi
 - Streams as `type: 'image', format: 'base64.{ext}'` chunks
 - Displays inline in chat (Open Interpreter style)
 
+### **Model Vision**
+- Uploaded PNG/JPEG/GIF/WebP images are included in the initial model call
+  as validated, high-detail multimodal content
+- The synchronized sandbox path is retained so the model can also analyze
+  the same file with code
+- `inspect_image_tool(filepath)` supplies an existing sandbox image to model
+  vision in the next iteration
+- `show_image_tool` is display-only and never implies that the model has
+  inspected the pixels
+- Vision input defaults to 20 MiB per image and 8 images per turn
+
 ### **Async Job Queue**
 - Non-blocking execution via `/chat-runs` endpoints
 - Redis-backed status and event storage
@@ -172,7 +183,23 @@ Same schema as above, but without `/langgraph` prefix:
 
 The agent streams different message types to the frontend:
 
-#### **1. Text Messages**
+#### **1. Progress Status**
+```json
+{
+  "role": "assistant",
+  "type": "status",
+  "action": "idea_agent",
+  "phase": "preparing_tool",
+  "description": "Preparing a file…",
+  "tool_name": "write_file_tool",
+  "done": false
+}
+```
+
+Status events describe phase transitions only. They never contain tool
+arguments or generated file contents.
+
+#### **2. Text Messages**
 ```json
 {
   "role": "assistant",
@@ -183,7 +210,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **2. Shell Commands**
+#### **3. Shell Commands**
 ```json
 {
   "role": "computer",
@@ -195,7 +222,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **3. File Writes**
+#### **4. File Writes**
 ```json
 {
   "role": "computer",
@@ -207,7 +234,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **4. Console Output**
+#### **5. Console Output**
 ```json
 {
   "role": "computer",
@@ -219,7 +246,7 @@ The agent streams different message types to the frontend:
 }
 ```
 
-#### **5. Images** (via `show_image_tool`)
+#### **6. Images** (via `show_image_tool`)
 ```json
 {
   "role": "assistant",
@@ -334,7 +361,7 @@ web:
 
 ```python
 agent = TerminalAgent(
-    model="gpt-5.5",         # Azure AI Foundry deployment name
+    model="gpt-5.6-sol",     # Azure AI Foundry deployment name
     temperature=0.2,         # 0.0-1.0, lower = more deterministic
     max_iterations=20        # Max iteration limit
 )
@@ -429,6 +456,11 @@ When the LLM calls `show_image_tool(filepath)`, the agent:
 5. Frontend renders on `isComplete = true`
 
 **Supported formats:** `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg`
+
+For model-side visual interpretation, uploaded PNG/JPEG/GIF/WebP images are
+included automatically. Existing sandbox images must be passed through
+`inspect_image_tool`; that tool adds validated high-detail image content to
+the next model request. Display and inspection are deliberately separate.
 
 ### **Tool Call Streaming**
 
