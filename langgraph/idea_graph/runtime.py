@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from dataclasses import dataclass, field
@@ -11,6 +12,10 @@ from typing import Any, Callable, Protocol
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from .memory import execution_memory_block
+
+
+class ModelCallCancelled(Exception):
+    """Raised after cancelling an in-flight provider request."""
 
 
 @dataclass
@@ -24,7 +29,7 @@ class ToolOutcome:
 
 class GraphRuntime(Protocol):
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]: ...
-    def call_model(self, messages: list[BaseMessage]) -> AIMessage: ...
+    def call_model(self, messages: list[BaseMessage], *, cancellation: Any = None) -> AIMessage: ...
     def model_messages(self, state: dict[str, Any]) -> list[BaseMessage]: ...
     def execute_tool(self, tool_call: dict[str, Any], state: dict[str, Any]) -> ToolOutcome: ...
     def persist_python_source(self, execution_id: str, code: str, state: dict[str, Any]) -> str: ...
@@ -110,8 +115,26 @@ class TerminalGraphRuntime:
         result.extend(state.get("turn_messages") or [])
         return result
 
-    def call_model(self, messages: list[BaseMessage]) -> AIMessage:
-        response = self.agent.llm.invoke(messages)
+    def call_model(self, messages: list[BaseMessage], *, cancellation: Any = None) -> AIMessage:
+        async def invoke() -> Any:
+            request = asyncio.create_task(self.agent.llm.ainvoke(messages))
+            while not request.done():
+                if cancellation is not None and cancellation.requested:
+                    request.cancel()
+                    try:
+                        await request
+                    except asyncio.CancelledError:
+                        pass
+                    raise ModelCallCancelled(cancellation.reason or "user_requested")
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.shield(request), timeout=0.1
+                    )
+                except asyncio.TimeoutError:
+                    continue
+            return await request
+
+        response = asyncio.run(invoke())
         if not isinstance(response, AIMessage):
             response = AIMessage(content=str(getattr(response, "content", response)))
         if response.content:

@@ -94,3 +94,12 @@ LITELLM_VIRTUAL_KEY = os.getenv("LITELLM_VIRTUAL_KEY", "")
 # (see terminal_agent.py) rather than their Open WebUI user id, per
 # product requirements.
 LITELLM_END_USER_HEADER = "x-litellm-end-user-id"
+
+# Keep an upstream provider stall bounded, and avoid the OpenAI client's
+# default multi-minute retry cycle obscuring a rate-limit failure. LangGraph
+# separately watches RunCancellation while the async request is in flight so
+# a user stop can abort the HTTP request immediately.
+IDEA_MODEL_REQUEST_TIMEOUT_SECONDS = float(
+    os.getenv("IDEA_MODEL_REQUEST_TIMEOUT_SECONDS", "120")
+)
+IDEA_MODEL_MAX_RETRIES = int(os.getenv("IDEA_MODEL_MAX_RETRIES", "0"))

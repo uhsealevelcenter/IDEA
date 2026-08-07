@@ -50,7 +50,13 @@ from utils.tools import (
     make_get_climate_indices_tool,
     make_query_knowledge_base_tool,
 )
-from idea_config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
+from idea_config import (
+    IDEA_MODEL_MAX_RETRIES,
+    IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
+    LITELLM_END_USER_HEADER,
+    LITELLM_PROXY_URL,
+    LITELLM_VIRTUAL_KEY,
+)
 from progress import (
     progress_chunk,
     tool_call_chunk_names,
@@ -301,7 +307,7 @@ class TerminalAgent:
         self.query_knowledge_base_tool = None
         if getattr(self, "paperqa_enabled", False):
             self.query_knowledge_base_tool = make_query_knowledge_base_tool(
-                lambda: self.paperqa_scope_id,
+                self._ensure_paperqa_library,
                 session_id=self.session_id,
                 end_user_id=(
                     self.user_email or str(self.user_id)
@@ -349,6 +355,8 @@ class TerminalAgent:
             "api_key": LITELLM_VIRTUAL_KEY,
             "base_url": LITELLM_PROXY_URL,
             "default_headers": {LITELLM_END_USER_HEADER: end_user_id},
+            "timeout": IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
+            "max_retries": IDEA_MODEL_MAX_RETRIES,
         }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
@@ -394,6 +402,24 @@ class TerminalAgent:
                 f"{expected_size} bytes, wrote {written}."
             )
         return destination
+
+    def _ensure_paperqa_library(self) -> str | None:
+        """Prepare PaperQA on first use and reuse its scope thereafter."""
+        if self.paperqa_scope_id:
+            return self.paperqa_scope_id
+        if not self.paperqa_enabled:
+            return None
+        library = prepare_paperqa_library(
+            user_id=str(self.user_id),
+            assistant_id=str(self.assistant_id or "assistant"),
+            session_id=self.session_id,
+            resources=self.attached_files,
+            authorization=self.openwebui_authorization or "",
+        )
+        self.paperqa_scope_id = library.scope_id
+        self.paperqa_direct_scope_id = library.direct_scope_id
+        self.paperqa_direct_file_names = library.direct_file_names
+        return self.paperqa_scope_id
 
     def _model_image_part(self, filepath: str) -> dict:
         """Read and validate one sandbox image for a multimodal model call."""
@@ -971,25 +997,6 @@ class TerminalAgent:
                 )
 
         self._shown_image_hashes.clear()
-        if getattr(self, "paperqa_enabled", False):
-            emit_progress(
-                "syncing_paperqa",
-                "Preparing the attached literature collection…",
-            )
-            library = prepare_paperqa_library(
-                user_id=str(self.user_id),
-                assistant_id=str(self.assistant_id or "assistant"),
-                session_id=self.session_id,
-                resources=self.attached_files,
-                authorization=self.openwebui_authorization or "",
-            )
-            self.paperqa_scope_id = library.scope_id
-            self.paperqa_direct_scope_id = library.direct_scope_id
-            self.paperqa_direct_file_names = library.direct_file_names
-            emit_progress(
-                "syncing_paperqa",
-                f"PaperQA literature is ready ({library.paper_count} PDFs)",
-            )
         if getattr(self, "attached_files", None):
             emit_progress("syncing_inputs", "Preparing attached files…")
             synced_inputs = self._sync_inputs_from_openwebui()

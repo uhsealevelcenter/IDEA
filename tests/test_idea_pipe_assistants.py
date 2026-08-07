@@ -621,6 +621,60 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_pipe_stop_clears_thinking_status_and_requests_backend_stop(self):
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-stop", "status": "queued"}
+        stop_response = Mock()
+        stop_response.raise_for_status.return_value = None
+        client.post = AsyncMock(side_effect=[start_response, stop_response])
+        polling = asyncio.Event()
+
+        async def blocked_get(*args, **kwargs):
+            polling.set()
+            await asyncio.Event().wait()
+
+        client.get = AsyncMock(side_effect=blocked_get)
+        event_emitter = AsyncMock()
+
+        async def cancel_while_polling():
+            stream = idea_pipe.Pipe().pipe(
+                {"messages": [{"role": "user", "content": "Run Python"}]},
+                __user__={"id": "user-1", "role": "user"},
+                __metadata__={"chat_id": "chat-1"},
+                __event_emitter__=event_emitter,
+            )
+            pending = asyncio.create_task(anext(stream))
+            await asyncio.wait_for(polling.wait(), timeout=0.1)
+            pending.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await pending
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            asyncio.run(cancel_while_polling())
+
+        self.assertEqual(client.post.await_count, 2)
+        self.assertTrue(
+            client.post.await_args_list[-1].args[0].endswith(
+                "/chat-runs/run-stop/stop"
+            )
+        )
+        self.assertEqual(
+            event_emitter.await_args_list[-1].args[0],
+            {
+                "type": "status",
+                "data": {
+                    "action": "idea_agent",
+                    "phase": "stopped",
+                    "description": "Stopped",
+                    "done": True,
+                },
+            },
+        )
+
     def test_pipe_resolves_artifact_link_split_across_message_chunks(self):
         response = Mock()
         response.raise_for_status.return_value = None

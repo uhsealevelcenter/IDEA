@@ -558,6 +558,7 @@ class Pipe:
         artifact_reference_confirmed = False
         pending_files: list[dict] = []
         status_done = False
+        stop_sent = False
 
         async def emit_status(status: dict) -> None:
             """Forward a LangGraph phase to Open WebUI's native status UI."""
@@ -587,6 +588,23 @@ class Pipe:
                 # Status display is best-effort and must never interrupt the
                 # actual assistant response.
                 return
+
+        async def request_backend_stop() -> None:
+            """Send at most one cooperative stop request for this run."""
+            nonlocal stop_sent
+            if not run_id or run_terminal or stop_sent:
+                return
+            stop_sent = True
+            try:
+                async with httpx.AsyncClient(timeout=10) as stop_client:
+                    await stop_client.post(
+                        f"{self.valves.LANGGRAPH_SERVICE_URL}/chat-runs/{run_id}/stop",
+                        headers=headers,
+                    )
+            except Exception:
+                # The local terminal status is more important than surfacing a
+                # cleanup error after the browser has already disconnected.
+                pass
 
         def flush_message_buffer() -> str:
             nonlocal message_buffer, artifact_reference_confirmed
@@ -689,6 +707,18 @@ class Pipe:
                             yield f"\n\n**Error:** {response_data['error']}\n\n"
                         break
                     await asyncio.sleep(0.25)
+        except asyncio.CancelledError:
+            # Open WebUI cancels this generator when the user presses Stop.
+            # Clear its last non-terminal status immediately; polling has
+            # already ended, so it cannot observe the backend's stop event.
+            await emit_status({
+                "action": "idea_agent",
+                "phase": "stopped",
+                "description": "Stopped",
+                "done": True,
+            })
+            await asyncio.shield(request_backend_stop())
+            raise
         except httpx.HTTPError as exc:
             await emit_status({
                 "action": "idea_agent",
@@ -704,15 +734,16 @@ class Pipe:
         finally:
             # The stock Open WebUI Stop cancels this generator. Convert that
             # disconnect into a backend stop instead of leaving work running.
-            if run_id and not run_terminal:
-                try:
-                    async with httpx.AsyncClient(timeout=10) as stop_client:
-                        await stop_client.post(
-                            f"{self.valves.LANGGRAPH_SERVICE_URL}/chat-runs/{run_id}/stop",
-                            headers=headers,
-                        )
-                except Exception:
-                    pass
+            # Generator close paths do not always surface as CancelledError,
+            # so also terminalize any still-active status here.
+            if run_id and not run_terminal and not status_done:
+                await emit_status({
+                    "action": "idea_agent",
+                    "phase": "stopped",
+                    "description": "Stopped",
+                    "done": True,
+                })
+            await request_backend_stop()
 
         referenced_file_ids: set[str] = set()
         if message_buffer:

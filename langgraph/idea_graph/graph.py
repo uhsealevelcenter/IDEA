@@ -18,7 +18,7 @@ from .memory import (
     sha256_text,
     utc_now,
 )
-from .runtime import GraphRuntime
+from .runtime import GraphRuntime, ModelCallCancelled
 from .state import IDEAState
 
 
@@ -80,7 +80,14 @@ def build_idea_graph(
             "description": "Thinking…", "done": False,
         })
         messages = runtime.model_messages(state)  # type: ignore[attr-defined]
-        response = runtime.call_model(messages)
+        try:
+            response = runtime.call_model(messages, cancellation=cancellation)
+        except ModelCallCancelled as exc:
+            return {
+                "stop_requested": True,
+                "stop_reason": str(exc) or cancellation.reason or "user_requested",
+                "final_status": "stopping",
+            }
         tool_calls = []
         for raw in response.tool_calls or []:
             call = dict(raw)

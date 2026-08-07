@@ -45,7 +45,7 @@ class FakeRuntime:
             messages.insert(1, SystemMessage(content=block))
         return messages
 
-    def call_model(self, messages):
+    def call_model(self, messages, *, cancellation=None):
         self.model_inputs.append(messages)
         self.model_calls += 1
         if self.model_calls == 1:

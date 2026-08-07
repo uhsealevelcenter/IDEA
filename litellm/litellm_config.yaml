@@ -77,7 +77,8 @@ general_settings:
 litellm_settings:
   set_verbose: false # Disable debug logging in production.
   json_logs: true # Structured (JSON) logs.
-  request_timeout: 600 # Seconds to wait on the upstream LLM API call.
+  request_timeout: 120 # Keep provider stalls bounded; the client uses the same ceiling.
+  num_retries: 1 # One short retry before surfacing a provider failure to the UI.
 
   # Cache responses in the existing `redis` service (see
   # docker-compose.yml) - same instance langgraph_service.py already uses
@@ -93,3 +94,10 @@ litellm_settings:
   # applicable here yet, but harmless to leave on); does not affect
   # store_prompts_in_spend_logs above.
   redact_user_api_key_info: true
+
+router_settings:
+  # The background-task deployment is also a capable chat/tool model. Use it
+  # when the primary deployment is throttled instead of retrying for minutes.
+  fallbacks:
+    - gpt-5.6-sol:
+        - gpt-5.6-luna
