@@ -69,9 +69,13 @@ After Open WebUI and LiteLLM are running, apply the configuration with:
 The script reads `.env`, authenticates with the admin
 `OPENWEBUI_API_KEY`, and idempotently reconciles the internal LiteLLM
 connection, Luna's hidden/public model metadata, `TASK_MODEL_EXTERNAL`,
-context compaction, and the title-generation prompt. Context compaction is
-enabled at 136,000 tokens by default, matching legacy IDEA's production
-policy of compacting at 50% of its 272,000-token long-context threshold.
+Open WebUI's native execution settings, context compaction, and the
+title-generation prompt. Native Code Execution and Code Interpreter are
+disabled by default because they run in a separate Pyodide/Jupyter runtime
+that cannot access IDEA's persistent LangGraph kernel or workspace. This
+does not disable IDEA's own Python tools. Context compaction is enabled at
+136,000 tokens by default, matching legacy IDEA's production policy of
+compacting at 50% of its 272,000-token long-context threshold.
 The configurator also raises Open WebUI's Token Cap to at least that
 threshold, while preserving an existing higher cap, so a stale lower cap
 cannot cause earlier-than-configured compaction. The existing compaction

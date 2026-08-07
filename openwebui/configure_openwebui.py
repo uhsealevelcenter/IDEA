@@ -3,8 +3,9 @@
 
 This intentionally leaves Open WebUI's persistent configuration enabled.
 Only the LiteLLM task-model connection, hidden task-model metadata, external
-task model, context-compaction settings, and title-generation prompt are
-managed here; other Admin Panel changes remain database-backed and editable.
+task model, native code-execution settings, context-compaction settings, and
+title-generation prompt are managed here; other Admin Panel changes remain
+database-backed and editable.
 """
 
 from __future__ import annotations
@@ -413,6 +414,27 @@ def configure_context_compaction(
         )
 
 
+def configure_native_code_execution(
+    client: OpenWebUIClient,
+    code_execution_enabled: bool,
+    code_interpreter_enabled: bool,
+) -> None:
+    """Reconcile Open WebUI runtimes that are separate from IDEA's kernel."""
+    config = client.get("/api/v1/configs/code_execution")
+    config["ENABLE_CODE_EXECUTION"] = code_execution_enabled
+    config["ENABLE_CODE_INTERPRETER"] = code_interpreter_enabled
+    # The endpoint expects the complete form, so preserve engine, Jupyter,
+    # authentication, timeout, and prompt settings while changing only the
+    # two managed enabled states.
+    client.post("/api/v1/configs/code_execution", config)
+
+    verified = client.get("/api/v1/configs/code_execution")
+    if verified.get("ENABLE_CODE_EXECUTION") is not code_execution_enabled:
+        raise RuntimeError("Code Execution enabled-state verification failed")
+    if verified.get("ENABLE_CODE_INTERPRETER") is not code_interpreter_enabled:
+        raise RuntimeError("Code Interpreter enabled-state verification failed")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -467,6 +489,8 @@ def main() -> int:
             )
         )
     )
+    code_execution_enabled = env_bool("ENABLE_CODE_EXECUTION", False)
+    code_interpreter_enabled = env_bool("ENABLE_CODE_INTERPRETER", False)
     litellm_key = os.getenv("LITELLM_MASTER_KEY", "")
     if not litellm_key:
         raise RuntimeError("LITELLM_MASTER_KEY is required")
@@ -480,6 +504,11 @@ def main() -> int:
     catalog_model = wait_for_model(client, task_model, args.wait_seconds)
     hide_task_model(client, task_model, catalog_model)
     configure_task_settings(client, task_model, TITLE_GENERATION_PROMPT)
+    configure_native_code_execution(
+        client,
+        code_execution_enabled,
+        code_interpreter_enabled,
+    )
     configure_context_compaction(
         client,
         compaction_enabled,
@@ -489,6 +518,7 @@ def main() -> int:
         f"Done: {task_model!r} is the hidden External Task Model; "
         f"context compaction is {'enabled' if compaction_enabled else 'disabled'} "
         f"at {compaction_threshold} tokens; the title prompt is configured. "
+        "Native code execution and Code Interpreter settings are reconciled. "
         "Other Admin Panel settings remain persistent and editable."
     )
     return 0

@@ -260,6 +260,12 @@ services:
     environment:
       - WEBUI_NAME=Open WebUI # Per license, Open WebUI NAME and LOGO must remain in their original, prominent locations throughout the application and user interface.
       - ENABLE_OLLAMA_API=false
+      # IDEA executes Python through its own authenticated, persistent
+      # LangGraph sandbox kernel. Open WebUI's native code-block Run button
+      # and Code Interpreter use a separate Pyodide/Jupyter environment that
+      # cannot see IDEA kernel state or workspace files, so keep both off.
+      - ENABLE_CODE_EXECUTION=${ENABLE_CODE_EXECUTION:-false}
+      - ENABLE_CODE_INTERPRETER=${ENABLE_CODE_INTERPRETER:-false}
       - LANGGRAPH_SERVICE_URL=http://langgraph:8010
       # Default (40) is a concurrency *ceiling* for blocking/sync ops, not
       # a thread/CPU count - too low for this deployment's usage (each

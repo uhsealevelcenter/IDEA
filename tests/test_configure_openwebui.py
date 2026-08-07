@@ -234,6 +234,38 @@ class ConfigureOpenWebUITests(unittest.TestCase):
             200_000,
         )
 
+    def test_native_code_execution_is_disabled_without_losing_other_settings(self):
+        current = {
+            "ENABLE_CODE_EXECUTION": True,
+            "CODE_EXECUTION_ENGINE": "pyodide",
+            "CODE_EXECUTION_JUPYTER_URL": "https://jupyter.example",
+            "ENABLE_CODE_INTERPRETER": True,
+            "CODE_INTERPRETER_ENGINE": "jupyter",
+            "CODE_INTERPRETER_PROMPT_TEMPLATE": "Keep this prompt",
+        }
+        client = FakeClient({"/api/v1/configs/code_execution": current})
+
+        configure_openwebui.configure_native_code_execution(
+            client,
+            False,
+            False,
+        )
+
+        path, payload = client.posts[0]
+        self.assertEqual(path, "/api/v1/configs/code_execution")
+        self.assertFalse(payload["ENABLE_CODE_EXECUTION"])
+        self.assertFalse(payload["ENABLE_CODE_INTERPRETER"])
+        self.assertEqual(payload["CODE_EXECUTION_ENGINE"], "pyodide")
+        self.assertEqual(
+            payload["CODE_EXECUTION_JUPYTER_URL"],
+            "https://jupyter.example",
+        )
+        self.assertEqual(payload["CODE_INTERPRETER_ENGINE"], "jupyter")
+        self.assertEqual(
+            payload["CODE_INTERPRETER_PROMPT_TEMPLATE"],
+            "Keep this prompt",
+        )
+
     def test_title_prompt_matches_requested_template(self):
         self.assertEqual(
             configure_openwebui.TITLE_GENERATION_PROMPT,
