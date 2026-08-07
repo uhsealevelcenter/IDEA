@@ -51,6 +51,12 @@ services:
       - PYTHONUNBUFFERED=1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - IDEA_AGENT_RUNTIME=${IDEA_AGENT_RUNTIME:-langgraph}
+      - IDEA_HISTORY_SOURCE=${IDEA_HISTORY_SOURCE:-openwebui}
+      - IDEA_KERNEL_SCOPE=${IDEA_KERNEL_SCOPE:-chat_assistant}
+      - IDEA_IDENTITY_SECRET=${IDEA_IDENTITY_SECRET:-}
+      - LANGGRAPH_DATABASE_URL=postgresql://idea_langgraph:${LANGGRAPH_DB_PASSWORD?Variable not set}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?options=-csearch_path%3Didea_langgraph%2Cpublic
+      - LANGGRAPH_AES_KEY=${LANGGRAPH_AES_KEY:-}
       # OPENAI_API_KEY / OPENAI_BASE_URL intentionally NOT re-declared here -
       # env_file above already injects them literally from .env. Re-declaring
       # them as ${OPENAI_API_KEY} would instead resolve from the host shell
@@ -89,9 +95,14 @@ services:
     volumes:
       - idea_paperqa_data:/app/data
     depends_on:
-      - redis
-      - sandbox
-      - litellm
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      sandbox:
+        condition: service_started
+      litellm:
+        condition: service_started
 
   sandbox:
     build:

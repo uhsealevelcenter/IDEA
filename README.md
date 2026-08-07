@@ -104,6 +104,11 @@ OPENAI_BASE_URL=YOUR_AZURE_OPENAI_ENDPOINT_HERE
 POSTGRES_DB=idea_db
 POSTGRES_USER=idea_user
 POSTGRES_PASSWORD=change_this
+LANGGRAPH_DB_PASSWORD=change_this
+
+# Durable agent memory (use exactly 16, 24, or 32 characters for AES)
+LANGGRAPH_AES_KEY=0123456789abcdef0123456789abcdef
+IDEA_IDENTITY_SECRET=change_this
 
 # Open WebUI (generate with: openssl rand -hex 32)
 WEBUI_SECRET_KEY=change_this
@@ -117,13 +122,20 @@ See `example.env` for the full list of variables and inline comments explaining 
 
 IDEA has been tested with several LLM inference providers, including OpenAI (https://platform.openai.com/), Anthropic (https://claude.com/platform/api), and Jetstream2 (https://docs.jetstream-cloud.org/inference-service/overview/).
 
-### 3. Set Up the LiteLLM Database Role
+### 3. Set Up the Service Database Roles
 
-LiteLLM (the LLM proxy in `litellm/`) uses a dedicated Postgres role/schema on the same `db` service. Run this once (idempotent, safe to re-run):
+LiteLLM and LangGraph use separate, least-privilege Postgres roles and schemas
+on the shared `db` service. Run both setup scripts once before starting the full
+stack; both are idempotent and safe to re-run:
 
 ```bash
 ./litellm/setup_litellm_db.sh
+./langgraph/db/setup_langgraph_db.sh
 ```
+
+The LangGraph setup builds its service image and initializes the checkpoint
+tables. PostgreSQL checkpoints contain exact tool execution memory and are
+encrypted when `LANGGRAPH_AES_KEY` is set.
 
 ### 4. Seed Shared Scientific Data
 
@@ -219,7 +231,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 Explicit `-f` flags skip `docker-compose.override.yml`, so dev-only host ports (`langgraph`, `sandbox`, `litellm`) and the extra `nginx` service are never published. `docker-compose.prod.yml` is currently an empty overlay kept for this `-f` combo's sake (its one-time purpose - the `sandbox` `/dev/kvm` passthrough - now lives directly in `docker-compose.yml`, gated behind the `KVM_DEVICE_PATH` env var).
 
-Repeat the LiteLLM DB setup (step 3 above) and the one-time Open WebUI Function setup (step 5 above) on first deploy.
+Repeat both database setup scripts (step 3 above) and the one-time Open WebUI
+Function setup (step 5 above) on first deploy.
 
 In CI, this is what the `deploy` job in `.github/workflows/deploy.yml` runs remotely over SSH via each environment's `DEPLOY_CMD` GitHub Actions variable.
 

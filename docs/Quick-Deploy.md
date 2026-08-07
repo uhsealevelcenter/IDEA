@@ -29,15 +29,18 @@ or changing defaults.
 
    At minimum, set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, the Postgres
    credentials, `WEBUI_SECRET_KEY`, `LITELLM_DB_PASSWORD`,
+   `LANGGRAPH_DB_PASSWORD`, `LANGGRAPH_AES_KEY`, `IDEA_IDENTITY_SECRET`,
    `LITELLM_MASTER_KEY`, `LITELLM_VIRTUAL_KEY`, and
    `INTERNAL_SERVICE_TOKEN`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
    host and review `ENABLE_SIGNUP`, `CORS_ORIGINS`, registry credentials, and
    the model names.
 
-3. Create the isolated LiteLLM database role and schema:
+3. Create the isolated LiteLLM and LangGraph database roles, schemas, and
+   checkpoint tables:
 
    ```bash
    ./litellm/setup_litellm_db.sh
+   ./langgraph/db/setup_langgraph_db.sh
    ```
 
 4. Seed the shared scientific-data volume before first use, if a legacy data
