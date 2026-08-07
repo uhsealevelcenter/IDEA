@@ -50,7 +50,7 @@ from utils.tools import (
     make_get_climate_indices_tool,
     make_query_knowledge_base_tool,
 )
-from config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
+from idea_config import LITELLM_PROXY_URL, LITELLM_VIRTUAL_KEY, LITELLM_END_USER_HEADER
 from progress import (
     progress_chunk,
     tool_call_chunk_names,

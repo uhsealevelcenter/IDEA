@@ -8,9 +8,10 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.1.0
+version: 0.2.0
 """
 
+import asyncio
 import json
 import posixpath
 import re
@@ -23,6 +24,9 @@ from urllib.parse import quote, unquote
 
 BASE_MODEL_ID = "idea_terminal_agent.idea-terminal-agent"
 BASE_MODEL_ALIASES = {BASE_MODEL_ID, "idea-terminal-agent"}
+TERMINAL_RUN_STATUSES = {
+    "completed", "stopped", "failed", "cancelled-before-start"
+}
 SANDBOX_MARKDOWN_LINK_RE = re.compile(
     r"\[([^\]]+)\]\((?:(?:sandbox|file):)?(/outputs/[^)\s]+)\)"
 )
@@ -133,6 +137,37 @@ def _message_content(message: dict) -> str:
             and part.get("text")
         )
     return str(content)
+
+
+def _structured_messages(messages: list[dict]) -> list[dict]:
+    """Preserve Open WebUI's selected branch as structured roles."""
+    result: list[dict] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in {"user", "assistant", "system"}:
+            continue
+        content = message.get("content", "")
+        if not isinstance(content, (str, list)):
+            content = str(content)
+        result.append({
+            "id": str(message.get("id") or ""),
+            "role": role,
+            "content": content,
+        })
+    return result
+
+
+def _latest_idea_context(messages: list[dict]) -> dict:
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        meta = message.get("meta") or message.get("metadata") or {}
+        context = meta.get("idea_context") if isinstance(meta, dict) else None
+        if isinstance(context, dict) and context.get("schema_version") == 1:
+            return context
+    return {}
 
 
 def _latest_user_content(messages: list) -> str:
@@ -490,14 +525,15 @@ class Pipe:
             self.valves.PAPERQA_ASSISTANT_IDS,
         )
 
+        idea_context = _latest_idea_context(messages)
         payload = {
-            # Keep Redis conversation history separate when the same Open
-            # WebUI chat is deliberately switched to another Assistant.
-            "session_key": f"{user_id}:{session_id}:{assistant_id or BASE_MODEL_ID}",
+            "session_id": session_id,
             "user_id": user_id,
             "user_email": user_email,
             "is_guest": is_guest,
-            "message": user_content,
+            "messages": _structured_messages(messages),
+            "input_checkpoint_id": idea_context.get("output_checkpoint_id"),
+            "idea_context": idea_context,
             "model": self.valves.MODEL,
             "assistant_id": assistant_id,
             "assistant_system_prompt": assistant_system_prompt,
@@ -566,29 +602,58 @@ class Pipe:
             "done": False,
         })
 
+        run_id = ""
+        run_terminal = False
         try:
             timeout = httpx.Timeout(self.valves.REQUEST_TIMEOUT_SECONDS)
             async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self.valves.LANGGRAPH_SERVICE_URL}/chat",
+                response = await client.post(
+                    f"{self.valves.LANGGRAPH_SERVICE_URL}/chat-runs",
                     json=payload,
                     headers=headers,
-                ) as response:
+                )
+                response.raise_for_status()
+                run_id = str(response.json().get("run_id") or "")
+                if not run_id:
+                    raise httpx.HTTPError("LangGraph did not return a run_id")
+                after = 0
+                while True:
+                    response = await client.get(
+                        f"{self.valves.LANGGRAPH_SERVICE_URL}/chat-runs/{run_id}/events",
+                        params={"after": after},
+                        headers=headers,
+                    )
                     response.raise_for_status()
-                    async for raw_line in response.aiter_lines():
-                        if not raw_line or not raw_line.startswith("data: "):
+                    response_data = response.json()
+                    for event in response_data.get("events") or []:
+                        after = max(after, int(event.get("seq") or 0))
+                        chunk = event.get("chunk")
+                        if isinstance(chunk, str):
+                            if artifact_reference_confirmed:
+                                message_buffer += chunk
+                                continue
+                            streamable, message_buffer, confirmed = (
+                                _split_streamable_message(message_buffer + chunk)
+                            )
+                            artifact_reference_confirmed = confirmed
+                            if streamable:
+                                yield streamable
                             continue
-                        data = raw_line[len("data: "):]
-                        try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError:
+                        if not isinstance(chunk, dict):
                             continue
-
+                        if chunk.get("type") == "idea_context":
+                            if __event_emitter__:
+                                try:
+                                    await __event_emitter__({
+                                        "type": "message_meta",
+                                        "data": {"idea_context": chunk},
+                                    })
+                                except Exception:
+                                    pass
+                            continue
                         if chunk.get("type") == "status":
                             await emit_status(chunk)
                             continue
-
                         if "error" in chunk:
                             await emit_status({
                                 "action": "idea_agent",
@@ -597,34 +662,33 @@ class Pipe:
                                 "done": True,
                                 "error": True,
                             })
-
                         if chunk.get("type") == "message":
                             content = chunk.get("content", "")
                             if artifact_reference_confirmed:
                                 message_buffer += content
                                 continue
-
                             streamable, message_buffer, confirmed = (
-                                _split_streamable_message(
-                                    message_buffer + content
-                                )
+                                _split_streamable_message(message_buffer + content)
                             )
                             artifact_reference_confirmed = confirmed
                             if streamable:
                                 yield streamable
                             continue
-
                         if chunk.get("type") == "file":
                             pending_files.append(chunk)
                             continue
-
                         if message_buffer:
                             yield flush_message_buffer()
-                        for translated in self._translate_chunk(
-                            chunk,
-                            public_base_url,
-                        ):
+                        for translated in self._translate_chunk(chunk, public_base_url):
                             yield translated
+
+                    status = str(response_data.get("status") or "")
+                    if status in TERMINAL_RUN_STATUSES:
+                        run_terminal = True
+                        if status == "failed" and response_data.get("error"):
+                            yield f"\n\n**Error:** {response_data['error']}\n\n"
+                        break
+                    await asyncio.sleep(0.25)
         except httpx.HTTPError as exc:
             await emit_status({
                 "action": "idea_agent",
@@ -637,6 +701,18 @@ class Pipe:
                 yield flush_message_buffer()
             yield f"\n\n**Error reaching langgraph service:** {exc}\n\n"
             return
+        finally:
+            # The stock Open WebUI Stop cancels this generator. Convert that
+            # disconnect into a backend stop instead of leaving work running.
+            if run_id and not run_terminal:
+                try:
+                    async with httpx.AsyncClient(timeout=10) as stop_client:
+                        await stop_client.post(
+                            f"{self.valves.LANGGRAPH_SERVICE_URL}/chat-runs/{run_id}/stop",
+                            headers=headers,
+                        )
+                except Exception:
+                    pass
 
         referenced_file_ids: set[str] = set()
         if message_buffer:

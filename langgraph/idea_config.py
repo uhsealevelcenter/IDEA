@@ -1,5 +1,5 @@
 """
-Centralized configuration for langgraph's sandbox-tooling settings.
+Centralized configuration for IDEA's LangGraph and sandbox tooling.
 
 Each constant below documents which file it was originally defined in (or
 is consumed by) so this stays traceable - update values here going
@@ -14,6 +14,21 @@ import os
 # sandbox execution state (pexpect shells, microsandbox microVMs). See the
 # `sandbox` service in docker-compose.yml.
 SANDBOX_SERVICE_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox:8020").rstrip("/")
+
+# Agent orchestration and durable memory. ``manual`` remains available as a
+# rollback path while production checkpoints are introduced.
+IDEA_AGENT_RUNTIME = os.getenv("IDEA_AGENT_RUNTIME", "manual").strip().lower()
+IDEA_HISTORY_SOURCE = os.getenv("IDEA_HISTORY_SOURCE", "redis").strip().lower()
+IDEA_KERNEL_SCOPE = os.getenv("IDEA_KERNEL_SCOPE", "chat_assistant").strip().lower()
+LANGGRAPH_DATABASE_URL = os.getenv("LANGGRAPH_DATABASE_URL", "").strip()
+LANGGRAPH_AES_KEY = os.getenv("LANGGRAPH_AES_KEY", "").strip()
+IDEA_MAX_STATE_BYTES = int(os.getenv("IDEA_MAX_STATE_BYTES", "524288"))
+IDEA_MAX_RECENT_ACTIONS = int(os.getenv("IDEA_MAX_RECENT_ACTIONS", "50"))
+IDEA_MAX_RECENT_EXECUTIONS = int(os.getenv("IDEA_MAX_RECENT_EXECUTIONS", "20"))
+IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES = int(
+    os.getenv("IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES", "12000")
+)
+IDEA_MAX_CODE_INLINE_BYTES = int(os.getenv("IDEA_MAX_CODE_INLINE_BYTES", "100000"))
 
 # Originally defined in: tools/persistent_terminal.py (as httpx.Timeout(...))
 # HTTP timeouts (seconds) for every call from langgraph to sandbox_service.

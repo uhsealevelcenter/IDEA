@@ -14,6 +14,17 @@ from pydantic import BaseModel, Field
 import redis
 
 from multi_agent import ConversationOrchestrator
+from idea_config import (
+    IDEA_AGENT_RUNTIME,
+    IDEA_KERNEL_SCOPE,
+    IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES,
+)
+from idea_graph.checkpoints import get_checkpointer
+from idea_graph.control import RunCancellation
+from idea_graph.graph import build_idea_graph
+from idea_graph.identities import derive_execution_identities
+from idea_graph.runtime import TerminalGraphRuntime
+from tools.persistent_terminal import interrupt_run as interrupt_sandbox_run
 
 app = FastAPI(title="LangGraph Service", version="1.0.0")
 
@@ -54,6 +65,9 @@ CHAT_RUN_TTL_SECONDS = int(os.getenv("CHAT_RUN_TTL_SECONDS", "86400"))
 CHAT_RUN_PREFIX = "langgraph_run:"
 CHAT_RUN_EVENTS_PREFIX = "langgraph_run_events:"
 CHAT_RUN_SEQ_PREFIX = "langgraph_run_seq:"
+CHAT_RUN_CANCEL_PREFIX = "langgraph_run_cancel:"
+chat_run_controls: dict[str, RunCancellation] = {}
+chat_run_controls_lock = threading.Lock()
 
 
 # Helper functions for chat runs
@@ -67,6 +81,10 @@ def _chat_run_events_key(run_id: str) -> str:
 
 def _chat_run_seq_key(run_id: str) -> str:
     return f"{CHAT_RUN_SEQ_PREFIX}{run_id}"
+
+
+def _chat_run_cancel_key(run_id: str) -> str:
+    return f"{CHAT_RUN_CANCEL_PREFIX}{run_id}"
 
 
 def _set_chat_run_status(run_id: str, status: dict[str, Any]) -> None:
@@ -131,6 +149,10 @@ class ChatRequest(BaseModel):
     user_email: Optional[str] = None
     is_guest: bool
     message: str
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    chat_id: Optional[str] = None
+    input_checkpoint_id: Optional[str] = None
+    idea_context: dict[str, Any] = Field(default_factory=dict)
     model: Optional[str] = "gpt-5.6-sol"
     temperature: Optional[float] = None
     max_iterations: Optional[int] = 20
@@ -148,6 +170,8 @@ class ChatRunRequest(BaseModel):
     user_email: Optional[str] = None
     is_guest: bool
     messages: list[dict[str, Any]]
+    input_checkpoint_id: Optional[str] = None
+    idea_context: dict[str, Any] = Field(default_factory=dict)
     model: Optional[str] = "gpt-5.6-sol"
     assistant_id: Optional[str] = None
     assistant_system_prompt: Optional[str] = None
@@ -174,6 +198,8 @@ def _run_chat_job(
     attached_files: Optional[list[dict[str, Any]]] = None,
     openwebui_authorization: Optional[str] = None,
     paperqa_enabled: bool = False,
+    input_checkpoint_id: Optional[str] = None,
+    idea_context: Optional[dict[str, Any]] = None,
 ):
     """Background job to execute chat and stream events to Redis"""
     session_key = f"{user_id}:{session_id}"
@@ -186,7 +212,112 @@ def _run_chat_job(
             updated_at=datetime.utcnow().isoformat(),
         )
         
-        # Build a fresh orchestrator for this request (no cross-request cache
+        if IDEA_AGENT_RUNTIME == "langgraph":
+            identities = derive_execution_identities(
+                user_id=user_id,
+                chat_id=session_id,
+                assistant_id=assistant_id,
+                run_id=run_id,
+                kernel_scope=IDEA_KERNEL_SCOPE,
+            )
+            control = RunCancellation()
+            queued_cancel_reason = redis_client.get(_chat_run_cancel_key(run_id))
+            if queued_cancel_reason:
+                control.request(queued_cancel_reason)
+            with chat_run_controls_lock:
+                chat_run_controls[run_id] = control
+
+            monitor_done = threading.Event()
+
+            def _monitor_cancel() -> None:
+                while not monitor_done.wait(0.25):
+                    reason = redis_client.get(_chat_run_cancel_key(run_id))
+                    if reason:
+                        control.request(reason)
+                        return
+
+            monitor = threading.Thread(target=_monitor_cancel, daemon=True)
+            monitor.start()
+            try:
+                runtime = TerminalGraphRuntime(
+                    user_id=user_id,
+                    user_email=user_email,
+                    session_id=session_key,
+                    model=model,
+                    assistant_id=assistant_id,
+                    assistant_system_prompt=assistant_system_prompt,
+                    attached_files=list(attached_files or []),
+                    openwebui_authorization=openwebui_authorization,
+                    is_guest=is_guest,
+                    paperqa_enabled=paperqa_enabled,
+                    event_callback=lambda chunk: _append_chat_run_event(run_id, chunk),
+                )
+                graph = build_idea_graph(
+                    runtime,
+                    cancellation=control,
+                    checkpointer=get_checkpointer(),
+                    result_excerpt_bytes=IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES,
+                )
+                config: dict[str, Any] = {
+                    "configurable": {"thread_id": identities.thread_id},
+                    "recursion_limit": 100,
+                }
+                if input_checkpoint_id:
+                    config["configurable"]["checkpoint_id"] = input_checkpoint_id
+                normalized_messages = [
+                    {
+                        "id": str(item.get("id") or ""),
+                        "role": str(item.get("role") or "user"),
+                        "content": item.get("content", ""),
+                    }
+                    for item in messages
+                    if isinstance(item, dict)
+                    and item.get("role") in {"user", "assistant", "system"}
+                ]
+                result = graph.invoke(
+                    {
+                        "schema_version": 1,
+                        "conversation_messages": normalized_messages,
+                        "run_id": run_id,
+                        "thread_id": identities.thread_id,
+                        "workspace_id": identities.workspace_id,
+                        "kernel_id": identities.kernel_id,
+                    },
+                    config=config,
+                )
+                snapshot = graph.get_state({
+                    "configurable": {"thread_id": identities.thread_id}
+                })
+                checkpoint_id = snapshot.config.get("configurable", {}).get("checkpoint_id")
+                _append_chat_run_event(run_id, {
+                    "type": "idea_context",
+                    "schema_version": 1,
+                    "thread_id": identities.thread_id,
+                    "run_id": run_id,
+                    "input_checkpoint_id": input_checkpoint_id,
+                    "output_checkpoint_id": checkpoint_id,
+                    "active_artifact_id": result.get("active_artifact_id"),
+                    "execution_refs": [
+                        item.get("execution_id")
+                        for item in (result.get("python_executions") or [])[-20:]
+                    ],
+                })
+                final_status = result.get("final_status") or "completed"
+                _update_chat_run_status(
+                    run_id,
+                    status=final_status,
+                    thread_id=identities.thread_id,
+                    checkpoint_id=checkpoint_id,
+                    completed_at=datetime.utcnow().isoformat(),
+                    updated_at=datetime.utcnow().isoformat(),
+                )
+                return
+            finally:
+                monitor_done.set()
+                with chat_run_controls_lock:
+                    chat_run_controls.pop(run_id, None)
+
+        # Manual rollback path. Build a fresh orchestrator for this request.
         # - see the note above chat_run_threads) and restore its history from
         # Redis, the durable/shared store for conversation state.
         orchestrator = ConversationOrchestrator(
@@ -246,6 +377,8 @@ def _run_chat_job(
             error=str(exc),
             updated_at=datetime.utcnow().isoformat(),
         )
+    finally:
+        chat_run_threads.pop(run_id, None)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -286,6 +419,8 @@ async def start_chat_run(request: ChatRunRequest):
             "attached_files": request.attached_files,
             "openwebui_authorization": request.openwebui_authorization,
             "paperqa_enabled": request.paperqa_enabled,
+            "input_checkpoint_id": request.input_checkpoint_id,
+            "idea_context": request.idea_context,
         },
         daemon=True,
     )
@@ -293,6 +428,40 @@ async def start_chat_run(request: ChatRunRequest):
     thread.start()
     
     return {"run_id": run_id, "status": "queued"}
+
+
+@app.post("/chat-runs/{run_id}/stop", dependencies=[Depends(require_internal_token)])
+async def stop_chat_run(run_id: str):
+    """Request a cooperative stop and preserve completed checkpoints."""
+    status = _get_chat_run_status(run_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Chat run not found")
+    current = status.get("status")
+    if current in {"completed", "stopped", "failed", "cancelled-before-start"}:
+        return {"run_id": run_id, "status": current, "stop_requested": False}
+    redis_client.set(
+        _chat_run_cancel_key(run_id),
+        "user_requested",
+        ex=CHAT_RUN_TTL_SECONDS,
+    )
+    with chat_run_controls_lock:
+        control = chat_run_controls.get(run_id)
+    if control:
+        control.request("user_requested")
+    user_id = str(status.get("user_id") or "")
+    if user_id:
+        interrupt_sandbox_run(user_id, run_id)
+    _update_chat_run_status(
+        run_id,
+        status="stopping",
+        stop_requested_at=datetime.utcnow().isoformat(),
+        updated_at=datetime.utcnow().isoformat(),
+    )
+    _append_chat_run_event(run_id, {
+        "type": "status", "phase": "stopping",
+        "description": "Stopping at the next safe point…", "done": False,
+    })
+    return {"run_id": run_id, "status": "stopping", "stop_requested": True}
 
 
 @app.get("/chat-runs/{run_id}", dependencies=[Depends(require_internal_token)])

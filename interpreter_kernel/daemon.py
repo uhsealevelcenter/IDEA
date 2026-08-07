@@ -104,7 +104,7 @@ _languages_lock = threading.Lock()
 # per-sandbox_id lock (terminal_registry.py), so this is defense-in-depth,
 # not the primary guarantee: a JupyterLanguage instance's run()/output
 # capture is not safe to call concurrently from two requests at once.
-_exec_lock = threading.Lock()
+_exec_locks: dict[str, threading.Lock] = {}
 
 _LANGUAGE_CLASSES = {
     "python": PythonLanguage,
@@ -112,18 +112,20 @@ _LANGUAGE_CLASSES = {
 }
 
 
-def _get_language(name: str):
+def _get_language(name: str, kernel_id: str = "default"):
+    key = (name, kernel_id)
     with _languages_lock:
-        if name not in _languages:
+        if key not in _languages:
             lang_class = _LANGUAGE_CLASSES[name]
             # Mirrors terminal.py's own dynamic check: only Jupyter-backed
             # Python needs a `computer` reference; Shell's __init__ takes
             # none.
             if lang_class.__init__.__code__.co_argcount > 1:
-                _languages[name] = lang_class(_StubComputer())
+                _languages[key] = lang_class(_StubComputer())
             else:
-                _languages[name] = lang_class()
-        return _languages[name]
+                _languages[key] = lang_class()
+            _exec_locks.setdefault(kernel_id, threading.Lock())
+        return _languages[key]
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -137,7 +139,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/run":
+        if self.path not in {"/run", "/interrupt"}:
             self._json(404, {"error": "not found"})
             return
 
@@ -148,6 +150,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid JSON body"})
             return
 
+        kernel_id = str(body.get("kernel_id") or "default")
+        if not kernel_id.replace("_", "").isalnum() or len(kernel_id) > 96:
+            self._json(400, {"error": "invalid kernel_id"})
+            return
+        if self.path == "/interrupt":
+            with _languages_lock:
+                runner = _languages.get(("python", kernel_id))
+            if runner is None:
+                self._json(200, {"interrupted": False})
+                return
+            runner.interrupt_and_drain()
+            self._json(200, {"interrupted": True})
+            return
+
         language = body.get("language", "python")
         code = body.get("code", "")
 
@@ -156,9 +172,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         chunks = []
-        with _exec_lock:
+        runner = _get_language(language, kernel_id)
+        with _exec_locks[kernel_id]:
             try:
-                runner = _get_language(language)
                 for chunk in runner.run(code):
                     if chunk.get("format") != "active_line":
                         chunks.append(chunk)
@@ -183,7 +199,7 @@ class _ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 def main():
     # Warm the Python kernel at boot so the first real /run call isn't
     # slowed down by ipykernel startup.
-    _get_language("python")
+    _get_language("python", "default")
     with _ThreadingServer((HOST, PORT), Handler) as httpd:
         httpd.serve_forever()
 

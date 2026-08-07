@@ -156,6 +156,40 @@ class MicrosandboxWriteFileTests(unittest.TestCase):
 
 
 class BinarySandboxClientTests(unittest.TestCase):
+    def test_python_execution_routes_kernel_and_run_ids(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"chunks": [{"type": "console", "content": "ok"}]}
+
+        with patch.object(persistent_terminal._client, "post", return_value=response) as post:
+            chunks = persistent_terminal.run_python(
+                "value = 1",
+                session_id="user-1",
+                kernel_id="kernel-1",
+                run_id="run-1",
+            )
+
+        self.assertEqual(chunks[0]["content"], "ok")
+        post.assert_called_once_with(
+            "/sandboxes/user-1/run-python",
+            json={
+                "code": "value = 1",
+                "kernel_id": "kernel-1",
+                "run_id": "run-1",
+            },
+        )
+
+    def test_run_interrupt_is_sent_to_the_sandbox_service(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"interrupted": True}
+
+        with patch.object(persistent_terminal._client, "post", return_value=response) as post:
+            interrupted = persistent_terminal.interrupt_run("user-1", "run-1")
+
+        self.assertTrue(interrupted)
+        post.assert_called_once_with("/sandboxes/user-1/runs/run-1/interrupt")
+
     def test_streams_binary_request_with_expected_size(self):
         response = Mock()
         response.raise_for_status.return_value = None

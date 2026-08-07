@@ -303,7 +303,12 @@ class MicrosandboxTerminal:
         # Generous ceiling; mirrors PersistentTerminal's default 1800s window.
         return 1800.0
 
-    def run_python(self, code: str) -> dict:
+    def run_python(
+        self,
+        code: str,
+        kernel_id: str = "default",
+        run_id: str = "",
+    ) -> dict:
         """
         Execute Python code in this sandbox's persistent Jupyter-backed
         kernel (see ../interpreter_kernel/daemon.py, baked into the VM
@@ -325,7 +330,10 @@ class MicrosandboxTerminal:
         try:
             self._exec(lambda: self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
             output = self._exec(
-                lambda: self._sandbox.shell(f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path}"),
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path} "
+                    f"--kernel-id {shlex.quote(kernel_id)} --run-id {shlex.quote(run_id)}"
+                ),
                 timeout=self._exec_timeout(code),
             )
         except Exception as e:
@@ -343,6 +351,21 @@ class MicrosandboxTerminal:
             stderr = getattr(output, "stderr_text", None) or ""
             content = text or stderr or "(no output from kernel client)"
             return {"chunks": [{"type": "console", "format": "output", "content": content}]}
+
+    def interrupt_python(self, kernel_id: str) -> bool:
+        """Send a Jupyter interrupt through the in-VM daemon."""
+        try:
+            output = self._exec(
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --interrupt "
+                    f"--kernel-id {shlex.quote(kernel_id)}"
+                ),
+                timeout=30.0,
+            )
+            payload = json.loads((output.stdout_text or "").strip())
+            return bool(payload.get("interrupted"))
+        except Exception:
+            return False
 
     def _get_open_terminal_key(self, retries: int = 10, delay: float = 0.5) -> str:
         """

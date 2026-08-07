@@ -85,6 +85,8 @@ class WriteFileRequest(BaseModel):
 
 class RunPythonRequest(BaseModel):
     code: str
+    kernel_id: str = "default"
+    run_id: str = ""
 
 
 class GrepSearchRequest(BaseModel):
@@ -222,7 +224,21 @@ async def run_python(sandbox_id: str, request: RunPythonRequest):
     console chunk, not an HTTP error), so the langgraph caller doesn't
     need special-case exception handling for this endpoint.
     """
-    return registry.run_python(request.code, sandbox_id=sandbox_id)
+    return registry.run_python(
+        request.code,
+        sandbox_id=sandbox_id,
+        kernel_id=request.kernel_id,
+        run_id=request.run_id,
+    )
+
+
+@app.post(
+    "/sandboxes/{sandbox_id}/runs/{run_id}/interrupt",
+    dependencies=[Depends(require_internal_token)],
+)
+async def interrupt_run(sandbox_id: str, run_id: str):
+    """Interrupt this run's active Python kernel without deleting its files."""
+    return {"ok": True, "interrupted": registry.interrupt_run(sandbox_id, run_id)}
 
 
 @app.post("/sandboxes/{sandbox_id}/grep", dependencies=[Depends(require_internal_token)])

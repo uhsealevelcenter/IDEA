@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from utils.output_sync import parse_file_metadata_output
-from config import (
+from idea_config import (
     SANDBOX_SERVICE_URL,
     SANDBOX_HTTP_CONNECT_TIMEOUT_SECONDS,
     SANDBOX_HTTP_READ_TIMEOUT_SECONDS,
@@ -450,7 +450,12 @@ def list_file_metadata(
     return parse_file_metadata_output(result.get("output", "") or "")
 
 
-def run_python(code: str, session_id: str) -> list[dict]:
+def run_python(
+    code: str,
+    session_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+) -> list[dict]:
     """
     Execute Python code in the session's persistent kernel (via
     sandbox_service's /run-python, backed by the in-VM OI kernel daemon -
@@ -465,12 +470,25 @@ def run_python(code: str, session_id: str) -> list[dict]:
     just summarizes this into text for the LLM-facing tool result.
     """
     try:
-        response = _client.post(f"/sandboxes/{session_id}/run-python", json={"code": code})
+        response = _client.post(
+            f"/sandboxes/{session_id}/run-python",
+            json={"code": code, "kernel_id": kernel_id, "run_id": run_id},
+        )
         response.raise_for_status()
         result = response.json()
     except httpx.HTTPError as e:
         return [{"type": "console", "format": "output", "content": f"✗ Failed to reach sandbox service: {e}"}]
     return result.get("chunks", [])
+
+
+def interrupt_run(session_id: str, run_id: str) -> bool:
+    """Best-effort, run-scoped interruption that preserves workspace files."""
+    try:
+        response = _client.post(f"/sandboxes/{session_id}/runs/{run_id}/interrupt")
+        response.raise_for_status()
+        return bool(response.json().get("interrupted"))
+    except httpx.HTTPError:
+        return False
 
 
 def grep_search(

@@ -1,5 +1,6 @@
 import importlib.util
 import asyncio
+import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,43 @@ SPEC.loader.exec_module(idea_pipe)
 
 
 class IdeaPipeAssistantTests(unittest.TestCase):
+    @staticmethod
+    def _chat_run_client(aiter_lines):
+        """Adapt legacy SSE fixtures to the durable chat-run polling API."""
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-1", "status": "queued"}
+        client.post = AsyncMock(return_value=start_response)
+        source = aiter_lines()
+        sequence = 0
+
+        async def get(*args, **kwargs):
+            nonlocal sequence
+            response = Mock()
+            response.raise_for_status.return_value = None
+            try:
+                line = await anext(source)
+            except StopAsyncIteration:
+                response.json.return_value = {
+                    "run_id": "run-1", "status": "completed",
+                    "events": [], "next_after": sequence,
+                }
+                return response
+            sequence += 1
+            raw = line[len("data: "):] if line.startswith("data: ") else line
+            response.json.return_value = {
+                "run_id": "run-1", "status": "running",
+                "events": [{"seq": sequence, "chunk": json.loads(raw)}],
+                "next_after": sequence,
+            }
+            return response
+
+        client.get = AsyncMock(side_effect=get)
+        return client
+
     def test_extracts_assistant_system_prompt_and_latest_user_message(self):
         messages = [
             {"role": "system", "content": "You are SEA."},
@@ -187,13 +225,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                 yield ""
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
         body = {
             "messages": [
                 {"role": "system", "content": "You are SEA."},
@@ -264,11 +296,17 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             result = asyncio.run(collect())
 
         self.assertEqual(result, [])
-        payload = client.stream.call_args.kwargs["json"]
+        payload = client.post.call_args.kwargs["json"]
         self.assertEqual(payload["assistant_id"], "sea")
         self.assertEqual(payload["assistant_system_prompt"], "You are SEA.")
-        self.assertEqual(payload["session_key"], "user-1:chat-123:sea")
-        self.assertEqual(payload["message"], "Analyze Honolulu.")
+        self.assertEqual(payload["session_id"], "chat-123")
+        self.assertEqual(
+            payload["messages"],
+            [
+                {"id": "", "role": "system", "content": "You are SEA."},
+                {"id": "", "role": "user", "content": "Analyze Honolulu."},
+            ],
+        )
         self.assertEqual(
             payload["attached_files"],
             [
@@ -430,13 +468,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             )
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
 
         async def collect():
             return [
@@ -477,13 +509,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             yield 'data: {"type":"message","content":" and done"}'
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
 
         async def collect_incrementally():
             stream = idea_pipe.Pipe().pipe(
@@ -530,13 +556,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             )
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
         event_emitter = AsyncMock()
 
         async def collect():
@@ -622,13 +642,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             )
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
 
         async def collect():
             return [

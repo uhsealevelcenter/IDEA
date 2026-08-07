@@ -194,6 +194,7 @@ class PersistentTerminal:
 _terminals: dict = {}
 _terminal_locks: dict = {}
 _registry_lock = threading.Lock()
+_active_python_runs: dict[str, tuple[str, str, object]] = {}
 
 
 def _use_microsandbox() -> bool:
@@ -331,7 +332,12 @@ def write_file_bytes(filepath: str, source, sandbox_id: str) -> None:
                 pass
 
 
-def run_python(code: str, sandbox_id: str) -> dict:
+def run_python(
+    code: str,
+    sandbox_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+) -> dict:
     """
     Execute Python code in sandbox_id's persistent kernel (microsandbox
     backend only - see MicrosandboxTerminal.run_python). The local pexpect
@@ -342,7 +348,15 @@ def run_python(code: str, sandbox_id: str) -> dict:
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
         if isinstance(terminal, MicrosandboxTerminal):
-            return terminal.run_python(code)
+            if run_id:
+                with _registry_lock:
+                    _active_python_runs[run_id] = (sandbox_id, kernel_id, terminal)
+            try:
+                return terminal.run_python(code, kernel_id=kernel_id, run_id=run_id)
+            finally:
+                if run_id:
+                    with _registry_lock:
+                        _active_python_runs.pop(run_id, None)
         return {
             "chunks": [{
                 "type": "console",
@@ -355,6 +369,18 @@ def run_python(code: str, sandbox_id: str) -> dict:
                 ),
             }]
         }
+
+
+def interrupt_run(sandbox_id: str, run_id: str) -> bool:
+    """Interrupt without taking the sandbox execution lock held by the run."""
+    with _registry_lock:
+        active = _active_python_runs.get(run_id)
+    if not active or active[0] != sandbox_id:
+        return False
+    _, kernel_id, terminal = active
+    if not isinstance(terminal, MicrosandboxTerminal):
+        return False
+    return terminal.interrupt_python(kernel_id)
 
 
 def grep_search(sandbox_id: str, **kwargs) -> dict:
