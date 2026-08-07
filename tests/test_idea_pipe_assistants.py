@@ -82,6 +82,33 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_separates_compaction_summary_from_assistant_policy(self):
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are SEA.\n\n[CONVERSATION SUMMARY]\n"
+                    "The user plotted RONI and asked to revise it."
+                ),
+            },
+            {"id": "user-2", "role": "user", "content": "Make it red."},
+        ]
+
+        self.assertEqual(
+            idea_pipe._assistant_system_prompt(messages),
+            "You are SEA.",
+        )
+        self.assertEqual(
+            idea_pipe._structured_messages(messages),
+            [
+                {
+                    "id": "",
+                    "role": "system",
+                    "content": "The user plotted RONI and asked to revise it.",
+                },
+                {"id": "user-2", "role": "user", "content": "Make it red."},
+            ],
+        )
     def test_structured_messages_strip_legacy_assistant_images_only(self):
         generated = "data:image/png;base64," + ("A" * 1000)
         user_image = "data:image/png;base64,USERIMAGE"
@@ -279,6 +306,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         }
         metadata = {
             "chat_id": "chat-123",
+            "message_id": "assistant-response-1",
             "model": {
                 "id": "sea",
                 "name": "SEA",
@@ -334,6 +362,9 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(payload["assistant_id"], "sea")
         self.assertEqual(payload["assistant_system_prompt"], "You are SEA.")
         self.assertEqual(payload["session_id"], "chat-123")
+        self.assertEqual(
+            payload["response_message_id"], "assistant-response-1"
+        )
         self.assertEqual(
             payload["messages"],
             [

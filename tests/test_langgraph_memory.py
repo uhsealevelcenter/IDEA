@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import unittest
@@ -14,7 +15,12 @@ from idea_graph.control import RunCancellation  # noqa: E402
 from idea_graph import checkpoints  # noqa: E402
 from idea_graph.graph import build_idea_graph  # noqa: E402
 from idea_graph.identities import derive_execution_identities  # noqa: E402
-from idea_graph.memory import defined_names, safe_arguments  # noqa: E402
+from idea_graph.memory import (  # noqa: E402
+    bounded_records,
+    defined_names,
+    execution_memory_block,
+    safe_arguments,
+)
 from idea_graph.runtime import ToolOutcome  # noqa: E402
 
 
@@ -72,6 +78,39 @@ class FakeRuntime:
 
 
 class LangGraphMemoryTests(unittest.TestCase):
+    def test_execution_memory_is_newest_first_and_byte_bounded(self):
+        state = {
+            "python_executions": [
+                {
+                    "execution_id": f"exec-{index}",
+                    "status": "completed",
+                    "submitted_code": "value = " + (str(index) * 200),
+                }
+                for index in range(10)
+            ]
+        }
+
+        block = execution_memory_block(state, recent=8, max_bytes=500)
+
+        self.assertLessEqual(len(block.encode("utf-8")), 500)
+        self.assertIn("exec-9", block)
+        self.assertNotIn("exec-1", block)
+
+    def test_checkpoint_ledgers_keep_newest_records_within_bounds(self):
+        records = [
+            {"execution_id": f"exec-{index}", "value": "x" * 80}
+            for index in range(10)
+        ]
+
+        bounded = bounded_records(records, max_count=5, max_bytes=300)
+
+        self.assertEqual(bounded[-1]["execution_id"], "exec-9")
+        self.assertNotIn("exec-0", {item["execution_id"] for item in bounded})
+        self.assertLessEqual(
+            len(json.dumps(bounded).encode("utf-8")),
+            300,
+        )
+
     def test_exact_python_source_is_checkpointed(self):
         runtime = FakeRuntime()
         graph = build_idea_graph(runtime, checkpointer=InMemorySaver())

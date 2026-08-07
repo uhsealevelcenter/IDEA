@@ -386,11 +386,16 @@ reasoning-model configuration.
 
 ## 🔨 TODO
 
-### MAJOR TODO (Jul 29, 2026): Make Open WebUI the authoritative conversation context
+### IMPLEMENTED (Aug 6, 2026): Make Open WebUI the authoritative conversation context
 
-**Status:** proposal for dev-team consideration; investigated, not implemented.
+**Status:** implemented. Open WebUI now supplies the authoritative structured,
+branch-selected, compacted conversation. LangGraph checkpoints retain bounded
+execution memory, and Redis maps visible assistant message IDs to checkpoint
+branches for edit/regeneration safety. Conversation summaries are separated
+from Assistant policy before model assembly. The investigation below is kept
+as a historical record of the pre-cutover behavior and design rationale.
 
-Open WebUI and LangGraph currently maintain competing versions of a
+Before this cutover, Open WebUI and LangGraph maintained competing versions of a
 conversation:
 
 1. Open WebUI reconstructs the exact message branch leading to the current

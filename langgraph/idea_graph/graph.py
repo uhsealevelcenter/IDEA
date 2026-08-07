@@ -9,9 +9,17 @@ from typing import Any, Literal
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 
+from idea_config import (
+    IDEA_MAX_CODE_INLINE_BYTES,
+    IDEA_MAX_RECENT_ACTIONS,
+    IDEA_MAX_RECENT_EXECUTIONS,
+    IDEA_MAX_STATE_BYTES,
+)
+
 from .control import RunCancellation
 from .memory import (
     bounded_excerpt,
+    bounded_records,
     defined_names,
     execution_memory_block,
     safe_arguments,
@@ -35,6 +43,28 @@ def build_idea_graph(
     result_excerpt_bytes: int = 12000,
 ):
     cancellation = cancellation or RunCancellation()
+    python_ledger_bytes = max(1, IDEA_MAX_STATE_BYTES * 2 // 3)
+    action_ledger_bytes = max(1, IDEA_MAX_STATE_BYTES - python_ledger_bytes)
+
+    def bounded_actions(
+        state: IDEAState,
+        *new: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return bounded_records(
+            [*(state.get("completed_actions") or []), *new],
+            max_count=IDEA_MAX_RECENT_ACTIONS,
+            max_bytes=action_ledger_bytes,
+        )
+
+    def bounded_python(
+        state: IDEAState,
+        *new: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return bounded_records(
+            [*(state.get("python_executions") or []), *new],
+            max_count=IDEA_MAX_RECENT_EXECUTIONS,
+            max_bytes=python_ledger_bytes,
+        )
 
     def prepare_turn(state: IDEAState) -> dict[str, Any]:
         runtime.emit({
@@ -53,6 +83,9 @@ def build_idea_graph(
             "turn_messages": [],
             "pending_tool_calls": [],
             "current_action": None,
+            "completed_actions": bounded_actions(state),
+            "python_executions": bounded_python(state),
+            "warnings": list(state.get("warnings") or [])[-20:],
             "stop_requested": cancellation.requested,
             "stop_reason": cancellation.reason,
             "final_status": "stopping" if cancellation.requested else "running",
@@ -70,7 +103,10 @@ def build_idea_graph(
         iteration = int(state.get("iteration") or 0) + 1
         if iteration > max_iterations:
             return {
-                "warnings": [f"Stopped after the {max_iterations}-iteration safety limit."],
+                "warnings": [
+                    *(state.get("warnings") or [])[-19:],
+                    f"Stopped after the {max_iterations}-iteration safety limit.",
+                ],
                 "stop_requested": True,
                 "stop_reason": "iteration_limit",
                 "final_status": "stopping",
@@ -110,13 +146,23 @@ def build_idea_graph(
         call_id = _tool_id(call)
         execution_id = f"exec_{uuid.uuid4().hex}"
         started = utc_now()
+        sanitized_arguments = safe_arguments(name, args)
+        if (
+            len(json.dumps(sanitized_arguments, default=str).encode("utf-8"))
+            > result_excerpt_bytes
+        ):
+            sanitized_arguments = {
+                "summary": bounded_excerpt(
+                    sanitized_arguments, result_excerpt_bytes
+                )
+            }
         action = {
             "execution_id": execution_id,
             "run_id": state.get("run_id", ""),
             "tool_call_id": call_id,
             "tool_name": name,
             "arguments_hash": sha256_text(json.dumps(args, sort_keys=True, default=str)),
-            "safe_arguments": safe_arguments(name, args),
+            "safe_arguments": sanitized_arguments,
             "status": "running",
             "started_at": started,
         }
@@ -132,7 +178,9 @@ def build_idea_graph(
                 "run_id": state.get("run_id", ""),
                 "tool_call_id": call_id,
                 "kernel_id": state.get("kernel_id", ""),
-                "submitted_code": code,
+                "submitted_code": bounded_excerpt(
+                    code, IDEA_MAX_CODE_INLINE_BYTES
+                ),
                 "code_sha256": sha256_text(code),
                 "started_at": started,
                 "status": "running",
@@ -170,7 +218,7 @@ def build_idea_graph(
         update: dict[str, Any] = {
             "pending_tool_calls": pending,
             "current_action": None,
-            "completed_actions": [action],
+            "completed_actions": bounded_actions(state, action),
             "turn_messages": list(state.get("turn_messages") or []) + [
                 ToolMessage(content=outcome_content, tool_call_id=call_id)
             ],
@@ -182,7 +230,9 @@ def build_idea_graph(
                 "console_excerpt": bounded_excerpt(outcome_content, result_excerpt_bytes),
                 **({"error_summary": bounded_excerpt(outcome_error, 2000)} if outcome_error else {}),
             })
-            update["python_executions"] = [python_record]
+            update["python_executions"] = bounded_python(
+                state, python_record
+            )
         if cancellation.requested or outcome_status == "interrupted":
             update.update({
                 "stop_requested": True,

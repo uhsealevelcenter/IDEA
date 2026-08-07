@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import operator
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from langchain_core.messages import AnyMessage
 
@@ -80,12 +79,12 @@ class IDEAState(TypedDict, total=False):
     plan: list[dict[str, Any]]
     pending_tool_calls: list[dict[str, Any]]
     current_action: ActionRecord | None
-    completed_actions: Annotated[list[ActionRecord], operator.add]
-    python_executions: Annotated[list[PythonExecutionRecord], operator.add]
+    completed_actions: list[ActionRecord]
+    python_executions: list[PythonExecutionRecord]
     datasets: list[DatasetRecord]
     artifacts: list[ArtifactRecord]
     active_artifact_id: str | None
-    warnings: Annotated[list[str], operator.add]
+    warnings: list[str]
     stop_requested: bool
     stop_reason: str | None
     final_status: Literal["running", "completed", "stopping", "stopped", "failed"]

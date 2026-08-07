@@ -315,17 +315,24 @@ This runs *alongside* the existing custom frontend (`frontend/`, `nginx`,
 `langgraph` + `sandbox` backend. See `langgraph/IMPLEMENTATION_STATUS.md`
 for the underlying agent/sandbox architecture this depends on.
 
-**Not yet handled by the Pipe function:**
-- **Major conversation-context TODO:** Open WebUI's branch-aware,
-  compacted chat history and LangGraph's linear Redis history
-  (`langgraph_messages:{session_key}`) are not reconciled. The investigated
-  proposal is to make the structured Open WebUI branch authoritative,
-  preserve message roles through LangGraph, persist only bounded IDEA
-  dataset/artifact/script state, and retire Redis as a conversation store.
-  See **"MAJOR TODO (Jul 29, 2026): Make Open WebUI the authoritative
-  conversation context"** in `langgraph/IMPLEMENTATION_STATUS.md` for the
-  findings, staged plan, and acceptance tests.
-- Interruption/stop button (`ConversationOrchestrator` has no cancel
-  endpoint exposed yet).
-- Mapping Open WebUI's guest/pending-approval users to this repo's own
-  guest-model/guest-scrutiny policies beyond the basic `is_guest` flag.
+**Context and interruption behavior:**
+- Open WebUI's selected, compacted branch is the authoritative conversation
+  history. The Pipe preserves user/assistant roles, sends conversation
+  summaries as context rather than Assistant policy, and removes legacy
+  inline generated-image bytes before LangGraph model assembly.
+- LangGraph stores bounded execution memory in PostgreSQL checkpoints.
+  Redis maps each Open WebUI assistant message ID to its graph thread and
+  checkpoint, preserving the correct execution branch across edits and
+  regenerations without requiring custom frontend event support. Mappings
+  expire after one year by default and refresh when used.
+- Open WebUI Stop requests cooperatively cancel the active model or sandbox
+  operation and preserve completed checkpoints.
+- A complete preflight token budget covering provider-specific tool schemas
+  remains future work; the bounded execution-memory block and Open WebUI's
+  136,000-token compaction threshold currently provide conservative headroom.
+- Chat deletion does not yet eagerly remove PostgreSQL checkpoints or Redis
+  message mappings; mappings expire according to
+  `IDEA_CHECKPOINT_MAP_TTL_SECONDS`.
+- Still not handled by the Pipe function: mapping Open WebUI's
+  guest/pending-approval users to this repo's own guest-model/guest-scrutiny
+  policies beyond the basic `is_guest` flag.

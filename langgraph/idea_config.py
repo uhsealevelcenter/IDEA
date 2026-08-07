@@ -18,7 +18,6 @@ SANDBOX_SERVICE_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox:8020").rs
 # Agent orchestration and durable memory. ``manual`` remains available as a
 # rollback path while production checkpoints are introduced.
 IDEA_AGENT_RUNTIME = os.getenv("IDEA_AGENT_RUNTIME", "manual").strip().lower()
-IDEA_HISTORY_SOURCE = os.getenv("IDEA_HISTORY_SOURCE", "redis").strip().lower()
 IDEA_KERNEL_SCOPE = os.getenv("IDEA_KERNEL_SCOPE", "chat_assistant").strip().lower()
 LANGGRAPH_DATABASE_URL = os.getenv("LANGGRAPH_DATABASE_URL", "").strip()
 LANGGRAPH_AES_KEY = os.getenv("LANGGRAPH_AES_KEY", "").strip()
@@ -29,6 +28,12 @@ IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES = int(
     os.getenv("IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES", "12000")
 )
 IDEA_MAX_CODE_INLINE_BYTES = int(os.getenv("IDEA_MAX_CODE_INLINE_BYTES", "100000"))
+IDEA_MAX_EXECUTION_MEMORY_BYTES = int(
+    os.getenv("IDEA_MAX_EXECUTION_MEMORY_BYTES", "48000")
+)
+IDEA_CHECKPOINT_MAP_TTL_SECONDS = int(
+    os.getenv("IDEA_CHECKPOINT_MAP_TTL_SECONDS", "31536000")
+)
 
 # Originally defined in: tools/persistent_terminal.py (as httpx.Timeout(...))
 # HTTP timeouts (seconds) for every call from langgraph to sandbox_service.

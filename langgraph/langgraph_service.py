@@ -1,6 +1,7 @@
 """
 LangGraph Microservice - FastAPI server exposing the ConversationOrchestrator
 """
+import hashlib
 import hmac
 import json
 import os
@@ -16,6 +17,7 @@ import redis
 from multi_agent import ConversationOrchestrator
 from idea_config import (
     IDEA_AGENT_RUNTIME,
+    IDEA_CHECKPOINT_MAP_TTL_SECONDS,
     IDEA_KERNEL_SCOPE,
     IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES,
 )
@@ -66,6 +68,7 @@ CHAT_RUN_PREFIX = "langgraph_run:"
 CHAT_RUN_EVENTS_PREFIX = "langgraph_run_events:"
 CHAT_RUN_SEQ_PREFIX = "langgraph_run_seq:"
 CHAT_RUN_CANCEL_PREFIX = "langgraph_run_cancel:"
+MESSAGE_CHECKPOINT_PREFIX = "langgraph_message_checkpoint:"
 chat_run_controls: dict[str, RunCancellation] = {}
 chat_run_controls_lock = threading.Lock()
 
@@ -98,6 +101,105 @@ def _chat_run_seq_key(run_id: str) -> str:
 
 def _chat_run_cancel_key(run_id: str) -> str:
     return f"{CHAT_RUN_CANCEL_PREFIX}{run_id}"
+
+
+def _message_checkpoint_key(base_thread_id: str, message_id: str) -> str:
+    message_digest = hashlib.sha256(message_id.encode("utf-8")).hexdigest()
+    return f"{MESSAGE_CHECKPOINT_PREFIX}{base_thread_id}:{message_digest}"
+
+
+def _branch_thread_id(
+    base_thread_id: str,
+    response_message_id: str | None,
+    run_id: str,
+) -> str:
+    branch_seed = response_message_id or run_id
+    digest = hashlib.sha256(branch_seed.encode("utf-8")).hexdigest()[:20]
+    return f"{base_thread_id}:branch:{digest}"
+
+
+def _load_message_checkpoint(
+    base_thread_id: str,
+    message_id: str,
+) -> tuple[str, str] | None:
+    if not message_id:
+        return None
+    raw = redis_client.get(_message_checkpoint_key(base_thread_id, message_id))
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+        thread_id = str(value.get("thread_id") or "")
+        checkpoint_id = str(value.get("checkpoint_id") or "")
+    except Exception:
+        return None
+    if not thread_id or not checkpoint_id:
+        return None
+    redis_client.expire(
+        _message_checkpoint_key(base_thread_id, message_id),
+        IDEA_CHECKPOINT_MAP_TTL_SECONDS,
+    )
+    return thread_id, checkpoint_id
+
+
+def _store_message_checkpoint(
+    base_thread_id: str,
+    response_message_id: str | None,
+    thread_id: str,
+    checkpoint_id: str | None,
+) -> None:
+    if not response_message_id or not checkpoint_id:
+        return
+    redis_client.set(
+        _message_checkpoint_key(base_thread_id, response_message_id),
+        json.dumps({
+            "schema_version": 1,
+            "thread_id": thread_id,
+            "checkpoint_id": checkpoint_id,
+        }),
+        ex=IDEA_CHECKPOINT_MAP_TTL_SECONDS,
+    )
+
+
+def _resolve_graph_checkpoint(
+    *,
+    base_thread_id: str,
+    messages: list[dict[str, Any]],
+    response_message_id: str | None,
+    run_id: str,
+    explicit_checkpoint_id: str | None = None,
+    explicit_thread_id: str | None = None,
+) -> tuple[str, str | None, str]:
+    """Resolve the checkpoint belonging to the visible Open WebUI branch."""
+    if explicit_checkpoint_id:
+        return (
+            explicit_thread_id or base_thread_id,
+            explicit_checkpoint_id,
+            "message_metadata",
+        )
+
+    visible_assistant_ids = [
+        str(item.get("id") or "")
+        for item in messages
+        if isinstance(item, dict) and item.get("role") == "assistant"
+    ]
+    for message_id in reversed(visible_assistant_ids):
+        mapping = _load_message_checkpoint(base_thread_id, message_id)
+        if mapping:
+            return mapping[0], mapping[1], "message_mapping"
+
+    if visible_assistant_ids:
+        # One-time migration path for chats created before message mappings:
+        # continue their existing linear thread, then map the new response.
+        return base_thread_id, None, "legacy_latest"
+
+    # A first turn or regeneration of the root user message must not inherit
+    # an abandoned latest checkpoint from another response branch.
+    return (
+        _branch_thread_id(base_thread_id, response_message_id, run_id),
+        None,
+        "new_branch",
+    )
 
 
 def _set_chat_run_status(run_id: str, status: dict[str, Any]) -> None:
@@ -188,6 +290,7 @@ class ChatRunRequest(BaseModel):
     user_email: Optional[str] = None
     is_guest: bool
     messages: list[dict[str, Any]]
+    response_message_id: Optional[str] = None
     input_checkpoint_id: Optional[str] = None
     idea_context: dict[str, Any] = Field(default_factory=dict)
     model: Optional[str] = "gpt-5.6-sol"
@@ -218,6 +321,7 @@ def _run_chat_job(
     paperqa_enabled: bool = False,
     input_checkpoint_id: Optional[str] = None,
     idea_context: Optional[dict[str, Any]] = None,
+    response_message_id: Optional[str] = None,
 ):
     """Background job to execute chat and stream events to Redis"""
     session_key = f"{user_id}:{session_id}"
@@ -237,6 +341,18 @@ def _run_chat_job(
                 assistant_id=assistant_id,
                 run_id=run_id,
                 kernel_scope=IDEA_KERNEL_SCOPE,
+            )
+            graph_thread_id, resolved_checkpoint_id, checkpoint_source = (
+                _resolve_graph_checkpoint(
+                    base_thread_id=identities.thread_id,
+                    messages=messages,
+                    response_message_id=response_message_id,
+                    run_id=run_id,
+                    explicit_checkpoint_id=input_checkpoint_id,
+                    explicit_thread_id=str(
+                        (idea_context or {}).get("thread_id") or ""
+                    ) or None,
+                )
             )
             control = RunCancellation()
             queued_cancel_reason = redis_client.get(_chat_run_cancel_key(run_id))
@@ -277,11 +393,13 @@ def _run_chat_job(
                     result_excerpt_bytes=IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES,
                 )
                 config: dict[str, Any] = {
-                    "configurable": {"thread_id": identities.thread_id},
+                    "configurable": {"thread_id": graph_thread_id},
                     "recursion_limit": 100,
                 }
-                if input_checkpoint_id:
-                    config["configurable"]["checkpoint_id"] = input_checkpoint_id
+                if resolved_checkpoint_id:
+                    config["configurable"]["checkpoint_id"] = (
+                        resolved_checkpoint_id
+                    )
                 normalized_messages = [
                     {
                         "id": str(item.get("id") or ""),
@@ -297,23 +415,32 @@ def _run_chat_job(
                         "schema_version": 1,
                         "conversation_messages": normalized_messages,
                         "run_id": run_id,
-                        "thread_id": identities.thread_id,
+                        "thread_id": graph_thread_id,
                         "workspace_id": identities.workspace_id,
                         "kernel_id": identities.kernel_id,
                     },
                     config=config,
                 )
                 snapshot = graph.get_state({
-                    "configurable": {"thread_id": identities.thread_id}
+                    "configurable": {"thread_id": graph_thread_id}
                 })
-                checkpoint_id = snapshot.config.get("configurable", {}).get("checkpoint_id")
+                checkpoint_id = snapshot.config.get("configurable", {}).get(
+                    "checkpoint_id"
+                )
+                _store_message_checkpoint(
+                    identities.thread_id,
+                    response_message_id,
+                    graph_thread_id,
+                    checkpoint_id,
+                )
                 _append_chat_run_event(run_id, {
                     "type": "idea_context",
                     "schema_version": 1,
-                    "thread_id": identities.thread_id,
+                    "thread_id": graph_thread_id,
                     "run_id": run_id,
-                    "input_checkpoint_id": input_checkpoint_id,
+                    "input_checkpoint_id": resolved_checkpoint_id,
                     "output_checkpoint_id": checkpoint_id,
+                    "checkpoint_source": checkpoint_source,
                     "active_artifact_id": result.get("active_artifact_id"),
                     "execution_refs": [
                         item.get("execution_id")
@@ -324,7 +451,7 @@ def _run_chat_job(
                 _update_chat_run_status(
                     run_id,
                     status=final_status,
-                    thread_id=identities.thread_id,
+                    thread_id=graph_thread_id,
                     checkpoint_id=checkpoint_id,
                     completed_at=datetime.utcnow().isoformat(),
                     updated_at=datetime.utcnow().isoformat(),
@@ -431,6 +558,7 @@ async def start_chat_run(request: ChatRunRequest):
             "user_email": request.user_email,
             "is_guest": request.is_guest,
             "messages": request.messages,
+            "response_message_id": request.response_message_id,
             "model": request.model,
             "assistant_id": request.assistant_id,
             "assistant_system_prompt": request.assistant_system_prompt,

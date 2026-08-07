@@ -65,6 +65,7 @@ ASSISTANT_INLINE_IMAGE_MARKDOWN_RE = re.compile(
 INLINE_IMAGE_DATA_URI_RE = re.compile(
     r"data:image/[^;\s)]+;base64,[A-Za-z0-9+/=]+"
 )
+CONVERSATION_SUMMARY_MARKER = "[CONVERSATION SUMMARY]"
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -146,14 +147,21 @@ def _message_content(message: dict) -> str:
 
 
 def _structured_messages(messages: list[dict]) -> list[dict]:
-    """Preserve user/assistant history without duplicating system context.
+    """Preserve branch history and demote compaction summaries to context.
 
-    ``_assistant_system_prompt`` collects every Open WebUI system message and
-    LangGraph appends that context to IDEA's primary SystemMessage. Forwarding
-    those same messages here caused them to appear a second time as
-    human-style conversation context.
+    Assistant policy remains in ``_assistant_system_prompt``. Open WebUI
+    appends its generated conversation summary to that system content; the
+    summary is data about prior turns, not policy, so forward it separately
+    for LangGraph to present as human-style conversation context.
     """
     result: list[dict] = []
+    summaries = _conversation_summaries(messages)
+    if summaries:
+        result.append({
+            "id": "",
+            "role": "system",
+            "content": "\n\n".join(summaries),
+        })
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -219,13 +227,28 @@ def _latest_user_content(messages: list) -> str:
 
 def _assistant_system_prompt(messages: list) -> str | None:
     """Collect system messages Open WebUI injected for the selected Assistant."""
-    prompts = [
-        _message_content(message).strip()
-        for message in messages
-        if isinstance(message, dict) and message.get("role") == "system"
-    ]
+    prompts = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = _message_content(message)
+        policy, _, _ = content.partition(CONVERSATION_SUMMARY_MARKER)
+        if policy.strip():
+            prompts.append(policy.strip())
     prompts = [prompt for prompt in prompts if prompt]
     return "\n\n".join(prompts) or None
+
+
+def _conversation_summaries(messages: list) -> list[str]:
+    summaries = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = _message_content(message)
+        _, marker, summary = content.partition(CONVERSATION_SUMMARY_MARKER)
+        if marker and summary.strip():
+            summaries.append(summary.strip())
+    return summaries
 
 
 def _selected_assistant_id(metadata: dict | None) -> str | None:
@@ -625,6 +648,9 @@ class Pipe:
             "user_email": user_email,
             "is_guest": is_guest,
             "messages": _structured_messages(messages),
+            "response_message_id": str(
+                (__metadata__ or {}).get("message_id") or ""
+            ) or None,
             "input_checkpoint_id": idea_context.get("output_checkpoint_id"),
             "idea_context": idea_context,
             "model": self.valves.MODEL,
