@@ -55,6 +55,7 @@ _SEASON_TO_MIDMONTH = {
     "JJA": 7, "JAS": 8, "ASO": 9, "SON": 10, "OND": 11, "NDJ": 12,
 }
 _MAX_INDICES_PER_CALL = len(_URLS)
+_CANONICAL_INDEX_NAMES = {name.upper(): name for name in _URLS}
 
 
 def _parse_cpc_oni_like(text: str, value_col: str = "value") -> pd.DataFrame:
@@ -138,7 +139,7 @@ def _get_climate_index_dataframe(climate_index_name: str) -> pd.DataFrame:
         return df[["time", "value"]].reset_index(drop=True)
 
     if climate_index_name == "PDO":
-        data = pd.read_csv(StringIO(raw_data), delim_whitespace=True, skiprows=1)
+        data = pd.read_csv(StringIO(raw_data), sep=r"\s+", skiprows=1)
         data = data.melt(id_vars=["Year"], var_name="Month", value_name="value")
         months = {month: index for index, month in enumerate(
             ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -163,14 +164,19 @@ def _get_climate_index_dataframe(climate_index_name: str) -> pd.DataFrame:
             "value": [float(item['y']) for item in items],
         }).set_index("time")
 
-        monthly = df.resample('M').mean()
-        monthly.index = monthly.index + pd.Timedelta(days=15)
+        # Pandas 3 removed the ambiguous ``M`` alias. Resample at month start
+        # and then use the 15th as the common timestamp convention shared by
+        # every index returned by this tool.
+        monthly = df.resample("MS").mean()
+        monthly.index = monthly.index + pd.Timedelta(days=14)
         monthly = monthly.reset_index()
         return monthly[["time", "value"]]
 
     if climate_index_name in ["PMM-SST", "PMM-Wind", "AMM-SST", "AMM-Wind"]:
         columns = ["Year", "Month", "SST", "Wind"]
-        data = pd.read_csv(StringIO(raw_data), delim_whitespace=True, names=columns, skiprows=1)
+        data = pd.read_csv(
+            StringIO(raw_data), sep=r"\s+", names=columns, skiprows=1
+        )
         data["time"] = pd.to_datetime(data[["Year", "Month"]].assign(Day=15))
         value_column = "SST" if "-SST" in climate_index_name else "Wind"
         data = data.rename(columns={value_column: "value"})
@@ -209,8 +215,9 @@ def normalize_climate_index_names(climate_index_names: list[str]) -> list[str]:
     for value in climate_index_names:
         if not isinstance(value, str) or not value.strip():
             raise ValueError("each climate index name must be a non-empty string")
-        name = value.strip().upper()
-        if name not in _URLS:
+        requested_name = value.strip().upper()
+        name = _CANONICAL_INDEX_NAMES.get(requested_name)
+        if name is None:
             raise ValueError(
                 f"unknown climate index {value!r}; supported indices are "
                 f"{', '.join(_URLS)}"
