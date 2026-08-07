@@ -69,6 +69,19 @@ CHAT_RUN_CANCEL_PREFIX = "langgraph_run_cancel:"
 chat_run_controls: dict[str, RunCancellation] = {}
 chat_run_controls_lock = threading.Lock()
 
+_APPEND_CHAT_RUN_EVENT_SCRIPT = """
+local seq = redis.call('INCR', KEYS[1])
+local event = cjson.encode({
+    seq = seq,
+    created_at = ARGV[1],
+    chunk = cjson.decode(ARGV[2])
+})
+redis.call('RPUSH', KEYS[2], event)
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+redis.call('EXPIRE', KEYS[2], ARGV[3])
+return event
+"""
+
 
 # Helper functions for chat runs
 def _chat_run_key(run_id: str) -> str:
@@ -114,21 +127,26 @@ def _update_chat_run_status(run_id: str, **updates: Any) -> dict[str, Any]:
 
 
 def _append_chat_run_event(run_id: str, chunk: dict[str, Any] | str) -> dict[str, Any]:
-    seq = int(redis_client.incr(_chat_run_seq_key(run_id)))
-    event = {
-        "seq": seq,
-        "created_at": datetime.utcnow().isoformat(),
-        "chunk": chunk,
-    }
-    events_key = _chat_run_events_key(run_id)
-    redis_client.rpush(events_key, json.dumps(event, default=str))
-    redis_client.expire(events_key, CHAT_RUN_TTL_SECONDS)
-    redis_client.expire(_chat_run_seq_key(run_id), CHAT_RUN_TTL_SECONDS)
-    return event
+    raw_event = redis_client.eval(
+        _APPEND_CHAT_RUN_EVENT_SCRIPT,
+        2,
+        _chat_run_seq_key(run_id),
+        _chat_run_events_key(run_id),
+        datetime.utcnow().isoformat(),
+        json.dumps(chunk, default=str),
+        CHAT_RUN_TTL_SECONDS,
+    )
+    return json.loads(raw_event)
 
 
 def _list_chat_run_events(run_id: str, after: int = 0) -> list[dict[str, Any]]:
-    raw_events = redis_client.lrange(_chat_run_events_key(run_id), 0, -1)
+    # Sequence numbers start at one and events are appended exactly once, so
+    # the first unseen event is at the zero-based list index ``after``. Avoid
+    # rereading and JSON-decoding the run's complete token/event history on
+    # every UI poll.
+    raw_events = redis_client.lrange(
+        _chat_run_events_key(run_id), max(int(after), 0), -1
+    )
     events: list[dict[str, Any]] = []
     for raw_event in raw_events:
         try:
