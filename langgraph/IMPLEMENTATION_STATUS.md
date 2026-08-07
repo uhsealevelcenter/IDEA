@@ -705,18 +705,32 @@ This should be split into reviewable changes: identity plumbing and
 isolation tests first, multi-kernel daemon/lifecycle second, and distributed
 whole-run locking plus non-destructive rollout tooling third.
 
-### Deferred: heartbeat timing during invisible tool-call generation
+### Python tool-call source streaming
 
-Native Open WebUI progress statuses now keep long LangGraph work visibly
+`run_python_tool` source is incrementally decoded from streamed JSON tool-call
+arguments and emitted through start/delta/end events while the model writes
+it. The Open WebUI Pipe renders those events as one Markdown code fence and
+suppresses the subsequent legacy full-code replay. The complete parsed tool
+call remains authoritative for kernel execution, and other clients continue
+to receive the full backward-compatible `code` event.
+
+Only the Python `code` field is exposed; arguments for other tools remain
+private. Partial JSON escapes and Unicode sequences are withheld until safe to
+decode, and interrupted/error paths close any code stream already started.
+
+### Deferred: heartbeat timing during other invisible tool-call generation
+
+Native Open WebUI progress statuses and Python source streaming now keep long
+LangGraph work visibly
 active (`Working`, `Thinking`, tool preparation/execution, output
 finalization, and completion). This resolves the user-facing appearance of a
 stalled process, but does not completely replace transport heartbeats.
 
 `TerminalAgent._iter_with_heartbeat()` currently emits a heartbeat only when
 its raw model-chunk queue is empty for the configured interval. A model can
-continuously emit structured tool-argument chunks whose visible `.content`
-is empty; those chunks keep the queue busy and suppress heartbeats even
-though no response bytes are being produced for the user-facing stream.
+continuously emit structured non-Python tool-argument chunks whose visible
+`.content` is empty; those chunks keep the queue busy and suppress heartbeats
+even though no response bytes are being produced for the user-facing stream.
 
 **Potential follow-up:** base heartbeat timing on elapsed time since the last
 user-visible/SSE event rather than on `queue.get()` timeouts. This is lower

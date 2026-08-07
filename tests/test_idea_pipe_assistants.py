@@ -890,6 +890,49 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_translates_streamed_python_code_to_one_markdown_fence(self):
+        chunks = []
+        for event in (
+            {"type": "python_code_start", "format": "python"},
+            {"type": "python_code_delta", "content": "print("},
+            {"type": "python_code_delta", "content": "1)"},
+            {"type": "python_code_end", "complete": True},
+        ):
+            chunks.extend(idea_pipe.Pipe._translate_chunk(event))
+
+        self.assertEqual(
+            "".join(chunks),
+            "\n\n````python\nprint(1)\n````\n\n",
+        )
+
+    def test_suppresses_only_matching_completed_python_replay(self):
+        completed = set()
+        self.assertFalse(idea_pipe._is_streamed_python_replay(
+            {
+                "type": "python_code_end",
+                "stream_id": "call-1",
+                "complete": True,
+            },
+            completed,
+        ))
+        self.assertFalse(idea_pipe._is_streamed_python_replay(
+            {
+                "type": "code",
+                "format": "python",
+                "tool_call_id": "different-call",
+            },
+            completed,
+        ))
+        self.assertTrue(idea_pipe._is_streamed_python_replay(
+            {
+                "type": "code",
+                "format": "python",
+                "tool_call_id": "call-1",
+            },
+            completed,
+        ))
+        self.assertEqual(completed, set())
+
     def test_resolves_displayed_image_to_durable_preview(self):
         rendered, referenced = idea_pipe._resolve_displayed_images(
             ["/workspace/oni/oni plot.png"],

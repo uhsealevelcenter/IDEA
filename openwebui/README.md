@@ -331,6 +331,10 @@ for the underlying agent/sandbox architecture this depends on.
   expire after one year by default and refresh when used.
 - Open WebUI Stop requests cooperatively cancel the active model or sandbox
   operation and preserve completed checkpoints.
+- Python source intended for `run_python_tool` streams into the response as
+  the model generates it, before execution begins. The Pipe renders one
+  Markdown code block and suppresses the legacy completed-code replay; other
+  LangGraph consumers still receive that backward-compatible full event.
 - A complete preflight token budget covering provider-specific tool schemas
   remains future work; the bounded execution-memory block and Open WebUI's
   136,000-token compaction threshold currently provide conservative headroom.

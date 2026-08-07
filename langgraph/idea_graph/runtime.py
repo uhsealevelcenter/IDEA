@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -19,7 +20,11 @@ from langchain_core.messages import (
     message_chunk_to_message,
 )
 
-from progress import tool_call_chunk_names, tool_status_description
+from progress import (
+    partial_python_code_argument,
+    tool_call_chunk_names,
+    tool_status_description,
+)
 
 from .memory import execution_memory_block
 
@@ -139,6 +144,7 @@ class TerminalGraphRuntime:
             pending_text = ""
             last_flush = time.monotonic()
             announced_tools: set[str] = set()
+            python_streams: dict[int, dict[str, Any]] = {}
 
             def flush_text() -> None:
                 nonlocal pending_text, last_flush
@@ -147,46 +153,155 @@ class TerminalGraphRuntime:
                     pending_text = ""
                     last_flush = time.monotonic()
 
-            async for chunk in self.agent.llm.astream(messages):
-                aggregated = chunk if aggregated is None else aggregated + chunk
-                text = str(getattr(chunk, "text", "") or "")
-                if text:
-                    pending_text += text
+            def emit_python_argument_chunks(chunk: object) -> None:
+                raw_chunks = getattr(chunk, "tool_call_chunks", None) or []
+                for position, raw_chunk in enumerate(raw_chunks):
+                    if isinstance(raw_chunk, dict):
+                        name = raw_chunk.get("name")
+                        arguments = raw_chunk.get("args")
+                        raw_index = raw_chunk.get("index")
+                        tool_call_id = raw_chunk.get("id")
+                    else:
+                        name = getattr(raw_chunk, "name", None)
+                        arguments = getattr(raw_chunk, "args", None)
+                        raw_index = getattr(raw_chunk, "index", None)
+                        tool_call_id = getattr(raw_chunk, "id", None)
 
-                tool_names = [
-                    name
-                    for name in tool_call_chunk_names(chunk)
-                    if name not in announced_tools
-                ]
-                if tool_names:
-                    flush_text()
-                    for name in tool_names:
-                        announced_tools.add(name)
+                    index = raw_index if isinstance(raw_index, int) else position
+                    tracker = python_streams.setdefault(index, {
+                        "name": "",
+                        "raw_arguments": "",
+                        "emitted": "",
+                        "started": False,
+                        "ended": False,
+                        "tool_call_id": "",
+                    })
+                    if isinstance(name, str) and name:
+                        tracker["name"] = name
+                    if isinstance(tool_call_id, str) and tool_call_id:
+                        tracker["tool_call_id"] = tool_call_id
+                    if isinstance(arguments, str):
+                        tracker["raw_arguments"] += arguments
+                    elif isinstance(arguments, dict):
+                        code = arguments.get("code")
+                        if isinstance(code, str):
+                            tracker["raw_arguments"] = json.dumps({"code": code})
+
+                    if tracker["name"] != "run_python_tool":
+                        continue
+                    decoded, _ = partial_python_code_argument(
+                        tracker["raw_arguments"]
+                    )
+                    if decoded is None or not decoded.startswith(tracker["emitted"]):
+                        continue
+                    stream_id = tracker["tool_call_id"] or f"index:{index}"
+                    if not tracker["started"]:
+                        tracker["started"] = True
                         self.emit({
-                            "type": "status",
-                            "phase": "preparing_tool",
-                            "description": tool_status_description(
-                                name, preparing=True
-                            ),
-                            "tool_name": name,
-                            "done": False,
+                            "type": "python_code_start",
+                            "format": "python",
+                            "stream_id": stream_id,
                         })
-                elif pending_text and (
-                    len(pending_text) >= MODEL_STREAM_FLUSH_CHARS
-                    or time.monotonic() - last_flush
-                    >= MODEL_STREAM_FLUSH_INTERVAL_SECONDS
-                ):
-                    flush_text()
+                    delta = decoded[len(tracker["emitted"]):]
+                    if delta:
+                        self.emit({
+                            "type": "python_code_delta",
+                            "format": "python",
+                            "stream_id": stream_id,
+                            "content": delta,
+                        })
+                        tracker["emitted"] = decoded
+
+            def end_python_stream(tracker: dict[str, Any], *, complete: bool) -> None:
+                if tracker["started"] and not tracker["ended"]:
+                    tracker["ended"] = True
+                    self.emit({
+                        "type": "python_code_end",
+                        "format": "python",
+                        "stream_id": tracker["tool_call_id"],
+                        "complete": complete,
+                    })
+
+            try:
+                async for chunk in self.agent.llm.astream(messages):
+                    aggregated = chunk if aggregated is None else aggregated + chunk
+                    text = str(getattr(chunk, "text", "") or "")
+                    if text:
+                        pending_text += text
+
+                    tool_names = [
+                        name
+                        for name in tool_call_chunk_names(chunk)
+                        if name not in announced_tools
+                    ]
+                    if tool_names:
+                        flush_text()
+                        for name in tool_names:
+                            announced_tools.add(name)
+                            self.emit({
+                                "type": "status",
+                                "phase": "preparing_tool",
+                                "description": tool_status_description(
+                                    name, preparing=True
+                                ),
+                                "tool_name": name,
+                                "done": False,
+                            })
+                    elif pending_text and (
+                        len(pending_text) >= MODEL_STREAM_FLUSH_CHARS
+                        or time.monotonic() - last_flush
+                        >= MODEL_STREAM_FLUSH_INTERVAL_SECONDS
+                    ):
+                        flush_text()
+                    emit_python_argument_chunks(chunk)
+            except (asyncio.CancelledError, Exception):
+                flush_text()
+                for tracker in python_streams.values():
+                    end_python_stream(tracker, complete=False)
+                raise
 
             flush_text()
             if aggregated is None:
                 return AIMessage(content="")
             response = message_chunk_to_message(aggregated)
             if isinstance(response, AIMessage):
-                return response
-            return AIMessage(
-                content=str(getattr(response, "content", response))
-            )
+                final_response = response
+            else:
+                final_response = AIMessage(
+                    content=str(getattr(response, "content", response))
+                )
+
+            for index, call in enumerate(final_response.tool_calls or []):
+                call_id = str(call.get("id") or "")
+                tracker = next(
+                    (
+                        item
+                        for item in python_streams.values()
+                        if call_id and item["tool_call_id"] == call_id
+                    ),
+                    python_streams.get(index),
+                )
+                if not tracker or call.get("name") != "run_python_tool":
+                    continue
+                code = str((call.get("args") or {}).get("code") or "")
+                emitted = str(tracker["emitted"])
+                if tracker["started"] and code.startswith(emitted):
+                    call_id = call_id or str(tracker["tool_call_id"] or "")
+                    tracker["tool_call_id"] = call_id
+                    delta = code[len(emitted):]
+                    if delta:
+                        self.emit({
+                            "type": "python_code_delta",
+                            "format": "python",
+                            "stream_id": call_id,
+                            "content": delta,
+                        })
+                        tracker["emitted"] = code
+                    end_python_stream(tracker, complete=True)
+
+            for tracker in python_streams.values():
+                end_python_stream(tracker, complete=False)
+            return final_response
 
         async def invoke() -> AIMessage:
             request = asyncio.create_task(consume_stream())
@@ -311,9 +426,11 @@ class TerminalGraphRuntime:
             from tools.persistent_terminal import run_python
 
             code = str(args.get("code") or "")
+            tool_call_id = str(tool_call.get("id") or "")
             self.emit({
                 "role": "computer", "type": "code", "format": "python",
-                "content": code, "start": True, "end": True,
+                "content": code, "tool_call_id": tool_call_id,
+                "start": True, "end": True,
             })
             chunks = run_python(
                 code,

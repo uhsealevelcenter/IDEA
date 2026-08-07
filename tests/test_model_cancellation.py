@@ -59,6 +59,25 @@ class StreamingLLM:
         )
 
 
+class BlockingPythonLLM:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+
+    async def astream(self, messages):
+        yield AIMessageChunk(
+            content="",
+            tool_call_chunks=[{
+                "name": "run_python_tool",
+                "args": '{"code":"print(',
+                "id": "call-blocked",
+                "index": 0,
+                "type": "tool_call_chunk",
+            }],
+        )
+        self.started.set()
+        await asyncio.Event().wait()
+
+
 class DelayedLLM:
     async def astream(self, messages):
         await asyncio.sleep(0.25)
@@ -102,6 +121,13 @@ class ModelCancellationTests(unittest.TestCase):
                 "done": False,
             },
         )
+        self.assertEqual(events[2]["type"], "python_code_start")
+        self.assertEqual(events[3]["type"], "python_code_delta")
+        self.assertEqual(events[3]["content"], "pri")
+        self.assertEqual(events[4]["type"], "python_code_delta")
+        self.assertEqual(events[4]["content"], "nt(1)")
+        self.assertEqual(events[5]["type"], "python_code_end")
+        self.assertTrue(events[5]["complete"])
 
     def test_reports_a_long_model_wait_before_tokens_arrive(self):
         events = []
@@ -158,6 +184,26 @@ class ModelCancellationTests(unittest.TestCase):
                 result.result(timeout=1)
 
         self.assertTrue(llm.cancelled.is_set())
+
+    def test_user_stop_closes_a_partial_python_code_stream(self):
+        llm = BlockingPythonLLM()
+        events = []
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = SimpleNamespace(llm=llm)
+        runtime.event_callback = events.append
+        cancellation = RunCancellation()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            result = executor.submit(
+                runtime.call_model, [], cancellation=cancellation
+            )
+            self.assertTrue(llm.started.wait(timeout=1))
+            cancellation.request("user_requested")
+            with self.assertRaises(ModelCallCancelled):
+                result.result(timeout=1)
+
+        self.assertEqual(events[-1]["type"], "python_code_end")
+        self.assertFalse(events[-1]["complete"])
 
 
 if __name__ == "__main__":

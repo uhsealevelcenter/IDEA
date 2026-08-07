@@ -555,6 +555,24 @@ def _resolve_displayed_images(
     return "\n\n" + "\n\n".join(rendered) + "\n\n", referenced_file_ids
 
 
+def _is_streamed_python_replay(chunk: dict, completed_stream_ids: set[str]) -> bool:
+    """Track completed code streams and identify their legacy full replay."""
+    chunk_type = chunk.get("type")
+    stream_id = str(chunk.get("stream_id") or "")
+    if chunk_type == "python_code_end" and chunk.get("complete") and stream_id:
+        completed_stream_ids.add(stream_id)
+        return False
+    tool_call_id = str(chunk.get("tool_call_id") or "")
+    if (
+        chunk_type == "code"
+        and chunk.get("format") == "python"
+        and tool_call_id in completed_stream_ids
+    ):
+        completed_stream_ids.discard(tool_call_id)
+        return True
+    return False
+
+
 class Pipe:
     class Valves(BaseModel):
         LANGGRAPH_SERVICE_URL: str = Field(
@@ -677,6 +695,7 @@ class Pipe:
         artifact_reference_confirmed = False
         pending_files: list[dict] = []
         pending_images: list[str] = []
+        completed_python_stream_ids: set[str] = set()
         status_done = False
         stop_sent = False
 
@@ -778,6 +797,10 @@ class Pipe:
                                 yield streamable
                             continue
                         if not isinstance(chunk, dict):
+                            continue
+                        if _is_streamed_python_replay(
+                            chunk, completed_python_stream_ids
+                        ):
                             continue
                         if chunk.get("type") == "idea_context":
                             if __event_emitter__:
@@ -927,6 +950,14 @@ class Pipe:
         if chunk_type == "message":
             # Plain assistant text - stream through unchanged.
             yield content
+        elif chunk_type == "python_code_start":
+            # Four backticks keep ordinary Markdown fences embedded in Python
+            # string literals from prematurely closing the streamed block.
+            yield "\n\n````python\n"
+        elif chunk_type == "python_code_delta":
+            yield content
+        elif chunk_type == "python_code_end":
+            yield "\n````\n\n"
         elif chunk_type == "code":
             lang = fmt or ""
             yield f"\n\n```{lang}\n{content}\n```\n\n"
