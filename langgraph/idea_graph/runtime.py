@@ -25,12 +25,41 @@ from progress import (
     tool_call_chunk_names,
     tool_status_description,
 )
+from idea_config import (
+    IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
+    IDEA_MODEL_MAX_RETRIES,
+    IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
+)
 
-from .memory import execution_memory_block
+from .memory import compact_turn_messages, execution_memory_block
 
 
 class ModelCallCancelled(Exception):
     """Raised after cancelling an in-flight provider request."""
+
+
+class ModelRequestTimeout(RuntimeError):
+    """Raised with a stable, user-facing message after model timeouts."""
+
+
+def _is_model_timeout(exc: BaseException) -> bool:
+    """Recognize timeout wrappers used by httpx/OpenAI/LangChain."""
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if isinstance(current, TimeoutError):
+            return True
+        name = type(current).__name__.lower()
+        detail = str(current).lower()
+        if "timeout" in name or "timed out" in detail or "time out" in detail:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _seconds_label(value: float) -> str:
+    return f"{value:g}"
 
 
 MODEL_STREAM_FLUSH_INTERVAL_SECONDS = 0.05
@@ -135,11 +164,29 @@ class TerminalGraphRuntime:
                 result.append(HumanMessage(content=f"Conversation summary/context:\n{content}"))
             else:
                 result.append(HumanMessage(content=content))
-        result.extend(state.get("turn_messages") or [])
+        result.extend(compact_turn_messages(
+            list(state.get("turn_messages") or []),
+            observation_bytes=IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
+        ))
+        vision_paths = list(state.get("vision_images") or [])
+        consumed = int(state.get("vision_consumed_count") or 0)
+        if consumed < len(vision_paths):
+            vision_content: list[dict[str, Any]] = []
+            for image_path in vision_paths[consumed:]:
+                vision_content.append({
+                    "type": "text",
+                    "text": (
+                        "Image requested with inspect_image_tool at "
+                        f"`{image_path}`. Inspect its actual pixels before "
+                        "continuing."
+                    ),
+                })
+                vision_content.append(self.agent._model_image_part(image_path))
+            result.append(HumanMessage(content=vision_content))
         return result
 
     def call_model(self, messages: list[BaseMessage], *, cancellation: Any = None) -> AIMessage:
-        async def consume_stream() -> AIMessage:
+        async def consume_stream(activity: dict[str, bool]) -> AIMessage:
             aggregated = None
             pending_text = ""
             last_flush = time.monotonic()
@@ -224,6 +271,7 @@ class TerminalGraphRuntime:
 
             try:
                 async for chunk in self.agent.llm.astream(messages):
+                    activity["received_chunk"] = True
                     aggregated = chunk if aggregated is None else aggregated + chunk
                     text = str(getattr(chunk, "text", "") or "")
                     if text:
@@ -303,8 +351,8 @@ class TerminalGraphRuntime:
                 end_python_stream(tracker, complete=False)
             return final_response
 
-        async def invoke() -> AIMessage:
-            request = asyncio.create_task(consume_stream())
+        async def invoke(activity: dict[str, bool]) -> AIMessage:
+            request = asyncio.create_task(consume_stream(activity))
             started_at = time.monotonic()
             waiting_announced = False
             busy_announced = False
@@ -347,26 +395,82 @@ class TerminalGraphRuntime:
                     continue
             return await request
 
-        try:
-            response = asyncio.run(invoke())
-        except ModelCallCancelled:
-            raise
-        except Exception as exc:
-            detail = str(exc).lower()
-            rate_limited = "rate limit" in detail or "429" in detail
-            self.emit({
-                "type": "status",
-                "phase": "model_unavailable",
-                "description": (
-                    "Model capacity is temporarily limited; please retry"
-                    if rate_limited
-                    else "The model request failed"
-                ),
-                "done": True,
-                "error": True,
-            })
-            raise
-        return response
+        timeout_seconds = float(getattr(
+            self.agent,
+            "model_request_timeout_seconds",
+            IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
+        ))
+        max_retries = max(0, int(getattr(
+            self.agent,
+            "model_max_retries",
+            IDEA_MODEL_MAX_RETRIES,
+        )))
+
+        for attempt in range(max_retries + 1):
+            activity = {"received_chunk": False}
+            try:
+                return asyncio.run(invoke(activity))
+            except ModelCallCancelled:
+                raise
+            except Exception as exc:
+                timed_out = _is_model_timeout(exc)
+                retry_available = attempt < max_retries
+                # Retrying after any provider chunk could duplicate visible
+                # text, tool announcements, or streamed Python arguments.
+                safe_to_retry = timed_out and not activity["received_chunk"]
+                if retry_available and safe_to_retry:
+                    self.emit({
+                        "type": "status",
+                        "phase": "model_retrying",
+                        "description": (
+                            "The model response timed out after "
+                            f"{_seconds_label(timeout_seconds)} seconds; "
+                            f"retrying ({attempt + 1}/{max_retries})…"
+                        ),
+                        "done": False,
+                        "attempt": attempt + 1,
+                        "max_retries": max_retries,
+                    })
+                    continue
+
+                detail = str(exc).lower()
+                rate_limited = "rate limit" in detail or "429" in detail
+                if timed_out:
+                    qualifier = (
+                        " after partial output"
+                        if activity["received_chunk"]
+                        else ""
+                    )
+                    message = (
+                        "The model did not respond within "
+                        f"{_seconds_label(timeout_seconds)} seconds"
+                        f"{qualifier}. Any completed tool operations were "
+                        "retained; please retry."
+                    )
+                    self.emit({
+                        "type": "status",
+                        "phase": "model_timeout",
+                        "description": message,
+                        "done": True,
+                        "error": True,
+                        "retryable": not activity["received_chunk"],
+                    })
+                    raise ModelRequestTimeout(message) from exc
+
+                self.emit({
+                    "type": "status",
+                    "phase": "model_unavailable",
+                    "description": (
+                        "Model capacity is temporarily limited; please retry"
+                        if rate_limited
+                        else "The model request failed"
+                    ),
+                    "done": True,
+                    "error": True,
+                })
+                raise
+
+        raise AssertionError("model retry loop exited unexpectedly")
 
     def persist_python_source(self, execution_id: str, code: str, state: dict[str, Any]) -> str:
         from tools.persistent_terminal import write_file_stream
@@ -551,9 +655,13 @@ class TerminalGraphRuntime:
             result = str(tool.invoke(args))
         except Exception as exc:
             result = f"✗ {name} failed: {exc}"
+        displayed_result = result
+        if name == "view_skill" and not result.startswith("✗"):
+            from utils.skill_loader import summarize_skill_result
+            displayed_result = summarize_skill_result(result)
         self.emit({
             "role": "computer", "type": "console", "format": "output",
-            "content": result, "start": True, "end": True,
+            "content": displayed_result, "start": True, "end": True,
         })
         failed = result.startswith("✗")
         return ToolOutcome(

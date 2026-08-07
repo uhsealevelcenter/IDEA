@@ -116,6 +116,31 @@ class MessageCheckpointTests(unittest.TestCase):
 
         self.assertEqual(resolved, ("base-thread", None, "legacy_latest"))
 
+    def test_idless_history_uses_latest_durable_checkpoint(self):
+        with (
+            patch.object(
+                langgraph_service,
+                "_load_message_checkpoint",
+                return_value=None,
+            ),
+            patch.object(
+                langgraph_service,
+                "_load_latest_checkpoint",
+                return_value=("branch-thread", "checkpoint-9"),
+            ),
+        ):
+            resolved = langgraph_service._resolve_graph_checkpoint(
+                base_thread_id="base-thread",
+                messages=[{"id": "", "role": "assistant"}],
+                response_message_id="new-assistant",
+                run_id="run-10",
+            )
+
+        self.assertEqual(
+            resolved,
+            ("branch-thread", "checkpoint-9", "latest_idless_history"),
+        )
+
     def test_stores_durable_message_checkpoint_mapping(self):
         with patch.object(langgraph_service.redis_client, "set") as set_value:
             langgraph_service._store_message_checkpoint(

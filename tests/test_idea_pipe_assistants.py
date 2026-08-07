@@ -720,6 +720,131 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_pipe_renders_streamed_run_error_only_once(self):
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-timeout"}
+        failed_response = Mock()
+        failed_response.raise_for_status.return_value = None
+        failed_response.json.return_value = {
+            "run_id": "run-timeout",
+            "status": "failed",
+            "error": "Request timed out.",
+            "events": [{
+                "seq": 1,
+                "chunk": {"error": "Request timed out."},
+            }],
+        }
+        client.post = AsyncMock(return_value=start_response)
+        client.get = AsyncMock(return_value=failed_response)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Complex task"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, ["\n\n**Error:** Request timed out.\n\n"])
+
+    def test_pipe_uses_terminal_error_when_error_event_is_missing(self):
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-timeout"}
+        failed_response = Mock()
+        failed_response.raise_for_status.return_value = None
+        failed_response.json.return_value = {
+            "run_id": "run-timeout",
+            "status": "failed",
+            "error": "Request timed out.",
+            "events": [],
+        }
+        client.post = AsyncMock(return_value=start_response)
+        client.get = AsyncMock(return_value=failed_response)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Complex task"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, ["\n\n**Error:** Request timed out.\n\n"])
+
+    def test_pipe_preserves_classified_timeout_status(self):
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-timeout"}
+        timeout_message = (
+            "The model did not respond within 180 seconds. Any completed "
+            "tool operations were retained; please retry."
+        )
+        failed_response = Mock()
+        failed_response.raise_for_status.return_value = None
+        failed_response.json.return_value = {
+            "run_id": "run-timeout",
+            "status": "failed",
+            "error": timeout_message,
+            "events": [
+                {
+                    "seq": 1,
+                    "chunk": {
+                        "type": "status",
+                        "phase": "model_timeout",
+                        "description": timeout_message,
+                        "done": True,
+                        "error": True,
+                    },
+                },
+                {"seq": 2, "chunk": {"error": timeout_message}},
+            ],
+        }
+        client.post = AsyncMock(return_value=start_response)
+        client.get = AsyncMock(return_value=failed_response)
+        event_emitter = AsyncMock()
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Complex task"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                    __event_emitter__=event_emitter,
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, [f"\n\n**Error:** {timeout_message}\n\n"])
+        emitted_statuses = [
+            call.args[0]["data"] for call in event_emitter.await_args_list
+        ]
+        self.assertEqual(emitted_statuses[-1]["phase"], "model_timeout")
+        self.assertEqual(emitted_statuses[-1]["description"], timeout_message)
+
     def test_pipe_stop_clears_thinking_status_and_requests_backend_stop(self):
         client = Mock()
         client.__aenter__ = AsyncMock(return_value=client)
@@ -902,7 +1027,9 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(
             "".join(chunks),
-            "\n\n````python\nprint(1)\n````\n\n",
+            f"\n\n{idea_pipe.TOOL_OUTPUT_START}\n"
+            "````python\nprint(1)\n````\n"
+            f"{idea_pipe.TOOL_OUTPUT_END}\n\n",
         )
 
     def test_suppresses_only_matching_completed_python_replay(self):
@@ -979,6 +1106,50 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         )
         self.assertEqual(referenced, set())
         self.assertNotIn("data:image", rendered)
+
+    def test_generated_console_stays_visible_but_is_omitted_from_model_history(self):
+        rendered = "".join(idea_pipe.Pipe._translate_chunk({
+            "type": "console",
+            "content": "Output:\n" + "large-value " * 2000,
+        }))
+        self.assertIn("large-value", rendered)
+        self.assertNotIn("IDEA_TOOL", rendered)
+
+        structured = idea_pipe._structured_messages([
+            {"role": "assistant", "content": rendered + "Final finding."},
+            {"role": "user", "content": "Continue"},
+        ])
+
+        assistant = structured[0]["content"]
+        self.assertNotIn("large-value", assistant)
+        self.assertIn("tool display omitted", assistant)
+        self.assertIn("Final finding", assistant)
+
+    def test_legacy_visible_tool_markers_are_still_removed_from_context(self):
+        content = (
+            "Before\n<!-- IDEA_TOOL_OUTPUT_START -->\n```text\nsecret\n```\n"
+            "<!-- IDEA_TOOL_OUTPUT_END -->\nAfter"
+        )
+        structured = idea_pipe._structured_messages([
+            {"role": "assistant", "content": content},
+        ])
+
+        self.assertNotIn("secret", structured[0]["content"])
+        self.assertIn("Before", structured[0]["content"])
+        self.assertIn("After", structured[0]["content"])
+
+    def test_legacy_large_assistant_history_retains_final_answer(self):
+        content = "prefix\n" + ("tool noise " * 5000) + "\nFINAL ANSWER"
+        structured = idea_pipe._structured_messages([
+            {"role": "assistant", "content": content},
+        ])
+
+        assistant = structured[0]["content"]
+        self.assertLessEqual(
+            len(assistant.encode("utf-8")),
+            idea_pipe.MAX_ASSISTANT_MODEL_CONTEXT_BYTES + 10,
+        )
+        self.assertIn("FINAL ANSWER", assistant)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from langchain_core.messages import ToolMessage
+
 from idea_config import IDEA_MAX_EXECUTION_MEMORY_BYTES
 
 
@@ -141,3 +143,36 @@ def execution_memory_block(
         selected.append(entry)
         used += len(encoded) + 1
     return "\n".join([header, *selected])
+
+
+def compact_turn_messages(
+    messages: list[Any],
+    *,
+    observation_bytes: int,
+    keep_recent_tools: int = 2,
+) -> list[Any]:
+    """Bound older tool observations while keeping the newest evidence intact."""
+    tool_positions = [
+        index for index, message in enumerate(messages)
+        if isinstance(message, ToolMessage)
+    ]
+    recent_count = max(keep_recent_tools, 0)
+    keep = set(tool_positions[-recent_count:]) if recent_count else set()
+    compacted: list[Any] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, ToolMessage) or index in keep:
+            compacted.append(message)
+            continue
+        content = str(message.content or "")
+        bounded = bounded_text_bytes(content, observation_bytes)
+        if bounded != content:
+            bounded += (
+                "\n[Older tool observation compacted. Use the execution ledger "
+                "or archived output path for details.]"
+            )
+        compacted.append(ToolMessage(
+            content=bounded,
+            tool_call_id=message.tool_call_id,
+            name=getattr(message, "name", None),
+        ))
+    return compacted

@@ -13,6 +13,7 @@ version: 0.2.0
 
 import asyncio
 import json
+import os
 import posixpath
 import re
 import httpx
@@ -66,6 +67,35 @@ INLINE_IMAGE_DATA_URI_RE = re.compile(
     r"data:image/[^;\s)]+;base64,[A-Za-z0-9+/=]+"
 )
 CONVERSATION_SUMMARY_MARKER = "[CONVERSATION SUMMARY]"
+LEGACY_TOOL_OUTPUT_START = "<!-- IDEA_TOOL_OUTPUT_START -->"
+LEGACY_TOOL_OUTPUT_END = "<!-- IDEA_TOOL_OUTPUT_END -->"
+# Open WebUI escapes HTML comments in assistant Markdown, so readable comment
+# markers leak into chat. These Unicode format characters are non-rendering
+# delimiters: the tool content remains visible, while the next request can
+# still distinguish display-only blocks from model conversation context.
+TOOL_OUTPUT_START = "\u2063\u2064\u2063\u2064"
+TOOL_OUTPUT_END = "\u2064\u2063\u2064\u2063"
+TOOL_OUTPUT_BLOCK_RE = re.compile(
+    r"(?:"
+    + re.escape(TOOL_OUTPUT_START)
+    + r".*?"
+    + re.escape(TOOL_OUTPUT_END)
+    + r"|"
+    + re.escape(LEGACY_TOOL_OUTPUT_START)
+    + r".*?"
+    + re.escape(LEGACY_TOOL_OUTPUT_END)
+    + r")",
+    re.DOTALL,
+)
+LEGACY_CONSOLE_BLOCK_RE = re.compile(
+    r"```text\s*\n(?:(?:✓|✗) Command .*?|Output:\s*.*?|"
+    r"Calling [A-Za-z_][A-Za-z0-9_]*\(.*?|"
+    r"\{\s*\"source\"\s*:\s*\"(?:builtin|workspace)\".*?)\n```",
+    re.DOTALL,
+)
+MAX_ASSISTANT_MODEL_CONTEXT_BYTES = int(
+    os.getenv("IDEA_MAX_MODEL_HISTORY_MESSAGE_BYTES", "16000")
+)
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -173,6 +203,7 @@ def _structured_messages(messages: list[dict]) -> list[dict]:
             content = str(content)
         if role == "assistant":
             content = _sanitize_assistant_image_history(content)
+            content = _sanitize_assistant_tool_history(content)
         result.append({
             "id": str(message.get("id") or ""),
             "role": role,
@@ -203,6 +234,44 @@ def _sanitize_assistant_image_history(content: str | list) -> str | list:
         for key in ("text", "content"):
             if isinstance(item.get(key), str):
                 item[key] = _sanitize_assistant_image_history(item[key])
+        sanitized.append(item)
+    return sanitized
+
+
+def _bounded_model_history_text(content: str) -> str:
+    encoded = content.encode("utf-8")
+    if len(encoded) <= MAX_ASSISTANT_MODEL_CONTEXT_BYTES:
+        return content
+    marker = (
+        "\n\n[Earlier display-only assistant/tool output omitted from model "
+        "context.]\n\n"
+    )
+    # The final answer is normally at the end of an Open WebUI assistant
+    # message, so retain substantially more of the suffix than the prefix.
+    head = encoded[:3000].decode("utf-8", errors="ignore")
+    remaining = MAX_ASSISTANT_MODEL_CONTEXT_BYTES - len(
+        (head + marker).encode("utf-8")
+    )
+    tail = encoded[-max(remaining, 0):].decode("utf-8", errors="ignore")
+    return head + marker + tail
+
+
+def _sanitize_assistant_tool_history(content: str | list) -> str | list:
+    """Keep UI transcript details out of subsequent model requests."""
+    replacement = "[IDEA tool display omitted; durable execution memory is authoritative.]"
+    if isinstance(content, str):
+        content = TOOL_OUTPUT_BLOCK_RE.sub(replacement, content)
+        content = LEGACY_CONSOLE_BLOCK_RE.sub(replacement, content)
+        return _bounded_model_history_text(content)
+    sanitized: list = []
+    for item in content:
+        if not isinstance(item, dict):
+            sanitized.append(item)
+            continue
+        item = dict(item)
+        for key in ("text", "content"):
+            if isinstance(item.get(key), str):
+                item[key] = _sanitize_assistant_tool_history(item[key])
         sanitized.append(item)
     return sanitized
 
@@ -698,6 +767,7 @@ class Pipe:
         completed_python_stream_ids: set[str] = set()
         status_done = False
         stop_sent = False
+        error_event_received = False
 
         async def emit_status(status: dict) -> None:
             """Forward a LangGraph phase to Open WebUI's native status UI."""
@@ -816,13 +886,18 @@ class Pipe:
                             await emit_status(chunk)
                             continue
                         if "error" in chunk:
-                            await emit_status({
-                                "action": "idea_agent",
-                                "phase": "failed",
-                                "description": "IDEA encountered an error",
-                                "done": True,
-                                "error": True,
-                            })
+                            error_event_received = True
+                            # Preserve a preceding classified terminal status
+                            # (for example model_timeout) instead of replacing
+                            # its actionable description with a generic one.
+                            if not status_done:
+                                await emit_status({
+                                    "action": "idea_agent",
+                                    "phase": "failed",
+                                    "description": "IDEA encountered an error",
+                                    "done": True,
+                                    "error": True,
+                                })
                         if chunk.get("type") == "message":
                             content = chunk.get("content", "")
                             if artifact_reference_confirmed:
@@ -849,7 +924,15 @@ class Pipe:
                     status = str(response_data.get("status") or "")
                     if status in TERMINAL_RUN_STATUSES:
                         run_terminal = True
-                        if status == "failed" and response_data.get("error"):
+                        # LangGraph normally publishes the failure as an event
+                        # and repeats it in terminal run metadata. Render the
+                        # metadata only as a fallback for older/interrupted
+                        # backends that did not publish an error event.
+                        if (
+                            status == "failed"
+                            and response_data.get("error")
+                            and not error_event_received
+                        ):
                             yield f"\n\n**Error:** {response_data['error']}\n\n"
                         break
                     await asyncio.sleep(0.25)
@@ -953,16 +1036,22 @@ class Pipe:
         elif chunk_type == "python_code_start":
             # Four backticks keep ordinary Markdown fences embedded in Python
             # string literals from prematurely closing the streamed block.
-            yield "\n\n````python\n"
+            yield f"\n\n{TOOL_OUTPUT_START}\n````python\n"
         elif chunk_type == "python_code_delta":
             yield content
         elif chunk_type == "python_code_end":
-            yield "\n````\n\n"
+            yield f"\n````\n{TOOL_OUTPUT_END}\n\n"
         elif chunk_type == "code":
             lang = fmt or ""
-            yield f"\n\n```{lang}\n{content}\n```\n\n"
+            yield (
+                f"\n\n{TOOL_OUTPUT_START}\n```{lang}\n{content}\n```\n"
+                f"{TOOL_OUTPUT_END}\n\n"
+            )
         elif chunk_type == "console":
-            yield f"\n\n```text\n{content}\n```\n\n"
+            yield (
+                f"\n\n{TOOL_OUTPUT_START}\n```text\n{content}\n```\n"
+                f"{TOOL_OUTPUT_END}\n\n"
+            )
         elif chunk_type == "image" and content:
             # Backward compatibility for older LangGraph services. Current
             # services send a filename and the main Pipe loop resolves it to

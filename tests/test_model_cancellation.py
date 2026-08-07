@@ -91,6 +91,38 @@ class RateLimitedLLM:
             yield AIMessageChunk(content="")
 
 
+class TimeoutThenSuccessLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def astream(self, messages):
+        self.calls += 1
+        if self.calls == 1:
+            raise TimeoutError("Request timed out.")
+        yield AIMessageChunk(content="Recovered")
+
+
+class AlwaysTimeoutLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def astream(self, messages):
+        self.calls += 1
+        raise TimeoutError("Request timed out.")
+        if False:
+            yield AIMessageChunk(content="")
+
+
+class PartialThenTimeoutLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def astream(self, messages):
+        self.calls += 1
+        yield AIMessageChunk(content="Partial response")
+        raise TimeoutError("Request timed out.")
+
+
 class ModelCancellationTests(unittest.TestCase):
     def test_streams_text_and_announces_tool_before_arguments_finish(self):
         events = []
@@ -166,6 +198,80 @@ class ModelCancellationTests(unittest.TestCase):
             "done": True,
             "error": True,
         })
+
+    def test_retries_a_timeout_before_any_output_and_reports_recovery(self):
+        llm = TimeoutThenSuccessLLM()
+        events = []
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = SimpleNamespace(
+            llm=llm,
+            model_request_timeout_seconds=180,
+            model_max_retries=1,
+        )
+        runtime.event_callback = events.append
+
+        response = runtime.call_model([])
+
+        self.assertEqual(response.content, "Recovered")
+        self.assertEqual(llm.calls, 2)
+        self.assertEqual(events[0], {
+            "type": "status",
+            "phase": "model_retrying",
+            "description": (
+                "The model response timed out after 180 seconds; "
+                "retrying (1/1)…"
+            ),
+            "done": False,
+            "attempt": 1,
+            "max_retries": 1,
+        })
+
+    def test_classifies_final_timeout_with_actionable_message(self):
+        llm = AlwaysTimeoutLLM()
+        events = []
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = SimpleNamespace(
+            llm=llm,
+            model_request_timeout_seconds=180,
+            model_max_retries=1,
+        )
+        runtime.event_callback = events.append
+
+        expected = (
+            "The model did not respond within 180 seconds. Any completed "
+            "tool operations were retained; please retry."
+        )
+        with self.assertRaisesRegex(RuntimeError, expected.replace(".", r"\.")):
+            runtime.call_model([])
+
+        self.assertEqual(llm.calls, 2)
+        self.assertEqual(events[-1], {
+            "type": "status",
+            "phase": "model_timeout",
+            "description": expected,
+            "done": True,
+            "error": True,
+            "retryable": True,
+        })
+
+    def test_does_not_retry_after_partial_output_was_streamed(self):
+        llm = PartialThenTimeoutLLM()
+        events = []
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = SimpleNamespace(
+            llm=llm,
+            model_request_timeout_seconds=180,
+            model_max_retries=1,
+        )
+        runtime.event_callback = events.append
+
+        with self.assertRaisesRegex(RuntimeError, "after partial output"):
+            runtime.call_model([])
+
+        self.assertEqual(llm.calls, 1)
+        self.assertEqual(events[0], "Partial response")
+        self.assertEqual(events[-1]["phase"], "model_timeout")
+        self.assertFalse(events[-1]["retryable"])
 
     def test_in_flight_model_request_is_cancelled_at_user_stop(self):
         llm = BlockingLLM()

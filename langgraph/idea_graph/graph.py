@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from idea_config import (
     IDEA_MAX_CODE_INLINE_BYTES,
+    IDEA_MAX_IDENTICAL_TOOL_CALLS,
+    IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
     IDEA_MAX_RECENT_ACTIONS,
     IDEA_MAX_RECENT_EXECUTIONS,
     IDEA_MAX_STATE_BYTES,
@@ -20,6 +23,7 @@ from .control import RunCancellation
 from .memory import (
     bounded_excerpt,
     bounded_records,
+    compact_turn_messages,
     defined_names,
     execution_memory_block,
     safe_arguments,
@@ -28,6 +32,17 @@ from .memory import (
 )
 from .runtime import GraphRuntime, ModelCallCancelled
 from .state import IDEAState
+
+
+_CONTINUE_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:continue|resume|keep going|finish(?: it| the work)?)"
+    r"[.!\s]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_continuation_request(objective: str) -> bool:
+    return bool(_CONTINUE_RE.fullmatch(str(objective or "")))
 
 
 def _tool_id(call: dict[str, Any]) -> str:
@@ -77,9 +92,32 @@ def build_idea_graph(
             if message.get("role") == "user":
                 objective = str(message.get("content") or "")
                 break
+        continuing = bool(
+            state.get("continuation") and _is_continuation_request(objective)
+        )
+        if continuing:
+            objective = str(state.get("objective") or objective)
+            plan = [
+                {
+                    **item,
+                    "status": (
+                        "pending" if item.get("status") in {"deferred", "blocked"}
+                        else item.get("status", "pending")
+                    ),
+                }
+                for item in (state.get("plan") or [])
+            ]
+        else:
+            plan = [{
+                "id": "complete_user_objective",
+                "description": objective[:1000],
+                "status": "pending",
+            }]
         return {
             "schema_version": 1,
             "objective": objective,
+            "plan": plan,
+            "continuation": None,
             "turn_messages": [],
             "pending_tool_calls": [],
             "current_action": None,
@@ -91,6 +129,8 @@ def build_idea_graph(
             "final_status": "stopping" if cancellation.requested else "running",
             "final_response": None,
             "iteration": 0,
+            "vision_images": [],
+            "vision_consumed_count": 0,
         }
 
     def call_model(state: IDEAState) -> dict[str, Any]:
@@ -110,6 +150,16 @@ def build_idea_graph(
                 "stop_requested": True,
                 "stop_reason": "iteration_limit",
                 "final_status": "stopping",
+                "continuation": {
+                    "reason": "iteration_limit",
+                    "next_step": "Resume from this checkpoint and continue the pending objective.",
+                    "iteration": int(state.get("iteration") or 0),
+                    "pending_tool_calls": list(state.get("pending_tool_calls") or []),
+                    "completed_action_ids": [
+                        item.get("execution_id")
+                        for item in (state.get("completed_actions") or [])[-20:]
+                    ],
+                },
             }
         runtime.emit({
             "type": "status", "phase": "thinking",
@@ -130,10 +180,14 @@ def build_idea_graph(
             call["id"] = _tool_id(call)
             tool_calls.append(call)
         return {
-            "turn_messages": list(state.get("turn_messages") or []) + [response],
+            "turn_messages": compact_turn_messages(
+                list(state.get("turn_messages") or []),
+                observation_bytes=IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
+            ) + [response],
             "pending_tool_calls": tool_calls,
             "iteration": iteration,
             "final_response": str(response.content or "") if not tool_calls else None,
+            "vision_consumed_count": len(state.get("vision_images") or []),
         }
 
     def execute_one_tool(state: IDEAState) -> dict[str, Any]:
@@ -166,6 +220,34 @@ def build_idea_graph(
             "status": "running",
             "started_at": started,
         }
+        identical = [
+            item for item in (state.get("completed_actions") or [])
+            if item.get("tool_name") == name
+            and item.get("arguments_hash") == action["arguments_hash"]
+        ]
+        if len(identical) >= IDEA_MAX_IDENTICAL_TOOL_CALLS:
+            completed = utc_now()
+            warning = (
+                f"Blocked repeated identical call to {name} after "
+                f"{IDEA_MAX_IDENTICAL_TOOL_CALLS} prior attempts. Inspect the "
+                "existing result or change the arguments before retrying."
+            )
+            action.update({
+                "status": "blocked",
+                "completed_at": completed,
+                "result_excerpt": warning,
+                "error_summary": warning,
+            })
+            blocked_actions = bounded_actions(state, action)
+            return {
+                "pending_tool_calls": pending,
+                "current_action": None,
+                "completed_actions": blocked_actions,
+                "warnings": [*(state.get("warnings") or [])[-19:], warning],
+                "turn_messages": list(state.get("turn_messages") or []) + [
+                    ToolMessage(content=warning, tool_call_id=call_id)
+                ],
+            }
         runtime.emit({
             "type": "status", "phase": "running_tool",
             "description": f"Running {name}…", "tool_name": name, "done": False,
@@ -209,16 +291,24 @@ def build_idea_graph(
             outcome_status = "failed"
             outcome_error = str(exc)
         completed = utc_now()
+        ledger_result = outcome_content
+        if name == "view_skill" and not outcome_content.startswith("✗"):
+            try:
+                from utils.skill_loader import summarize_skill_result
+                ledger_result = summarize_skill_result(outcome_content)
+            except Exception:
+                ledger_result = "Skill instructions loaded for this turn."
         action.update({
             "status": outcome_status,
             "completed_at": completed,
-            "result_excerpt": bounded_excerpt(outcome_content, result_excerpt_bytes),
+            "result_excerpt": bounded_excerpt(ledger_result, result_excerpt_bytes),
             **({"error_summary": bounded_excerpt(outcome_error, 2000)} if outcome_error else {}),
         })
+        completed_actions = bounded_actions(state, action)
         update: dict[str, Any] = {
             "pending_tool_calls": pending,
             "current_action": None,
-            "completed_actions": bounded_actions(state, action),
+            "completed_actions": completed_actions,
             "turn_messages": list(state.get("turn_messages") or []) + [
                 ToolMessage(content=outcome_content, tool_call_id=call_id)
             ],
@@ -233,6 +323,15 @@ def build_idea_graph(
             update["python_executions"] = bounded_python(
                 state, python_record
             )
+        if (
+            name == "inspect_image_tool"
+            and outcome_status == "completed"
+            and args.get("filepath")
+        ):
+            update["vision_images"] = [
+                *(state.get("vision_images") or []),
+                str(args["filepath"]),
+            ][-16:]
         if cancellation.requested or outcome_status == "interrupted":
             update.update({
                 "stop_requested": True,
@@ -253,7 +352,9 @@ def build_idea_graph(
     def route_after_prepare(state: IDEAState) -> Literal["call_model", "stopped_summary"]:
         return "stopped_summary" if state.get("stop_requested") else "call_model"
 
-    def route_after_model(state: IDEAState) -> Literal["execute_one_tool", "finalize", "stopped_summary"]:
+    def route_after_model(state: IDEAState) -> Literal[
+        "execute_one_tool", "finalize", "stopped_summary"
+    ]:
         if state.get("stop_requested"):
             return "stopped_summary"
         if state.get("pending_tool_calls"):
@@ -278,6 +379,11 @@ def build_idea_graph(
         ]
         if state.get("stop_reason") == "user_requested":
             lines = ["Stopped at your request."]
+        elif state.get("stop_reason") == "iteration_limit":
+            lines = [
+                "Paused at the iteration safety limit. Work completed so far "
+                "is checkpointed; ask me to continue to resume it."
+            ]
         else:
             lines = ["Stopped before completion."]
         if completed:
@@ -298,7 +404,17 @@ def build_idea_graph(
             lines.extend(f"- {item.get('path')}" for item in artifacts[-8:])
         response = "\n".join(lines)
         runtime.emit(response)
-        return {"final_status": "stopped", "final_response": response}
+        return {
+            "final_status": "stopped",
+            "final_response": response,
+            "plan": [{
+                **item,
+                "status": (
+                    "deferred" if state.get("stop_reason") == "iteration_limit"
+                    else "blocked"
+                ),
+            } for item in (state.get("plan") or [])],
+        }
 
     def finalize(state: IDEAState) -> dict[str, Any]:
         runtime.emit({
@@ -310,7 +426,14 @@ def build_idea_graph(
             "type": "status", "phase": "completed",
             "description": "Finished", "done": True,
         })
-        return {"final_status": "completed"}
+        return {
+            "final_status": "completed",
+            "plan": [
+                {**item, "status": "completed"}
+                for item in (state.get("plan") or [])
+            ],
+            "continuation": None,
+        }
 
     def finalize_stopped(state: IDEAState) -> dict[str, Any]:
         runtime.finalize(state)

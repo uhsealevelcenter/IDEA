@@ -51,6 +51,7 @@ from utils.tools import (
     make_query_knowledge_base_tool,
 )
 from idea_config import (
+    IDEA_AGENT_RUNTIME,
     IDEA_MODEL_MAX_RETRIES,
     IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
     LITELLM_END_USER_HEADER,
@@ -229,6 +230,8 @@ class TerminalAgent:
         self.model = model
         self.temperature = temperature
         self.max_iterations = max_iterations
+        self.model_request_timeout_seconds = IDEA_MODEL_REQUEST_TIMEOUT_SECONDS
+        self.model_max_retries = max(0, IDEA_MODEL_MAX_RETRIES)
         self.assistant_id = assistant_id
         self.assistant_system_prompt = assistant_system_prompt
         self.attached_files = list(attached_files or [])
@@ -338,7 +341,7 @@ class TerminalAgent:
         # Routed through the LiteLLM proxy (see litellm/ and
         # docker-compose.yml's `litellm` service) rather than hitting the
         # Azure AI Foundry endpoint directly - LITELLM_VIRTUAL_KEY is one
-        # key shared by every user (a $50 total budget, not per-user), and
+        # key shared by every user (a $100 total budget, not per-user), and
         # LITELLM_END_USER_HEADER carries this user's email so LiteLLM can
         # still attribute spend/usage per end user despite the shared key.
         # Reasoning models (e.g., gpt-5.6-sol) only support the provider default
@@ -356,7 +359,13 @@ class TerminalAgent:
             "base_url": LITELLM_PROXY_URL,
             "default_headers": {LITELLM_END_USER_HEADER: end_user_id},
             "timeout": IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
-            "max_retries": IDEA_MODEL_MAX_RETRIES,
+            # LangGraph owns retries so it can report them to the UI and
+            # decline to replay a response after partial output was streamed.
+            # Preserve the SDK retry for the supported manual rollback path.
+            "max_retries": (
+                0 if IDEA_AGENT_RUNTIME == "langgraph"
+                else IDEA_MODEL_MAX_RETRIES
+            ),
         }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature

@@ -8,7 +8,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "langgraph"))
 
-from langchain_core.messages import AIMessage  # noqa: E402
+from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
 from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 
 from idea_graph.control import RunCancellation  # noqa: E402
@@ -17,6 +17,7 @@ from idea_graph.graph import build_idea_graph  # noqa: E402
 from idea_graph.identities import derive_execution_identities  # noqa: E402
 from idea_graph.memory import (  # noqa: E402
     bounded_records,
+    compact_turn_messages,
     defined_names,
     execution_memory_block,
     safe_arguments,
@@ -77,6 +78,27 @@ class FakeRuntime:
         return []
 
 
+class RepeatingRuntime(FakeRuntime):
+    def __init__(self, finish_after=None):
+        super().__init__()
+        self.finish_after = finish_after
+
+    def call_model(self, messages, *, cancellation=None):
+        self.model_inputs.append(messages)
+        self.model_calls += 1
+        if self.finish_after and self.model_calls > self.finish_after:
+            return AIMessage(content="Finished after repeated calls.")
+        return AIMessage(
+            content="",
+            tool_calls=[{
+                "id": f"call-{self.model_calls}",
+                "name": "run_terminal_tool",
+                "args": {"command": "same-command"},
+                "type": "tool_call",
+            }],
+        )
+
+
 class LangGraphMemoryTests(unittest.TestCase):
     def test_execution_memory_is_newest_first_and_byte_bounded(self):
         state = {
@@ -110,6 +132,21 @@ class LangGraphMemoryTests(unittest.TestCase):
             len(json.dumps(bounded).encode("utf-8")),
             300,
         )
+
+    def test_older_tool_observations_are_compacted_but_recent_are_preserved(self):
+        messages = [
+            ToolMessage(content="old-" + "x" * 100, tool_call_id="old"),
+            ToolMessage(content="new-" + "y" * 100, tool_call_id="new"),
+        ]
+
+        compacted = compact_turn_messages(
+            messages,
+            observation_bytes=30,
+            keep_recent_tools=1,
+        )
+
+        self.assertIn("compacted", compacted[0].content)
+        self.assertEqual(compacted[1].content, messages[1].content)
 
     def test_exact_python_source_is_checkpointed(self):
         runtime = FakeRuntime()
@@ -174,6 +211,54 @@ class LangGraphMemoryTests(unittest.TestCase):
         self.assertEqual(runtime.model_calls, 0)
         self.assertIn("Stopped at your request", result["final_response"])
 
+    def test_iteration_limit_saves_resumable_continuation(self):
+        saver = InMemorySaver()
+        runtime = RepeatingRuntime()
+        graph = build_idea_graph(runtime, checkpointer=saver, max_iterations=2)
+        config = {"configurable": {"thread_id": "thread-limit"}}
+        result = graph.invoke({
+            "conversation_messages": [{
+                "role": "user", "content": "Create a PDF report"
+            }],
+            "run_id": "run-limit", "thread_id": "thread-limit",
+            "workspace_id": "workspace-1", "kernel_id": "kernel-1",
+        }, config={**config, "recursion_limit": 50})
+
+        self.assertEqual(result["final_status"], "stopped")
+        self.assertEqual(result["continuation"]["reason"], "iteration_limit")
+        self.assertEqual(result["objective"], "Create a PDF report")
+        self.assertEqual(result["plan"][0]["status"], "deferred")
+
+        resumed_runtime = RepeatingRuntime(finish_after=0)
+        resumed_runtime.call_model = lambda messages, cancellation=None: AIMessage(
+            content="Resumed and finished."
+        )
+        resumed_graph = build_idea_graph(
+            resumed_runtime, checkpointer=saver, max_iterations=2
+        )
+        resumed = resumed_graph.invoke({
+            "conversation_messages": [
+                {"role": "user", "content": "Create a PDF report"},
+                {"role": "assistant", "content": result["final_response"]},
+                {"role": "user", "content": "Please continue."},
+            ],
+            "run_id": "run-resume", "thread_id": "thread-limit",
+            "workspace_id": "workspace-1", "kernel_id": "kernel-1",
+        }, config=config)
+        self.assertEqual(resumed["objective"], "Create a PDF report")
+        self.assertEqual(resumed["final_status"], "completed")
+
+    def test_identical_tool_loop_is_blocked_before_fourth_execution(self):
+        runtime = RepeatingRuntime(finish_after=4)
+        graph = build_idea_graph(runtime, max_iterations=8)
+        result = graph.invoke({
+            "conversation_messages": [{"role": "user", "content": "work"}],
+            "run_id": "run-loop", "thread_id": "thread-loop",
+            "workspace_id": "workspace-1", "kernel_id": "kernel-1",
+        }, config={"recursion_limit": 100})
+
+        self.assertEqual(len(runtime.executed), 3)
+        self.assertIn("blocked", {a["status"] for a in result["completed_actions"]})
 
 class IdentityAndRedactionTests(unittest.TestCase):
     def setUp(self):

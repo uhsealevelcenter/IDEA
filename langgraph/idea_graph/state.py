@@ -8,7 +8,8 @@ from langchain_core.messages import AnyMessage
 
 
 ExecutionStatus = Literal[
-    "planned", "running", "completed", "failed", "interrupted", "outcome_unknown"
+    "planned", "running", "completed", "failed", "deferred", "blocked",
+    "interrupted", "outcome_unknown"
 ]
 
 
@@ -77,6 +78,7 @@ class IDEAState(TypedDict, total=False):
     turn_messages: list[AnyMessage]
     objective: str
     plan: list[dict[str, Any]]
+    continuation: dict[str, Any] | None
     pending_tool_calls: list[dict[str, Any]]
     current_action: ActionRecord | None
     completed_actions: list[ActionRecord]
@@ -94,3 +96,5 @@ class IDEAState(TypedDict, total=False):
     workspace_id: str
     kernel_id: str
     iteration: int
+    vision_images: list[str]
+    vision_consumed_count: int

@@ -69,6 +69,7 @@ CHAT_RUN_EVENTS_PREFIX = "langgraph_run_events:"
 CHAT_RUN_SEQ_PREFIX = "langgraph_run_seq:"
 CHAT_RUN_CANCEL_PREFIX = "langgraph_run_cancel:"
 MESSAGE_CHECKPOINT_PREFIX = "langgraph_message_checkpoint:"
+LATEST_CHECKPOINT_PREFIX = "langgraph_latest_checkpoint:"
 chat_run_controls: dict[str, RunCancellation] = {}
 chat_run_controls_lock = threading.Lock()
 
@@ -106,6 +107,10 @@ def _chat_run_cancel_key(run_id: str) -> str:
 def _message_checkpoint_key(base_thread_id: str, message_id: str) -> str:
     message_digest = hashlib.sha256(message_id.encode("utf-8")).hexdigest()
     return f"{MESSAGE_CHECKPOINT_PREFIX}{base_thread_id}:{message_digest}"
+
+
+def _latest_checkpoint_key(base_thread_id: str) -> str:
+    return f"{LATEST_CHECKPOINT_PREFIX}{base_thread_id}"
 
 
 def _branch_thread_id(
@@ -161,6 +166,41 @@ def _store_message_checkpoint(
     )
 
 
+def _store_latest_checkpoint(
+    base_thread_id: str,
+    thread_id: str,
+    checkpoint_id: str | None,
+) -> None:
+    if not checkpoint_id:
+        return
+    redis_client.set(
+        _latest_checkpoint_key(base_thread_id),
+        json.dumps({
+            "schema_version": 1,
+            "thread_id": thread_id,
+            "checkpoint_id": checkpoint_id,
+        }),
+        ex=IDEA_CHECKPOINT_MAP_TTL_SECONDS,
+    )
+
+
+def _load_latest_checkpoint(base_thread_id: str) -> tuple[str, str] | None:
+    key = _latest_checkpoint_key(base_thread_id)
+    raw = redis_client.get(key)
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+        thread_id = str(value.get("thread_id") or "")
+        checkpoint_id = str(value.get("checkpoint_id") or "")
+    except Exception:
+        return None
+    if not thread_id or not checkpoint_id:
+        return None
+    redis_client.expire(key, IDEA_CHECKPOINT_MAP_TTL_SECONDS)
+    return thread_id, checkpoint_id
+
+
 def _resolve_graph_checkpoint(
     *,
     base_thread_id: str,
@@ -189,6 +229,10 @@ def _resolve_graph_checkpoint(
             return mapping[0], mapping[1], "message_mapping"
 
     if visible_assistant_ids:
+        if not any(visible_assistant_ids):
+            latest = _load_latest_checkpoint(base_thread_id)
+            if latest:
+                return latest[0], latest[1], "latest_idless_history"
         # One-time migration path for chats created before message mappings:
         # continue their existing linear thread, then map the new response.
         return base_thread_id, None, "legacy_latest"
@@ -325,6 +369,9 @@ def _run_chat_job(
 ):
     """Background job to execute chat and stream events to Redis"""
     session_key = f"{user_id}:{session_id}"
+    graph = None
+    graph_thread_id = None
+    base_thread_id = None
     
     try:
         _update_chat_run_status(
@@ -342,6 +389,7 @@ def _run_chat_job(
                 run_id=run_id,
                 kernel_scope=IDEA_KERNEL_SCOPE,
             )
+            base_thread_id = identities.thread_id
             graph_thread_id, resolved_checkpoint_id, checkpoint_source = (
                 _resolve_graph_checkpoint(
                     base_thread_id=identities.thread_id,
@@ -394,7 +442,11 @@ def _run_chat_job(
                 )
                 config: dict[str, Any] = {
                     "configurable": {"thread_id": graph_thread_id},
-                    "recursion_limit": 100,
+                    # Tool nodes make LangGraph steps grow faster than model
+                    # iterations. IDEA's explicit model-iteration boundary
+                    # should create a resumable checkpoint before LangGraph's
+                    # structural recursion guard can raise.
+                    "recursion_limit": 240,
                 }
                 if resolved_checkpoint_id:
                     config["configurable"]["checkpoint_id"] = (
@@ -430,6 +482,11 @@ def _run_chat_job(
                 _store_message_checkpoint(
                     identities.thread_id,
                     response_message_id,
+                    graph_thread_id,
+                    checkpoint_id,
+                )
+                _store_latest_checkpoint(
+                    identities.thread_id,
                     graph_thread_id,
                     checkpoint_id,
                 )
@@ -515,6 +572,41 @@ def _run_chat_job(
         
     except Exception as exc:
         print(f"Error in chat run {run_id}: {exc}")
+        failed_checkpoint_id = None
+        if graph is not None and graph_thread_id:
+            try:
+                snapshot = graph.get_state({
+                    "configurable": {"thread_id": graph_thread_id}
+                })
+                failed_checkpoint_id = snapshot.config.get(
+                    "configurable", {}
+                ).get("checkpoint_id")
+                if base_thread_id:
+                    _store_message_checkpoint(
+                        base_thread_id,
+                        response_message_id,
+                        graph_thread_id,
+                        failed_checkpoint_id,
+                    )
+                    _store_latest_checkpoint(
+                        base_thread_id,
+                        graph_thread_id,
+                        failed_checkpoint_id,
+                    )
+            except Exception as checkpoint_exc:
+                print(
+                    f"Could not retain failed-run checkpoint for {run_id}: "
+                    f"{checkpoint_exc}"
+                )
+        if failed_checkpoint_id:
+            _append_chat_run_event(run_id, {
+                "type": "idea_context",
+                "schema_version": 1,
+                "thread_id": graph_thread_id,
+                "run_id": run_id,
+                "output_checkpoint_id": failed_checkpoint_id,
+                "checkpoint_source": "failed_run",
+            })
         _append_chat_run_event(run_id, {"error": str(exc)})
         _update_chat_run_status(
             run_id,

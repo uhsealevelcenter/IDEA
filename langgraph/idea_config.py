@@ -31,6 +31,15 @@ IDEA_MAX_CODE_INLINE_BYTES = int(os.getenv("IDEA_MAX_CODE_INLINE_BYTES", "100000
 IDEA_MAX_EXECUTION_MEMORY_BYTES = int(
     os.getenv("IDEA_MAX_EXECUTION_MEMORY_BYTES", "48000")
 )
+IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES = int(
+    os.getenv("IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES", "6000")
+)
+IDEA_MAX_MODEL_HISTORY_MESSAGE_BYTES = int(
+    os.getenv("IDEA_MAX_MODEL_HISTORY_MESSAGE_BYTES", "16000")
+)
+IDEA_MAX_IDENTICAL_TOOL_CALLS = int(
+    os.getenv("IDEA_MAX_IDENTICAL_TOOL_CALLS", "3")
+)
 IDEA_CHECKPOINT_MAP_TTL_SECONDS = int(
     os.getenv("IDEA_CHECKPOINT_MAP_TTL_SECONDS", "31536000")
 )
@@ -80,7 +89,7 @@ TEMP_OUTPUT_DIR = "/tmp/idea_command_outputs"
 # All LLM calls are routed through the LiteLLM proxy (see litellm/ and
 # docker-compose.yml's `litellm` service) instead of hitting the Azure AI
 # Foundry endpoint directly - this is what makes per-user spend tracking
-# (via LITELLM_END_USER_HEADER below) and the shared $50 budget on
+# (via LITELLM_END_USER_HEADER below) and the shared $100 budget on
 # LITELLM_VIRTUAL_KEY possible. "http://litellm:8080" is this service's
 # hostname on the docker network (see docker-compose.yml), not a host
 # port - LITELLM_PROXY_URL only needs overriding for local, non-Docker
@@ -89,7 +98,7 @@ LITELLM_PROXY_URL = os.getenv("LITELLM_PROXY_URL", "http://litellm:8080").rstrip
 
 # Single virtual key shared by every user (not one key per user) - see
 # example.env for how to generate it (POST /key/generate with max_budget:
-# 50). Per-user attribution instead comes from LITELLM_END_USER_HEADER
+# 100). Per-user attribution instead comes from LITELLM_END_USER_HEADER
 # below, which LiteLLM records against the *end user*, not the key.
 LITELLM_VIRTUAL_KEY = os.getenv("LITELLM_VIRTUAL_KEY", "")
 
@@ -100,11 +109,12 @@ LITELLM_VIRTUAL_KEY = os.getenv("LITELLM_VIRTUAL_KEY", "")
 # product requirements.
 LITELLM_END_USER_HEADER = "x-litellm-end-user-id"
 
-# Keep an upstream provider stall bounded, and avoid the OpenAI client's
-# default multi-minute retry cycle obscuring a rate-limit failure. LangGraph
-# separately watches RunCancellation while the async request is in flight so
-# a user stop can abort the HTTP request immediately.
+# Keep an upstream provider stall bounded. Complex tool-using turns can need
+# more than a minute before the provider returns its first streamed chunk, so
+# use a three-minute ceiling. Retries are performed explicitly by
+# TerminalGraphRuntime (rather than invisibly inside the OpenAI client) so the
+# UI can report them and avoid replaying partial streamed output.
 IDEA_MODEL_REQUEST_TIMEOUT_SECONDS = float(
-    os.getenv("IDEA_MODEL_REQUEST_TIMEOUT_SECONDS", "60")
+    os.getenv("IDEA_MODEL_REQUEST_TIMEOUT_SECONDS", "180")
 )
-IDEA_MODEL_MAX_RETRIES = int(os.getenv("IDEA_MODEL_MAX_RETRIES", "0"))
+IDEA_MODEL_MAX_RETRIES = int(os.getenv("IDEA_MODEL_MAX_RETRIES", "1"))
