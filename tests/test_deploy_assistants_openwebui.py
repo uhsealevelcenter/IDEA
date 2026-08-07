@@ -1,5 +1,7 @@
 import hashlib
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -44,6 +46,51 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertEqual(self.manifest["base_model_id"], "idea-terminal-agent")
         self.assertEqual(self.manifest["base_model_name"], "IDEA Agent")
         self.assertEqual(self.manifest["base_model_logo"], "assets/idea.png")
+        self.assertEqual(
+            self.manifest["welcome_suggestion_assistant_ids"],
+            ["cindra"],
+        )
+
+    def test_every_official_assistant_has_six_suggested_prompts(self):
+        for definition in self.manifest["assistants"]:
+            suggestions = definition["suggestion_prompts"]
+            self.assertEqual(len(suggestions), 6, definition["id"])
+            self.assertTrue(all(item["content"] for item in suggestions))
+            self.assertTrue(all(len(item["title"]) == 2 for item in suggestions))
+
+        welcome = next(
+            item
+            for item in self.manifest["assistants"]
+            if item["id"] == "welcome-assistant"
+        )
+        self.assertEqual(
+            welcome["suggestion_prompts"],
+            self.manifest["default_suggestion_prompts"],
+        )
+
+    def test_new_manifest_assistant_inherits_welcome_suggestions(self):
+        raw_manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        raw_manifest["assistants"].append({
+            "id": "future-assistant",
+            "name": "Future Assistant",
+            "description": "A future deployment-managed Assistant.",
+            "prompt": "prompts/welcome.md",
+            "logo": "assets/idea.png",
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps(raw_manifest), encoding="utf-8")
+            loaded = deploy.load_manifest(path)
+
+        future = next(
+            item
+            for item in loaded["assistants"]
+            if item["id"] == "future-assistant"
+        )
+        self.assertEqual(
+            future["suggestion_prompts"],
+            loaded["default_suggestion_prompts"],
+        )
 
     def test_official_prompts_match_pinned_repository_versions(self):
         expected = {
@@ -148,6 +195,11 @@ class DeployAssistantsTests(unittest.TestCase):
             deploy.public_read_grants([])[0],
             payload["access_grants"],
         )
+        self.assertEqual(
+            payload["meta"]["suggestion_prompts"],
+            definition["suggestion_prompts"],
+        )
+        self.assertEqual(len(payload["meta"]["suggestion_prompts"]), 6)
 
     def test_sea_and_mars_use_private_workspace_for_new_downloads(self):
         definitions = {
@@ -254,6 +306,14 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertEqual(payload["meta"]["custom"], "kept")
         self.assertEqual(payload["params"]["temperature"], 0.25)
         self.assertIn("# SEA", payload["params"]["system"])
+        self.assertEqual(
+            payload["meta"]["suggestion_prompts"],
+            next(
+                item["suggestion_prompts"]
+                for item in self.manifest["assistants"]
+                if item["id"] == "sea"
+            ),
+        )
 
     def test_reconcile_refuses_to_overwrite_a_user_owned_id_collision(self):
         client = FakeClient(
@@ -278,6 +338,42 @@ class DeployAssistantsTests(unittest.TestCase):
             )
 
         self.assertEqual(client.posts, [])
+
+    def test_cindra_receives_only_welcome_suggestion_metadata(self):
+        existing = {
+            "id": "cindra",
+            "base_model_id": "idea-terminal-agent",
+            "name": "CIndRA",
+            "meta": {
+                "description": "Custom CIndRA description",
+                "capabilities": {"vision": True},
+                "custom": "kept",
+            },
+            "params": {"system": "CIndRA instructions", "temperature": 0.1},
+            "access_grants": [{"principal_id": "owner", "permission": "read"}],
+            "is_active": False,
+        }
+        client = FakeClient(models={"cindra": existing})
+
+        result = deploy.deploy_welcome_suggestions(
+            client,
+            self.manifest,
+            dry_run=False,
+            only={"cindra"},
+        )
+
+        self.assertEqual(result, {"cindra": "updated"})
+        path, payload = client.posts[0]
+        self.assertEqual(path, "/api/v1/models/model/update")
+        self.assertEqual(
+            payload["meta"]["suggestion_prompts"],
+            self.manifest["default_suggestion_prompts"],
+        )
+        self.assertEqual(payload["meta"]["custom"], "kept")
+        self.assertEqual(payload["meta"]["capabilities"], {"vision": True})
+        self.assertEqual(payload["params"], existing["params"])
+        self.assertEqual(payload["access_grants"], existing["access_grants"])
+        self.assertFalse(payload["is_active"])
 
     def test_base_model_remains_visible_for_chat_and_assistant_editor(self):
         client = FakeClient()

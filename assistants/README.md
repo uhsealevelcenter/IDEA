@@ -65,5 +65,19 @@ are handled exclusively by IDEA's trusted PaperQA2 integration. The Pipe's
 `PAPERQA_ASSISTANT_IDS` Valve must contain the same Assistant IDs; it defaults
 to `welcome-assistant,sea,mars-assistant`.
 
+Each deployment-managed Assistant receives exactly six Workspace suggested
+prompts through its own `meta.suggestion_prompts`; this does not modify Open
+WebUI's global/default prompt suggestions. SEA and Mars define domain-specific
+sets in `manifest.json`. Welcome uses `default_suggestion_prompts`, and any new
+manifest Assistant that omits `suggestion_prompts` inherits that same Welcome
+set automatically. Run with `--reconcile` to apply prompt changes to existing
+official Assistants; seed mode continues to preserve existing UI edits.
+
+`welcome_suggestion_assistant_ids` is a narrow opt-in for existing Assistants
+that should receive Welcome's suggestions without becoming fully
+deployment-managed. CIndRA is currently listed. For these entries, deployment
+updates only `meta.suggestion_prompts` and preserves the Assistant's ownership,
+instructions, capabilities, access grants, active state, and all other fields.
+
 `assets/uhslc.svg` preserves the source UHSLC mark on a black square
 background; `assets/uhslc.png` is its 512×512 deployment rendering.
