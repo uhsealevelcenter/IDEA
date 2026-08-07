@@ -73,6 +73,40 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             idea_pipe._latest_user_content(messages),
             "Latest question",
         )
+        self.assertEqual(
+            idea_pipe._structured_messages(messages),
+            [
+                {"id": "", "role": "user", "content": "First question"},
+                {"id": "", "role": "assistant", "content": "First answer"},
+                {"id": "", "role": "user", "content": "Latest question"},
+            ],
+        )
+
+    def test_structured_messages_strip_legacy_assistant_images_only(self):
+        generated = "data:image/png;base64," + ("A" * 1000)
+        user_image = "data:image/png;base64,USERIMAGE"
+
+        structured = idea_pipe._structured_messages([
+            {
+                "role": "assistant",
+                "content": f"Result\n\n![plot]({generated})\n\n[file](preview)",
+            },
+            {
+                "role": "user",
+                "content": [{
+                    "type": "image_url",
+                    "image_url": {"url": user_image},
+                }],
+            },
+        ])
+
+        self.assertNotIn("base64", structured[0]["content"])
+        self.assertIn("Generated image omitted", structured[0]["content"])
+        self.assertIn("[file](preview)", structured[0]["content"])
+        self.assertEqual(
+            structured[1]["content"][0]["image_url"]["url"],
+            user_image,
+        )
 
     def test_preserves_complete_openwebui_skill_system_context(self):
         messages = [
@@ -303,7 +337,6 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(
             payload["messages"],
             [
-                {"id": "", "role": "system", "content": "You are SEA."},
                 {"id": "", "role": "user", "content": "Analyze Honolulu."},
             ],
         )
@@ -497,6 +530,41 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                 "[figure.png](/idea-file-preview/file-123/figure.png)"
             ],
         )
+
+    def test_pipe_renders_image_event_from_uploaded_file_without_base64(self):
+        async def aiter_lines():
+            yield (
+                'data: {"type":"image","format":"png",'
+                '"filename":"/workspace/oni/oni.png"}'
+            )
+            yield 'data: {"type":"message","content":"Here is the ONI."}'
+            yield (
+                'data: {"type":"file",'
+                '"filename":"/outputs/oni/oni.png",'
+                '"openwebui_file_id":"file-oni"}'
+            )
+
+        client = self._chat_run_client(aiter_lines)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Plot ONI"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, [
+            "Here is the ONI.",
+            "\n\n![generated image]"
+            "(/idea-file-preview/file-oni/oni.png)\n\n",
+        ])
+        self.assertNotIn("data:image", "".join(result))
 
     def test_pipe_yields_ordinary_assistant_text_before_stream_finishes(self):
         response = Mock()
@@ -790,6 +858,53 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                 "(/idea-file-preview/file-123/final.csv)\n\n"
             ],
         )
+
+    def test_resolves_displayed_image_to_durable_preview(self):
+        rendered, referenced = idea_pipe._resolve_displayed_images(
+            ["/workspace/oni/oni plot.png"],
+            [{
+                "filename": "/outputs/oni/oni plot.png",
+                "openwebui_file_id": "file-oni",
+            }],
+            "http://localhost",
+        )
+
+        self.assertEqual(
+            rendered,
+            "\n\n![generated image]"
+            "(http://localhost/idea-file-preview/file-oni/oni%20plot.png)\n\n",
+        )
+        self.assertEqual(referenced, {"file-oni"})
+
+    def test_displayed_image_basename_fallback_rejects_ambiguity(self):
+        rendered, referenced = idea_pipe._resolve_displayed_images(
+            ["/workspace/source/plot.png"],
+            [
+                {
+                    "filename": "/outputs/first/plot.png",
+                    "openwebui_file_id": "file-first",
+                },
+                {
+                    "filename": "/outputs/second/plot.png",
+                    "openwebui_file_id": "file-second",
+                },
+            ],
+        )
+
+        self.assertIn("image preview unavailable", rendered)
+        self.assertEqual(referenced, set())
+
+    def test_missing_displayed_image_never_falls_back_to_base64(self):
+        rendered, referenced = idea_pipe._resolve_displayed_images(
+            ["/outputs/plot.png"], []
+        )
+
+        self.assertEqual(
+            rendered,
+            "\n\n⚠️ plot.png (image preview unavailable)\n\n",
+        )
+        self.assertEqual(referenced, set())
+        self.assertNotIn("data:image", rendered)
 
 
 if __name__ == "__main__":

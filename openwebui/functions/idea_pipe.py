@@ -59,6 +59,12 @@ MARKDOWN_ARTIFACT_REFERENCE_RE = re.compile(
     rf"\[[^\]\n]{{0,{MAX_PENDING_MARKDOWN_LABEL}}}\]\("
     r"(?:(?:sandbox|file):)?/outputs/"
 )
+ASSISTANT_INLINE_IMAGE_MARKDOWN_RE = re.compile(
+    r"!\[[^\]\n]*\]\(data:image/[^;\s)]+;base64,[A-Za-z0-9+/=]+\)"
+)
+INLINE_IMAGE_DATA_URI_RE = re.compile(
+    r"data:image/[^;\s)]+;base64,[A-Za-z0-9+/=]+"
+)
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -140,23 +146,57 @@ def _message_content(message: dict) -> str:
 
 
 def _structured_messages(messages: list[dict]) -> list[dict]:
-    """Preserve Open WebUI's selected branch as structured roles."""
+    """Preserve user/assistant history without duplicating system context.
+
+    ``_assistant_system_prompt`` collects every Open WebUI system message and
+    LangGraph appends that context to IDEA's primary SystemMessage. Forwarding
+    those same messages here caused them to appear a second time as
+    human-style conversation context.
+    """
     result: list[dict] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
         role = message.get("role")
-        if role not in {"user", "assistant", "system"}:
+        if role not in {"user", "assistant"}:
             continue
         content = message.get("content", "")
         if not isinstance(content, (str, list)):
             content = str(content)
+        if role == "assistant":
+            content = _sanitize_assistant_image_history(content)
         result.append({
             "id": str(message.get("id") or ""),
             "role": role,
             "content": content,
         })
     return result
+
+
+def _sanitize_assistant_image_history(content: str | list) -> str | list:
+    """Remove persisted generated-image bytes before model context assembly."""
+    marker = "[Generated image omitted from model context; use its file link.]"
+    if isinstance(content, str):
+        content = ASSISTANT_INLINE_IMAGE_MARKDOWN_RE.sub(marker, content)
+        return INLINE_IMAGE_DATA_URI_RE.sub("[inline image omitted]", content)
+
+    sanitized: list = []
+    for item in content:
+        if not isinstance(item, dict):
+            sanitized.append(item)
+            continue
+        item = dict(item)
+        item_type = item.get("type")
+        image_url = item.get("image_url")
+        url = image_url.get("url") if isinstance(image_url, dict) else image_url
+        if item_type in {"image", "image_url"} and isinstance(url, str) and url.startswith("data:image/"):
+            sanitized.append({"type": "text", "text": marker})
+            continue
+        for key in ("text", "content"):
+            if isinstance(item.get(key), str):
+                item[key] = _sanitize_assistant_image_history(item[key])
+        sanitized.append(item)
+    return sanitized
 
 
 def _latest_idea_context(messages: list[dict]) -> dict:
@@ -439,6 +479,59 @@ def _resolve_output_links(
     return SANDBOX_URL_RE.sub(replace_url, content), referenced_file_ids
 
 
+def _resolve_displayed_images(
+    image_paths: list[str],
+    synced_files: list[dict],
+    public_base_url: str = "",
+) -> tuple[str, set[str]]:
+    """Render displayed sandbox images through durable Open WebUI files."""
+    files_by_path = {
+        item.get("filename"): item.get("openwebui_file_id")
+        for item in synced_files
+        if item.get("filename") and item.get("openwebui_file_id")
+    }
+    files_by_basename: dict[str, list[tuple[str, str]]] = {}
+    for file_path, file_id in files_by_path.items():
+        files_by_basename.setdefault(
+            PurePosixPath(file_path).name, []
+        ).append((file_path, file_id))
+    rendered: list[str] = []
+    referenced_file_ids: set[str] = set()
+    seen: set[str] = set()
+    for raw_path in image_paths:
+        path = _normalized_output_path(raw_path)
+        if path in seen:
+            continue
+        seen.add(path)
+        resolved_path = path
+        file_id = files_by_path.get(resolved_path)
+        if not file_id and path.startswith("/workspace/"):
+            # publish_artifact_tool normally preserves the private source's
+            # workspace-relative path under /outputs. A model may show the
+            # source and publish it in the same tool batch, so the image and
+            # uploaded-file events legitimately have different roots.
+            published_path = "/outputs/" + path.removeprefix("/workspace/")
+            if published_path in files_by_path:
+                resolved_path = published_path
+                file_id = files_by_path[published_path]
+        if not file_id:
+            # If publication intentionally changed directories, accept a
+            # basename match only when it identifies exactly one upload.
+            matches = files_by_basename.get(PurePosixPath(path).name, [])
+            if len(matches) == 1:
+                resolved_path, file_id = matches[0]
+        if not file_id:
+            display_name = PurePosixPath(path).name or path
+            rendered.append(f"⚠️ {display_name} (image preview unavailable)")
+            continue
+        referenced_file_ids.add(file_id)
+        url = _file_url(file_id, resolved_path, public_base_url)
+        rendered.append(f"![generated image]({url})")
+    if not rendered:
+        return "", referenced_file_ids
+    return "\n\n" + "\n\n".join(rendered) + "\n\n", referenced_file_ids
+
+
 class Pipe:
     class Valves(BaseModel):
         LANGGRAPH_SERVICE_URL: str = Field(
@@ -557,6 +650,7 @@ class Pipe:
         message_buffer = ""
         artifact_reference_confirmed = False
         pending_files: list[dict] = []
+        pending_images: list[str] = []
         status_done = False
         stop_sent = False
 
@@ -695,6 +789,9 @@ class Pipe:
                         if chunk.get("type") == "file":
                             pending_files.append(chunk)
                             continue
+                        if chunk.get("type") == "image" and chunk.get("filename"):
+                            pending_images.append(str(chunk["filename"]))
+                            continue
                         if message_buffer:
                             yield flush_message_buffer()
                         for translated in self._translate_chunk(chunk, public_base_url):
@@ -755,6 +852,15 @@ class Pipe:
             message_buffer = ""
             yield resolved_message
 
+        rendered_images, image_file_ids = _resolve_displayed_images(
+            pending_images,
+            pending_files,
+            public_base_url,
+        )
+        referenced_file_ids.update(image_file_ids)
+        if rendered_images:
+            yield rendered_images
+
         for file_chunk in pending_files:
             if file_chunk.get("openwebui_file_id") in referenced_file_ids:
                 continue
@@ -801,6 +907,9 @@ class Pipe:
         elif chunk_type == "console":
             yield f"\n\n```text\n{content}\n```\n\n"
         elif chunk_type == "image" and content:
+            # Backward compatibility for older LangGraph services. Current
+            # services send a filename and the main Pipe loop resolves it to
+            # an Open WebUI file URL instead of persisting base64 here.
             ext = (fmt or "base64.png").split(".")[-1]
             yield f"\n\n![generated image](data:image/{ext};base64,{content})\n\n"
         elif chunk_type == "heartbeat":

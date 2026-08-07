@@ -3,19 +3,36 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    message_chunk_to_message,
+)
+
+from progress import tool_call_chunk_names, tool_status_description
 
 from .memory import execution_memory_block
 
 
 class ModelCallCancelled(Exception):
     """Raised after cancelling an in-flight provider request."""
+
+
+MODEL_STREAM_FLUSH_INTERVAL_SECONDS = 0.05
+MODEL_STREAM_FLUSH_CHARS = 80
+MODEL_WAITING_STATUS_SECONDS = 5.0
+MODEL_BUSY_STATUS_SECONDS = 15.0
+KERNEL_IMAGE_EXTENSIONS = {"gif", "jpeg", "jpg", "png", "webp"}
 
 
 @dataclass
@@ -79,6 +96,7 @@ class TerminalGraphRuntime:
         )
         self.event_callback = event_callback
         self.outputs_before: dict[str, str] | None = None
+        self.displayed_image_paths: set[str] = set()
         self.system_prompt = compose_system_prompt(
             SYSTEM_PROMPT_PATH.read_text(),
             assistant_system_prompt,
@@ -116,8 +134,65 @@ class TerminalGraphRuntime:
         return result
 
     def call_model(self, messages: list[BaseMessage], *, cancellation: Any = None) -> AIMessage:
-        async def invoke() -> Any:
-            request = asyncio.create_task(self.agent.llm.ainvoke(messages))
+        async def consume_stream() -> AIMessage:
+            aggregated = None
+            pending_text = ""
+            last_flush = time.monotonic()
+            announced_tools: set[str] = set()
+
+            def flush_text() -> None:
+                nonlocal pending_text, last_flush
+                if pending_text:
+                    self.emit(pending_text)
+                    pending_text = ""
+                    last_flush = time.monotonic()
+
+            async for chunk in self.agent.llm.astream(messages):
+                aggregated = chunk if aggregated is None else aggregated + chunk
+                text = str(getattr(chunk, "text", "") or "")
+                if text:
+                    pending_text += text
+
+                tool_names = [
+                    name
+                    for name in tool_call_chunk_names(chunk)
+                    if name not in announced_tools
+                ]
+                if tool_names:
+                    flush_text()
+                    for name in tool_names:
+                        announced_tools.add(name)
+                        self.emit({
+                            "type": "status",
+                            "phase": "preparing_tool",
+                            "description": tool_status_description(
+                                name, preparing=True
+                            ),
+                            "tool_name": name,
+                            "done": False,
+                        })
+                elif pending_text and (
+                    len(pending_text) >= MODEL_STREAM_FLUSH_CHARS
+                    or time.monotonic() - last_flush
+                    >= MODEL_STREAM_FLUSH_INTERVAL_SECONDS
+                ):
+                    flush_text()
+
+            flush_text()
+            if aggregated is None:
+                return AIMessage(content="")
+            response = message_chunk_to_message(aggregated)
+            if isinstance(response, AIMessage):
+                return response
+            return AIMessage(
+                content=str(getattr(response, "content", response))
+            )
+
+        async def invoke() -> AIMessage:
+            request = asyncio.create_task(consume_stream())
+            started_at = time.monotonic()
+            waiting_announced = False
+            busy_announced = False
             while not request.done():
                 if cancellation is not None and cancellation.requested:
                     request.cancel()
@@ -131,14 +206,51 @@ class TerminalGraphRuntime:
                         asyncio.shield(request), timeout=0.1
                     )
                 except asyncio.TimeoutError:
+                    elapsed = time.monotonic() - started_at
+                    if (
+                        elapsed >= MODEL_BUSY_STATUS_SECONDS
+                        and not busy_announced
+                    ):
+                        busy_announced = True
+                        self.emit({
+                            "type": "status",
+                            "phase": "waiting_for_model",
+                            "description": "Model is busy; still waiting…",
+                            "done": False,
+                        })
+                    elif (
+                        elapsed >= MODEL_WAITING_STATUS_SECONDS
+                        and not waiting_announced
+                    ):
+                        waiting_announced = True
+                        self.emit({
+                            "type": "status",
+                            "phase": "waiting_for_model",
+                            "description": "Waiting for the model to respond…",
+                            "done": False,
+                        })
                     continue
             return await request
 
-        response = asyncio.run(invoke())
-        if not isinstance(response, AIMessage):
-            response = AIMessage(content=str(getattr(response, "content", response)))
-        if response.content:
-            self.emit(str(response.content))
+        try:
+            response = asyncio.run(invoke())
+        except ModelCallCancelled:
+            raise
+        except Exception as exc:
+            detail = str(exc).lower()
+            rate_limited = "rate limit" in detail or "429" in detail
+            self.emit({
+                "type": "status",
+                "phase": "model_unavailable",
+                "description": (
+                    "Model capacity is temporarily limited; please retry"
+                    if rate_limited
+                    else "The model request failed"
+                ),
+                "done": True,
+                "error": True,
+            })
+            raise
         return response
 
     def persist_python_source(self, execution_id: str, code: str, state: dict[str, Any]) -> str:
@@ -154,6 +266,43 @@ class TerminalGraphRuntime:
             expected_size=len(data),
         )
         return path
+
+    def persist_kernel_image(
+        self,
+        chunk: dict[str, Any],
+        *,
+        run_id: str,
+        image_index: int,
+    ) -> tuple[str, str]:
+        """Persist a Jupyter display image without exposing base64 to chat."""
+        from tools.persistent_terminal import write_file_stream
+
+        encoded = str(chunk.get("content") or "")
+        raw_format = str(chunk.get("format") or "base64.png").lower()
+        image_format = raw_format.split(".")[-1]
+        if image_format not in KERNEL_IMAGE_EXTENSIONS:
+            raise ValueError(f"unsupported kernel image format: {image_format}")
+        try:
+            image_data = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("invalid base64 kernel image") from exc
+        if not image_data:
+            raise ValueError("empty kernel image")
+
+        safe_run_id = "".join(
+            char for char in run_id if char.isalnum() or char in {"-", "_"}
+        ) or uuid.uuid4().hex
+        path = (
+            f"{self.outputs_dir}/.idea/kernel-images/"
+            f"{safe_run_id}-{image_index}.{image_format}"
+        )
+        write_file_stream(
+            path,
+            [image_data],
+            session_id=self.agent.sandbox_id,
+            expected_size=len(image_data),
+        )
+        return path, image_format
 
     def execute_tool(self, tool_call: dict[str, Any], state: dict[str, Any]) -> ToolOutcome:
         name = str(tool_call.get("name") or "")
@@ -174,6 +323,7 @@ class TerminalGraphRuntime:
             )
             console: list[str] = []
             image_count = 0
+            run_id = str(state.get("run_id") or "")
             for chunk in chunks:
                 if chunk.get("type") == "console" and chunk.get("format") != "active_line":
                     content = str(chunk.get("content") or "")
@@ -185,7 +335,33 @@ class TerminalGraphRuntime:
                         })
                 elif chunk.get("type") == "image":
                     image_count += 1
-                    self.emit({**chunk, "role": "assistant", "start": True, "end": True})
+                    try:
+                        image_path, image_format = self.persist_kernel_image(
+                            chunk,
+                            run_id=run_id,
+                            image_index=image_count,
+                        )
+                    except Exception as exc:
+                        warning = f"✗ Could not save Python image {image_count}: {exc}"
+                        console.append(warning)
+                        self.emit({
+                            "role": "computer",
+                            "type": "console",
+                            "format": "output",
+                            "content": warning,
+                            "start": True,
+                            "end": True,
+                        })
+                        continue
+                    self.displayed_image_paths.add(image_path)
+                    self.emit({
+                        "role": "assistant",
+                        "type": "image",
+                        "format": image_format,
+                        "filename": image_path,
+                        "start": True,
+                        "end": True,
+                    })
             content = "\n".join(console).strip()
             if image_count:
                 content = (content + f"\n[{image_count} image(s) generated and shown to the user]").strip()
@@ -216,11 +392,26 @@ class TerminalGraphRuntime:
                         )
                     else:
                         self.agent._shown_image_hashes.add(content_hash)
+                        self.displayed_image_paths.add(image_path)
+                        if image_path.startswith("/workspace/"):
+                            # publish_artifact_tool's default destination
+                            # preserves this relative path. Include it in
+                            # final sync references so an unchanged, already-
+                            # published image still produces a file event.
+                            self.displayed_image_paths.add(
+                                "/outputs/"
+                                + image_path.removeprefix("/workspace/")
+                            )
                         self.emit({
                             "role": "assistant",
                             "type": "image",
-                            "format": f"base64.{image_format}",
-                            "content": encoded,
+                            # Open WebUI resolves this sandbox path to the
+                            # uploaded file emitted by finalize(). Do not put
+                            # base64 bytes in chat history: they were counted
+                            # as conversation text and duplicated in the
+                            # message's structured output.
+                            "format": image_format,
+                            "filename": image_path,
                             "start": True,
                             "end": True,
                         })
@@ -259,7 +450,10 @@ class TerminalGraphRuntime:
         response = str(state.get("final_response") or "")
         synced = self.agent._sync_outputs_to_openwebui(
             self.outputs_before,
-            referenced_paths=referenced_output_paths(response),
+            referenced_paths=(
+                referenced_output_paths(response)
+                | self.displayed_image_paths
+            ),
         )
         events: list[dict[str, Any]] = []
         for item in synced:

@@ -235,9 +235,10 @@ class LangGraphShowImageTests(unittest.TestCase):
         runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
         runtime.agent = agent
         runtime.event_callback = Mock()
+        runtime.displayed_image_paths = set()
         return runtime, agent, show_tool
 
-    def test_show_image_tool_emits_an_inline_image_chunk(self):
+    def test_show_image_tool_emits_a_lightweight_file_reference(self):
         runtime, agent, show_tool = self.make_runtime()
 
         outcome = runtime.execute_tool(
@@ -254,11 +255,12 @@ class LangGraphShowImageTests(unittest.TestCase):
         runtime.event_callback.assert_called_once_with({
             "role": "assistant",
             "type": "image",
-            "format": "base64.png",
-            "content": "BASE64-PLOT",
+            "format": "png",
+            "filename": "/outputs/plot.png",
             "start": True,
             "end": True,
         })
+        self.assertEqual(runtime.displayed_image_paths, {"/outputs/plot.png"})
 
     def test_show_image_tool_deduplicates_identical_content(self):
         runtime, agent, _ = self.make_runtime()
@@ -275,6 +277,103 @@ class LangGraphShowImageTests(unittest.TestCase):
 
         self.assertIn("already displayed", outcome.content)
         runtime.event_callback.assert_not_called()
+
+    def test_workspace_image_also_references_default_published_path(self):
+        runtime, _, show_tool = self.make_runtime()
+        show_tool.invoke.return_value = (
+            "✓ Image ready to display: /workspace/plots/plot.png"
+        )
+
+        outcome = runtime.execute_tool(
+            {
+                "name": "show_image_tool",
+                "args": {"filepath": "/workspace/plots/plot.png"},
+            },
+            {},
+        )
+
+        self.assertEqual(outcome.status, "completed")
+        self.assertEqual(runtime.displayed_image_paths, {
+            "/workspace/plots/plot.png",
+            "/outputs/plots/plot.png",
+        })
+
+
+class LangGraphKernelImageTests(unittest.TestCase):
+    def make_runtime(self):
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = Mock()
+        runtime.agent.sandbox_id = "sandbox-1"
+        runtime.event_callback = Mock()
+        runtime.outputs_dir = "/outputs"
+        runtime.displayed_image_paths = set()
+        return runtime
+
+    @patch("tools.persistent_terminal.write_file_stream")
+    @patch("tools.persistent_terminal.run_python")
+    def test_python_image_is_persisted_and_emitted_as_a_file_reference(
+        self, run_python, write_file_stream
+    ):
+        run_python.return_value = [{
+            "type": "image",
+            "format": "base64.png",
+            "content": base64.b64encode(PNG_BYTES).decode(),
+        }]
+        runtime = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {"name": "run_python_tool", "args": {"code": "plt.show()"}},
+            {"run_id": "run-1", "kernel_id": "kernel-1"},
+        )
+
+        image_path = "/outputs/.idea/kernel-images/run-1-1.png"
+        self.assertEqual(outcome.status, "completed")
+        self.assertIn("1 image(s) generated", outcome.content)
+        write_file_stream.assert_called_once_with(
+            image_path,
+            [PNG_BYTES],
+            session_id="sandbox-1",
+            expected_size=len(PNG_BYTES),
+        )
+        self.assertEqual(runtime.displayed_image_paths, {image_path})
+        emitted = [call.args[0] for call in runtime.event_callback.call_args_list]
+        self.assertIn({
+            "role": "assistant",
+            "type": "image",
+            "format": "png",
+            "filename": image_path,
+            "start": True,
+            "end": True,
+        }, emitted)
+        self.assertNotIn("base64", str(emitted))
+        self.assertNotIn(PNG_BYTES.decode("latin1"), str(emitted))
+
+    @patch("tools.persistent_terminal.write_file_stream")
+    @patch("tools.persistent_terminal.run_python")
+    def test_invalid_python_image_never_falls_back_to_inline_base64(
+        self, run_python, write_file_stream
+    ):
+        run_python.return_value = [{
+            "type": "image",
+            "format": "base64.png",
+            "content": "not-base64!",
+        }]
+        runtime = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {"name": "run_python_tool", "args": {"code": "plt.show()"}},
+            {"run_id": "run-2", "kernel_id": "kernel-2"},
+        )
+
+        self.assertEqual(outcome.status, "failed")
+        write_file_stream.assert_not_called()
+        emitted = [call.args[0] for call in runtime.event_callback.call_args_list]
+        self.assertNotIn("not-base64!", str(emitted))
+        self.assertTrue(any(
+            isinstance(event, dict)
+            and "Could not save Python image" in str(event.get("content"))
+            for event in emitted
+        ))
 
 
 if __name__ == "__main__":

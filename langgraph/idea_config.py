@@ -100,6 +100,6 @@ LITELLM_END_USER_HEADER = "x-litellm-end-user-id"
 # separately watches RunCancellation while the async request is in flight so
 # a user stop can abort the HTTP request immediately.
 IDEA_MODEL_REQUEST_TIMEOUT_SECONDS = float(
-    os.getenv("IDEA_MODEL_REQUEST_TIMEOUT_SECONDS", "120")
+    os.getenv("IDEA_MODEL_REQUEST_TIMEOUT_SECONDS", "60")
 )
 IDEA_MODEL_MAX_RETRIES = int(os.getenv("IDEA_MODEL_MAX_RETRIES", "0"))

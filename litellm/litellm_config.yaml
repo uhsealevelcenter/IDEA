@@ -77,8 +77,11 @@ general_settings:
 litellm_settings:
   set_verbose: false # Disable debug logging in production.
   json_logs: true # Structured (JSON) logs.
-  request_timeout: 120 # Keep provider stalls bounded; the client uses the same ceiling.
-  num_retries: 1 # One short retry before surfacing a provider failure to the UI.
+  request_timeout: 60 # Keep provider stalls bounded; the client uses the same ceiling.
+  # The router fallback below should run immediately when the primary is
+  # throttled. Retrying the same deployment first caused a silent ~30-second
+  # wait in the UI before another 429 response.
+  num_retries: 0
 
   # Cache responses in the existing `redis` service (see
   # docker-compose.yml) - same instance langgraph_service.py already uses
