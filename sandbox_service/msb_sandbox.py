@@ -379,6 +379,11 @@ class MicrosandboxTerminal:
         after Sandbox.create() and entrypoint.sh hasn't written the key file
         yet.
         """
+        # Microsandbox imports OCI entrypoint/CMD metadata but does not run
+        # the image's primary process when a detached sandbox is created or
+        # resumed. Start Open Terminal lazily (and restart it after an idle
+        # stop/resume) before trying to read the key generated for it.
+        self._ensure_open_terminal()
         if self._open_terminal_key:
             return self._open_terminal_key
 
@@ -398,6 +403,38 @@ class MicrosandboxTerminal:
             f"Open Terminal API key not available at {OPEN_TERMINAL_KEY_PATH} "
             f"in sandbox {self.session_id} after {retries} retries: {last_error}"
         )
+
+    def _ensure_open_terminal(self) -> None:
+        """Start the in-VM Open Terminal server if it is not already healthy."""
+        key_path = shlex.quote(OPEN_TERMINAL_KEY_PATH)
+        health_url = shlex.quote(
+            f"http://127.0.0.1:{OPEN_TERMINAL_PORT}/health"
+        )
+        command = (
+            f"if ! curl -fsS --max-time 2 {health_url} >/dev/null 2>&1; then "
+            f"KEY_PATH={key_path}; "
+            'if [ ! -s "$KEY_PATH" ]; then '
+            'head -c 32 /dev/urandom | od -An -tx1 | tr -d \' \\n\' > "$KEY_PATH"; '
+            "fi; "
+            'chmod 600 "$KEY_PATH"; '
+            'nohup env OPEN_TERMINAL_API_KEY="$(cat "$KEY_PATH")" '
+            "/app/entrypoint-slim.sh run "
+            ">/tmp/idea-open-terminal.log 2>&1 </dev/null & "
+            "fi; "
+            f"for attempt in $(seq 1 20); do "
+            f"curl -fsS --max-time 2 {health_url} >/dev/null 2>&1 && exit 0; "
+            "sleep 0.5; done; exit 1"
+        )
+        output = self._exec(
+            lambda: self._sandbox.shell(command),
+            timeout=20.0,
+        )
+        if output.exit_code != 0:
+            stderr = getattr(output, "stderr_text", None) or ""
+            raise RuntimeError(
+                f"Open Terminal failed to start in sandbox {self.session_id}: "
+                f"{stderr or 'health check timed out'}"
+            )
 
     def _open_terminal_get(self, path: str, params: dict) -> dict:
         """

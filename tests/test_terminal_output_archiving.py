@@ -155,6 +155,39 @@ class MicrosandboxWriteFileTests(unittest.TestCase):
         )
 
 
+class MicrosandboxOpenTerminalTests(unittest.TestCase):
+    def make_terminal(self, exit_code=0, stderr_text=""):
+        terminal = MicrosandboxTerminal.__new__(MicrosandboxTerminal)
+        terminal.session_id = "sandbox-1"
+        terminal._sandbox = SimpleNamespace(
+            shell=Mock(
+                return_value=SimpleNamespace(
+                    exit_code=exit_code,
+                    stderr_text=stderr_text,
+                )
+            ),
+        )
+        terminal._exec = Mock(side_effect=lambda operation, timeout=None: operation())
+        return terminal
+
+    def test_open_terminal_is_started_and_health_checked_lazily(self):
+        terminal = self.make_terminal()
+
+        terminal._ensure_open_terminal()
+
+        command = terminal._sandbox.shell.call_args.args[0]
+        self.assertIn("/app/entrypoint-slim.sh run", command)
+        self.assertIn("OPEN_TERMINAL_API_KEY", command)
+        self.assertIn("http://127.0.0.1:8000/health", command)
+        self.assertEqual(terminal._exec.call_args.kwargs["timeout"], 20.0)
+
+    def test_open_terminal_start_failure_is_explicit(self):
+        terminal = self.make_terminal(exit_code=1, stderr_text="startup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "startup failed"):
+            terminal._ensure_open_terminal()
+
+
 class BinarySandboxClientTests(unittest.TestCase):
     def test_python_execution_routes_kernel_and_run_ids(self):
         response = Mock()
