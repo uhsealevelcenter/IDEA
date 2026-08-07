@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import sys
 import unittest
@@ -11,6 +12,7 @@ sys.path.insert(0, str(LANGGRAPH_DIR))
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
 from agents import terminal_agent  # noqa: E402
+from idea_graph.runtime import TerminalGraphRuntime  # noqa: E402
 from tools import persistent_terminal  # noqa: E402
 
 
@@ -219,6 +221,60 @@ class InspectImageToolTests(unittest.TestCase):
             result["final_response"],
             "The figure contains a red line.",
         )
+
+
+class LangGraphShowImageTests(unittest.TestCase):
+    def make_runtime(self):
+        show_tool = Mock()
+        show_tool.invoke.return_value = "✓ Image ready to display: /outputs/plot.png"
+        agent = Mock()
+        agent.tools_by_name = {"show_image_tool": show_tool}
+        agent._encode_image_to_base64.return_value = ("BASE64-PLOT", "png")
+        agent._shown_image_hashes = set()
+
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = agent
+        runtime.event_callback = Mock()
+        return runtime, agent, show_tool
+
+    def test_show_image_tool_emits_an_inline_image_chunk(self):
+        runtime, agent, show_tool = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {
+                "name": "show_image_tool",
+                "args": {"filepath": "/outputs/plot.png"},
+            },
+            {},
+        )
+
+        self.assertEqual(outcome.status, "completed")
+        show_tool.invoke.assert_called_once_with({"filepath": "/outputs/plot.png"})
+        agent._encode_image_to_base64.assert_called_once_with("/outputs/plot.png")
+        runtime.event_callback.assert_called_once_with({
+            "role": "assistant",
+            "type": "image",
+            "format": "base64.png",
+            "content": "BASE64-PLOT",
+            "start": True,
+            "end": True,
+        })
+
+    def test_show_image_tool_deduplicates_identical_content(self):
+        runtime, agent, _ = self.make_runtime()
+        digest = hashlib.sha256(b"BASE64-PLOT").hexdigest()
+        agent._shown_image_hashes.add(digest)
+
+        outcome = runtime.execute_tool(
+            {
+                "name": "show_image_tool",
+                "args": {"filepath": "/outputs/plot.png"},
+            },
+            {},
+        )
+
+        self.assertIn("already displayed", outcome.content)
+        runtime.event_callback.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -176,6 +176,46 @@ class TerminalGraphRuntime:
         tool = self.agent.tools_by_name.get(name)
         if tool is None:
             return ToolOutcome(content=f"Unknown tool: {name}", status="failed", error="unknown tool")
+
+        if name == "show_image_tool":
+            try:
+                result = str(tool.invoke(args))
+                if result.startswith("✓"):
+                    image_path = str(args.get("filepath") or "")
+                    encoded, image_format = self.agent._encode_image_to_base64(
+                        image_path
+                    )
+                    content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                    if content_hash in self.agent._shown_image_hashes:
+                        result = (
+                            "✓ Image already displayed to the user "
+                            f"(identical content): {image_path}"
+                        )
+                    else:
+                        self.agent._shown_image_hashes.add(content_hash)
+                        self.emit({
+                            "role": "assistant",
+                            "type": "image",
+                            "format": f"base64.{image_format}",
+                            "content": encoded,
+                            "start": True,
+                            "end": True,
+                        })
+            except Exception as exc:
+                result = f"✗ {name} failed: {exc}"
+
+            failed = result.startswith("✗")
+            if failed:
+                self.emit({
+                    "role": "computer", "type": "console", "format": "output",
+                    "content": result, "start": True, "end": True,
+                })
+            return ToolOutcome(
+                content=result,
+                status="failed" if failed else "completed",
+                error=result if failed else None,
+            )
+
         try:
             result = str(tool.invoke(args))
         except Exception as exc:
