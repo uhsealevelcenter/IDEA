@@ -600,6 +600,18 @@ class ViewSkillToolTests(unittest.TestCase):
 
 
 class TerminalAgentSkillIntegrationTests(unittest.TestCase):
+    def test_prompt_requires_openwebui_safe_math_delimiters(self):
+        base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "never place a letter or number immediately after a closing `$`",
+            base_prompt,
+        )
+        self.assertIn("Prefer Unicode for simple units such as `°C`", base_prompt)
+        self.assertIn(r"(${}^{\circ}\mathrm{C}$)", base_prompt)
+
     def test_prompt_contains_generated_manifest_and_no_cat_workflow(self):
         base_prompt = (
             Path(terminal_agent.SYSTEM_PROMPT_PATH)
