@@ -1033,6 +1033,19 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             f"{idea_pipe.TOOL_OUTPUT_END}\n\n",
         )
 
+    def test_translates_python_error_to_labeled_traceback_block(self):
+        rendered = "".join(idea_pipe.Pipe._translate_chunk({
+            "type": "console",
+            "format": "error",
+            "content": "Traceback (most recent call last):\nNameError: missing",
+        }))
+
+        self.assertIn("⚠️ **Python execution error**", rendered)
+        self.assertIn("````text\nTraceback", rendered)
+        self.assertIn("NameError: missing\n````", rendered)
+        self.assertIn(idea_pipe.TOOL_OUTPUT_START, rendered)
+        self.assertIn(idea_pipe.TOOL_OUTPUT_END, rendered)
+
     def test_suppresses_only_matching_completed_python_replay(self):
         completed = set()
         self.assertFalse(idea_pipe._is_streamed_python_replay(

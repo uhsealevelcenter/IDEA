@@ -212,6 +212,41 @@ class BinarySandboxClientTests(unittest.TestCase):
             },
         )
 
+    def test_legacy_python_traceback_is_normalized_as_an_error_chunk(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "chunks": [{
+                "type": "console",
+                "format": "output",
+                "content": (
+                    "---------------------------------------------------------------------------\n"
+                    "NameError Traceback (most recent call last):\n"
+                    "Cell In[1], line 1\n----> 1 missing\n"
+                    "NameError: name 'missing' is not defined"
+                ),
+            }],
+        }
+
+        with patch.object(persistent_terminal._client, "post", return_value=response):
+            chunks = persistent_terminal.run_python(
+                "missing",
+                session_id="user-1",
+                kernel_id="kernel-1",
+                run_id="run-1",
+            )
+
+        self.assertEqual(chunks[0]["format"], "error")
+
+    def test_normal_console_output_is_not_reclassified(self):
+        chunks = persistent_terminal._normalize_kernel_chunks([{
+            "type": "console",
+            "format": "output",
+            "content": "NameError is a Python exception class",
+        }])
+
+        self.assertEqual(chunks[0]["format"], "output")
+
     def test_run_interrupt_is_sent_to_the_sandbox_service(self):
         response = Mock()
         response.raise_for_status.return_value = None

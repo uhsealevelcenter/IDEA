@@ -360,7 +360,7 @@ def run_python(
         return {
             "chunks": [{
                 "type": "console",
-                "format": "output",
+                "format": "error",
                 "content": (
                     "✗ Persistent Python kernel requires the microsandbox "
                     "backend (SANDBOX_BACKEND=microsandbox|auto with a "

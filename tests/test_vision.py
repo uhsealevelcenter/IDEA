@@ -309,6 +309,36 @@ class LangGraphKernelImageTests(unittest.TestCase):
         runtime.displayed_image_paths = set()
         return runtime
 
+    @patch("tools.persistent_terminal.inspect_python_namespace")
+    @patch("tools.persistent_terminal.run_python")
+    def test_python_error_format_is_preserved_and_marks_tool_failed(
+        self, run_python, inspect_python_namespace
+    ):
+        traceback = "Traceback (most recent call last):\nNameError: missing"
+        run_python.return_value = [{
+            "type": "console",
+            "format": "error",
+            "content": traceback,
+        }]
+        runtime = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {"name": "run_python_tool", "args": {"code": "missing"}},
+            {"run_id": "run-1", "kernel_id": "kernel-1"},
+        )
+
+        self.assertEqual(outcome.status, "failed")
+        self.assertEqual(outcome.error, traceback)
+        inspect_python_namespace.assert_not_called()
+        self.assertIn({
+            "role": "computer",
+            "type": "console",
+            "format": "error",
+            "content": traceback,
+            "start": True,
+            "end": True,
+        }, [call.args[0] for call in runtime.event_callback.call_args_list])
+
     def test_pending_generated_image_is_supplied_to_model_vision(self):
         runtime = self.make_runtime()
         runtime.system_prompt = "test prompt"

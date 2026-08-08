@@ -179,7 +179,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if chunk.get("format") != "active_line":
                         chunks.append(chunk)
             except Exception as e:
-                chunks.append({"type": "console", "format": "output", "content": f"Kernel error: {e}"})
+                chunks.append({"type": "console", "format": "error", "content": f"Kernel error: {e}"})
 
         self._json(200, {"chunks": chunks})
 

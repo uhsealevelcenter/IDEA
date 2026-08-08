@@ -337,7 +337,7 @@ class MicrosandboxTerminal:
                 timeout=self._exec_timeout(code),
             )
         except Exception as e:
-            return {"chunks": [{"type": "console", "format": "output", "content": f"Kernel exec failed: {e}"}]}
+            return {"chunks": [{"type": "console", "format": "error", "content": f"Kernel exec failed: {e}"}]}
         finally:
             try:
                 self._exec(lambda: self._sandbox.shell(f"rm -f {tmp_path}"))
@@ -350,7 +350,7 @@ class MicrosandboxTerminal:
         except json.JSONDecodeError:
             stderr = getattr(output, "stderr_text", None) or ""
             content = text or stderr or "(no output from kernel client)"
-            return {"chunks": [{"type": "console", "format": "output", "content": content}]}
+            return {"chunks": [{"type": "console", "format": "error", "content": content}]}
 
     def interrupt_python(self, kernel_id: str) -> bool:
         """Send a Jupyter interrupt through the in-VM daemon."""

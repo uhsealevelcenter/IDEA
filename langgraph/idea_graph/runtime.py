@@ -557,6 +557,7 @@ class TerminalGraphRuntime:
                 run_id=str(state.get("run_id") or ""),
             )
             console: list[str] = []
+            errors: list[str] = []
             image_count = 0
             generated_images: list[str] = []
             run_id = str(state.get("run_id") or "")
@@ -565,8 +566,11 @@ class TerminalGraphRuntime:
                     content = str(chunk.get("content") or "")
                     if content:
                         console.append(content)
+                        console_format = str(chunk.get("format") or "output")
+                        if console_format == "error":
+                            errors.append(content)
                         self.emit({
-                            "role": "computer", "type": "console", "format": "output",
+                            "role": "computer", "type": "console", "format": console_format,
                             "content": content, "start": True, "end": True,
                         })
                 elif chunk.get("type") == "image":
@@ -580,10 +584,11 @@ class TerminalGraphRuntime:
                     except Exception as exc:
                         warning = f"✗ Could not save Python image {image_count}: {exc}"
                         console.append(warning)
+                        errors.append(warning)
                         self.emit({
                             "role": "computer",
                             "type": "console",
-                            "format": "output",
+                            "format": "error",
                             "content": warning,
                             "start": True,
                             "end": True,
@@ -602,7 +607,7 @@ class TerminalGraphRuntime:
             content = "\n".join(console).strip()
             if image_count:
                 content = (content + f"\n[{image_count} image(s) generated and shown to the user]").strip()
-            failed = content.startswith(("✗", "Kernel error", "Kernel exec failed"))
+            failed = bool(errors) or content.startswith(("✗", "Kernel error", "Kernel exec failed"))
             namespace = []
             if not failed:
                 namespace = inspect_python_namespace(
@@ -617,7 +622,7 @@ class TerminalGraphRuntime:
                 artifacts=generated_images,
                 vision_images=generated_images,
                 kernel_namespace=namespace,
-                error=content if failed else None,
+                error=("\n".join(errors).strip() or content) if failed else None,
             )
 
         tool = self.agent.tools_by_name.get(name)

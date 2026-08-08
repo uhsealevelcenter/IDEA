@@ -13,6 +13,7 @@ sandbox_service instead of in this process.
 import json
 import os
 import posixpath
+import re
 import shlex
 import time
 import uuid
@@ -477,8 +478,41 @@ def run_python(
         response.raise_for_status()
         result = response.json()
     except httpx.HTTPError as e:
-        return [{"type": "console", "format": "output", "content": f"✗ Failed to reach sandbox service: {e}"}]
-    return result.get("chunks", [])
+        return [{"type": "console", "format": "error", "content": f"✗ Failed to reach sandbox service: {e}"}]
+    return _normalize_kernel_chunks(result.get("chunks", []))
+
+
+_PYTHON_EXCEPTION_LINE_RE = re.compile(
+    r"^(?:[A-Za-z_][\w.]*(?:Error|Exception)|KeyboardInterrupt|SystemExit):"
+)
+
+
+def _looks_like_legacy_kernel_error(content: str) -> bool:
+    """Recognize error chunks produced by pre-format-metadata kernel images."""
+    if "Traceback (most recent call last):" in content:
+        return True
+    if "Cell In[" not in content:
+        return False
+    return any(
+        _PYTHON_EXCEPTION_LINE_RE.match(line.strip())
+        for line in reversed(content.splitlines())
+        if line.strip()
+    )
+
+
+def _normalize_kernel_chunks(chunks: list[dict]) -> list[dict]:
+    """Preserve explicit error metadata and upgrade legacy traceback chunks."""
+    normalized = []
+    for raw_chunk in chunks:
+        chunk = dict(raw_chunk)
+        if (
+            chunk.get("type") == "console"
+            and chunk.get("format", "output") == "output"
+            and _looks_like_legacy_kernel_error(str(chunk.get("content") or ""))
+        ):
+            chunk["format"] = "error"
+        normalized.append(chunk)
+    return normalized
 
 
 _IDEA_NAMESPACE_MARKER = "__IDEA_KERNEL_NAMESPACE_V1__:"

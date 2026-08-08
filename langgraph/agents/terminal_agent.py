@@ -1409,7 +1409,7 @@ class TerminalAgent:
                                         stream_callback({
                                             'role': 'computer',
                                             'type': 'console',
-                                            'format': 'output',
+                                            'format': chunk.get('format', 'output'),
                                             'content': content,
                                             'start': True,
                                             'end': True

@@ -1043,10 +1043,18 @@ class Pipe:
                 f"{TOOL_OUTPUT_END}\n\n"
             )
         elif chunk_type == "console":
-            yield (
-                f"\n\n{TOOL_OUTPUT_START}\n```text\n{content}\n```\n"
-                f"{TOOL_OUTPUT_END}\n\n"
-            )
+            if fmt == "error":
+                yield (
+                    f"\n\n{TOOL_OUTPUT_START}\n"
+                    "⚠️ **Python execution error**\n\n"
+                    f"````text\n{content}\n````\n"
+                    f"{TOOL_OUTPUT_END}\n\n"
+                )
+            else:
+                yield (
+                    f"\n\n{TOOL_OUTPUT_START}\n```text\n{content}\n```\n"
+                    f"{TOOL_OUTPUT_END}\n\n"
+                )
         elif chunk_type == "image" and content:
             # Backward compatibility for older LangGraph services. Current
             # services send a filename and the main Pipe loop resolves it to

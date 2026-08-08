@@ -158,7 +158,7 @@ import matplotlib.pyplot as plt
             raise  # gotta pass this up!
         except:
             content = traceback.format_exc()
-            yield {"type": "console", "format": "output", "content": content}
+            yield {"type": "console", "format": "error", "content": content}
 
     def _execute_code(self, code, message_queue):
         def iopub_message_listener():
@@ -465,7 +465,7 @@ import matplotlib.pyplot as plt
             chunks.append(
                 {
                     "type": "console",
-                    "format": "output",
+                    "format": "error",
                     "content": text,
                 }
             )
