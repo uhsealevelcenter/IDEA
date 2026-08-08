@@ -1,5 +1,32 @@
 # Recent Changes
 
+## Changes in `feature/langgraph-memory`
+
+This listing compares `feature/langgraph-memory` with its parent branch,
+`next-dev`, at merge base `e6dc507`. It covers the 18 commits currently unique
+to this branch.
+
+1. The agent loop is now a checkpointed LangGraph state graph with explicit model, tool, finalization, and cancellation stages instead of relying on an in-process linear loop for durable state.
+2. LangGraph checkpoints use a dedicated least-privilege PostgreSQL role and schema, with deployment setup scripts and optional AES encryption for persisted checkpoint data.
+3. Open WebUI's selected, compacted conversation branch is now authoritative model context. Assistant-message-to-checkpoint mappings preserve the correct execution branch across edits and regenerations without restoring a competing Redis conversation transcript.
+4. User, chat, Assistant, workspace, kernel, thread, checkpoint, and run identities are derived separately so persistent files, Python state, conversation branches, and individual responses have the intended isolation boundaries.
+5. Chat runs execute as durable background jobs with persisted, sequence-numbered events. Open WebUI can poll after a disconnect, recover terminal results, and avoid duplicating streamed errors; event storage is compacted to limit Redis growth.
+6. Stop requests now cooperatively cancel queued work, active model streams, and sandbox execution while retaining completed checkpoint state. PaperQA setup is deferred until it is actually needed so cancellation and ordinary turns do not pay its initialization cost.
+7. Tool execution memory now records bounded action ledgers, Python source and namespace metadata, artifacts, warnings, and error summaries. Repeated identical calls are blocked, oversized outputs can be archived and paged, and model context receives compact tool-history summaries.
+8. Resumed microVMs lazily restore Open Terminal, and persistent-kernel behavior is more reliable across service restarts without routinely recreating users' writable sandboxes.
+9. Python source streams into the chat while the model generates it, before kernel execution begins. Open WebUI renders one code block and suppresses the backward-compatible completed-code replay.
+10. Python-generated plots are captured automatically, persisted as durable sandbox artifacts, synchronized to Open WebUI, displayed inline without base64 history growth, and supplied to model vision when appropriate.
+11. Visual follow-ups can restore the most recent relevant image, distinguish display from model inspection, avoid duplicate previews, and route image-bearing model requests consistently through the configured vision-capable model.
+12. Model-call telemetry now records provider token usage, cached and reasoning token details when available, model-visible text size, image counts, and run totals. Stable per-conversation prompt-cache keys were added; the documented remaining limitation is LiteLLM forwarding of `prompt_cache_options` to the upstream endpoint.
+13. Agent reliability and context efficiency were improved through bounded retries, safer tool dispatch, heartbeat and progress events, output-finalization recovery, streamlined prompts, and more compact skill and tool results.
+14. Open WebUI's separate native Code Execution and Code Interpreter runtimes are disabled for IDEA to prevent confusion with the persistent sandbox kernel, and the documentation now clarifies supported math-delimiter formatting.
+15. Deployment-managed Assistants now receive curated suggested prompts, including domain-specific SEA and Mars prompts and narrowly scoped Welcome-prompt reconciliation for selected existing Assistants.
+16. Climate-index parsing is compatible with pandas 3 while preserving the existing climate-data workflow and test coverage.
+17. The primary agent model is centrally selected through `IDEA_AGENT_MODEL`, defaults to `gpt-5.6-terra`, and retains `gpt-5.6-sol` as a one-variable rollback through the same LiteLLM endpoint and credentials.
+18. Python kernel failures retain structured error metadata through the kernel, sandbox, and LangGraph layers, are marked as failed tool executions, and render in Open WebUI as labeled traceback blocks without marking the entire assistant response as failed.
+
+## Previous change listing
+
 This summary compares `idea-next/system-prompt-AND-functions` with its parent
 branch, `cleanup/ideav2_migration` (`b02913f`), and intentionally lists only
 major changes.
