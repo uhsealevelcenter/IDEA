@@ -58,6 +58,11 @@ class FakeRuntime:
         if self.model_calls == 1:
             return AIMessage(
                 content="",
+                usage_metadata={
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "total_tokens": 120,
+                },
                 tool_calls=[{
                     "id": "call-1",
                     "name": "run_python_tool",
@@ -65,14 +70,29 @@ class FakeRuntime:
                     "type": "tool_call",
                 }],
             )
-        return AIMessage(content="Updated the previous plot.")
+        return AIMessage(
+            content="Updated the previous plot.",
+            usage_metadata={
+                "input_tokens": 80,
+                "output_tokens": 10,
+                "total_tokens": 90,
+            },
+        )
 
     def persist_python_source(self, execution_id, code, state):
         return f"/workspace/.idea/{execution_id}.py"
 
     def execute_tool(self, tool_call, state):
         self.executed.append(tool_call)
-        return ToolOutcome(content="[1 image generated]")
+        return ToolOutcome(
+            content="[1 image generated]",
+            artifacts=["/outputs/.idea/kernel-images/run-1-1.png"],
+            vision_images=["/outputs/.idea/kernel-images/run-1-1.png"],
+            kernel_namespace=[
+                {"name": "values", "type": "list", "length": 3},
+                {"name": "line", "type": "list", "length": 3},
+            ],
+        )
 
     def finalize(self, state):
         return []
@@ -174,7 +194,7 @@ class LangGraphMemoryTests(unittest.TestCase):
             ["line", "values"],
         )
 
-    def test_prior_exact_code_is_in_next_turn_model_context(self):
+    def test_prior_execution_summary_replaces_exact_code_in_next_turn(self):
         runtime = FakeRuntime()
         graph = build_idea_graph(runtime, checkpointer=InMemorySaver())
         config = {"configurable": {"thread_id": "thread-2"}}
@@ -194,8 +214,59 @@ class LangGraphMemoryTests(unittest.TestCase):
             "workspace_id": "workspace-1", "kernel_id": "kernel-1",
         }, config=config)
         text = "\n".join(str(message.content) for message in runtime.model_inputs[-1])
-        self.assertIn("values = [1, 2, 3]", text)
+        self.assertNotIn("values = [1, 2, 3]", text)
+        self.assertIn("values: list len=3", text)
+        self.assertIn("source path:", text)
         self.assertIn("make the line red", text)
+
+    def test_generated_plot_becomes_active_vision_for_visual_followup(self):
+        runtime = FakeRuntime()
+        graph = build_idea_graph(runtime, checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "thread-vision"}}
+        first = graph.invoke({
+            "conversation_messages": [{"role": "user", "content": "plot values"}],
+            "run_id": "run-1", "thread_id": "thread-vision",
+            "workspace_id": "workspace-1", "kernel_id": "kernel-1",
+        }, config=config)
+
+        image_path = "/outputs/.idea/kernel-images/run-1-1.png"
+        self.assertEqual(first["vision_images"], [image_path])
+        self.assertTrue(first["active_artifact_id"].startswith("artifact_"))
+        self.assertEqual(first["artifacts"][-1]["path"], image_path)
+
+        runtime.model_calls = 1
+        second = graph.invoke({
+            "conversation_messages": [
+                {"role": "user", "content": "plot values"},
+                {"role": "assistant", "content": "done"},
+                {"role": "user", "content": "Improve the plot layout"},
+            ],
+            "run_id": "run-2", "thread_id": "thread-vision",
+            "workspace_id": "workspace-1", "kernel_id": "kernel-1",
+        }, config=config)
+
+        self.assertEqual(second["vision_images"], [image_path])
+
+    def test_model_usage_is_recorded_per_call_and_emitted(self):
+        runtime = FakeRuntime()
+        graph = build_idea_graph(runtime)
+        result = graph.invoke({
+            "conversation_messages": [{"role": "user", "content": "plot values"}],
+            "run_id": "run-usage", "thread_id": "thread-usage",
+            "workspace_id": "workspace-1", "kernel_id": "kernel-1",
+        })
+
+        current = [
+            item for item in result["model_usage"]
+            if item["run_id"] == "run-usage"
+        ]
+        self.assertEqual(len(current), 2)
+        self.assertEqual(sum(item["total_tokens"] for item in current), 210)
+        usage_events = [
+            event for event in runtime.events
+            if isinstance(event, dict) and event.get("type") == "model_usage"
+        ]
+        self.assertEqual(len(usage_events), 2)
 
     def test_stop_before_model_returns_summary(self):
         runtime = FakeRuntime()

@@ -309,10 +309,60 @@ class LangGraphKernelImageTests(unittest.TestCase):
         runtime.displayed_image_paths = set()
         return runtime
 
+    def test_pending_generated_image_is_supplied_to_model_vision(self):
+        runtime = self.make_runtime()
+        runtime.system_prompt = "test prompt"
+        runtime.agent._model_image_part.return_value = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,PRIVATE", "detail": "high"},
+        }
+
+        messages = runtime.model_messages({
+            "run_id": "run-1",
+            "conversation_messages": [],
+            "turn_messages": [],
+            "vision_images": ["/outputs/.idea/kernel-images/run-1-1.png"],
+            "vision_consumed_count": 0,
+        })
+
+        vision_message = next(
+            message for message in messages
+            if isinstance(message, HumanMessage) and isinstance(message.content, list)
+        )
+        self.assertIn("IDEA supplied an image", vision_message.content[0]["text"])
+        self.assertEqual(vision_message.content[1]["type"], "image_url")
+
+    @patch("tools.persistent_terminal.run_python")
+    def test_namespace_inspection_returns_structure_without_values(self, run_python):
+        run_python.return_value = [{
+            "type": "console",
+            "format": "output",
+            "content": (
+                "__IDEA_KERNEL_NAMESPACE_V1__:"
+                '[{"name":"df","type":"DataFrame","shape":[3,2],"length":null}]\n'
+            ),
+        }]
+
+        summary = persistent_terminal.inspect_python_namespace(
+            session_id="sandbox-1",
+            kernel_id="kernel-1",
+            names=["df", "secret_value"],
+            run_id="run-1",
+        )
+
+        self.assertEqual(summary[0]["shape"], [3, 2])
+        self.assertNotIn("secret", str(summary[0]))
+        submitted_code = run_python.call_args.args[0]
+        compile(submitted_code, "<namespace-inspection>", "exec")
+
+    @patch(
+        "tools.persistent_terminal.inspect_python_namespace",
+        return_value=[{"name": "df", "type": "DataFrame", "shape": [3, 2]}],
+    )
     @patch("tools.persistent_terminal.write_file_stream")
     @patch("tools.persistent_terminal.run_python")
     def test_python_image_is_persisted_and_emitted_as_a_file_reference(
-        self, run_python, write_file_stream
+        self, run_python, write_file_stream, inspect_python_namespace
     ):
         run_python.return_value = [{
             "type": "image",
@@ -329,6 +379,18 @@ class LangGraphKernelImageTests(unittest.TestCase):
         image_path = "/outputs/.idea/kernel-images/run-1-1.png"
         self.assertEqual(outcome.status, "completed")
         self.assertIn("1 image(s) generated", outcome.content)
+        self.assertEqual(outcome.artifacts, [image_path])
+        self.assertEqual(outcome.vision_images, [image_path])
+        self.assertEqual(
+            outcome.kernel_namespace,
+            [{"name": "df", "type": "DataFrame", "shape": [3, 2]}],
+        )
+        inspect_python_namespace.assert_called_once_with(
+            session_id="sandbox-1",
+            kernel_id="kernel-1",
+            names=[],
+            run_id="run-1",
+        )
         write_file_stream.assert_called_once_with(
             image_path,
             [PNG_BYTES],

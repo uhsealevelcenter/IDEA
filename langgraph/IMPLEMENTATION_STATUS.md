@@ -980,9 +980,9 @@ bound to the correct user's sandbox.
 - ✅ Security policies (guarddog, destructive ops prevention)
 - ✅ Math formatting (MathJax), mapping (folium), data output guidelines
 - ✅ Data tool usage guidance (the 5 ported functions)
-- ✅ Vision instructions distinguish automatic uploaded-image vision,
-  `inspect_image_tool` (model inspection), and `show_image_tool` (user
-  display)
+- ✅ Vision instructions distinguish automatic uploaded/Python-generated
+  image vision, `inspect_image_tool` for other existing images, and
+  `show_image_tool` for user display
 - ❌ Codex CLI integration instructions — not applicable to `TerminalAgent`'s architecture yet
 - ❌ User-specific active prompts from `PromptManager` — not wired (see #5)
 
@@ -1022,10 +1022,12 @@ bound to the correct user's sandbox.
   multimodal content in the initial model message
 - ✅ `inspect_image_tool` feeds an existing sandbox image into the next
   model iteration; `show_image_tool` remains display-only
+- ✅ `run_python_tool` output images are persisted, displayed to the user,
+  and fed directly into the next model iteration without another tool call
+- ✅ The latest generated plot is checkpointed as the active artifact and
+  restored when a follow-up explicitly refers to visual/plot properties
 - ✅ Image magic-byte validation, per-image byte limits, per-turn image
   count limits, and application-log redaction for data URIs
-- 🟡 `plt.show()` output is displayed to the user by `run_python_tool`, but
-  must be saved and passed to `inspect_image_tool` for model inspection
 - ❌ Dedicated OCR/cropping workflow for exceptionally dense scientific
   imagery
 

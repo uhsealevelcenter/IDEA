@@ -32,6 +32,7 @@ from idea_config import (
 )
 
 from .memory import compact_turn_messages, execution_memory_block
+from .memory import defined_names
 
 
 class ModelCallCancelled(Exception):
@@ -75,6 +76,8 @@ class ToolOutcome:
     status: str = "completed"
     events: list[dict[str, Any]] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
+    vision_images: list[str] = field(default_factory=list)
+    kernel_namespace: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
 
 
@@ -176,9 +179,10 @@ class TerminalGraphRuntime:
                 vision_content.append({
                     "type": "text",
                     "text": (
-                        "Image requested with inspect_image_tool at "
+                        "IDEA supplied an image for visual inspection at "
                         f"`{image_path}`. Inspect its actual pixels before "
-                        "continuing."
+                        "making appearance claims or continuing a visual "
+                        "revision."
                     ),
                 })
                 vision_content.append(self.agent._model_image_part(image_path))
@@ -527,7 +531,10 @@ class TerminalGraphRuntime:
         name = str(tool_call.get("name") or "")
         args = dict(tool_call.get("args") or {})
         if name == "run_python_tool":
-            from tools.persistent_terminal import run_python
+            from tools.persistent_terminal import (
+                inspect_python_namespace,
+                run_python,
+            )
 
             code = str(args.get("code") or "")
             tool_call_id = str(tool_call.get("id") or "")
@@ -544,6 +551,7 @@ class TerminalGraphRuntime:
             )
             console: list[str] = []
             image_count = 0
+            generated_images: list[str] = []
             run_id = str(state.get("run_id") or "")
             for chunk in chunks:
                 if chunk.get("type") == "console" and chunk.get("format") != "active_line":
@@ -575,6 +583,7 @@ class TerminalGraphRuntime:
                         })
                         continue
                     self.displayed_image_paths.add(image_path)
+                    generated_images.append(image_path)
                     self.emit({
                         "role": "assistant",
                         "type": "image",
@@ -587,9 +596,20 @@ class TerminalGraphRuntime:
             if image_count:
                 content = (content + f"\n[{image_count} image(s) generated and shown to the user]").strip()
             failed = content.startswith(("✗", "Kernel error", "Kernel exec failed"))
+            namespace = []
+            if not failed:
+                namespace = inspect_python_namespace(
+                    session_id=self.agent.sandbox_id,
+                    kernel_id=str(state.get("kernel_id") or "default"),
+                    names=defined_names(code),
+                    run_id=run_id,
+                )
             return ToolOutcome(
                 content=content or "(no output)",
                 status="failed" if failed else "completed",
+                artifacts=generated_images,
+                vision_images=generated_images,
+                kernel_namespace=namespace,
                 error=content if failed else None,
             )
 

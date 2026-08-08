@@ -62,6 +62,25 @@ redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=Tr
 # whichever replica happened to handle its first message.
 chat_run_threads = {}
 
+
+def _summarize_model_usage(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
+    """Aggregate provider usage for one run without including prompt content."""
+    selected = [
+        item for item in records
+        if isinstance(item, dict) and str(item.get("run_id") or "") == run_id
+    ]
+    summary: dict[str, Any] = {"model_calls": len(selected)}
+    for key in (
+        "input_tokens", "cached_input_tokens", "output_tokens",
+        "reasoning_tokens", "total_tokens", "model_text_characters",
+        "model_image_count",
+    ):
+        values = [item.get(key) for item in selected]
+        numeric = [value for value in values if isinstance(value, (int, float))]
+        if numeric:
+            summary[key] = int(sum(numeric))
+    return summary
+
 # Constants
 CHAT_RUN_TTL_SECONDS = int(os.getenv("CHAT_RUN_TTL_SECONDS", "86400"))
 CHAT_RUN_PREFIX = "langgraph_run:"
@@ -490,6 +509,9 @@ def _run_chat_job(
                     graph_thread_id,
                     checkpoint_id,
                 )
+                usage_summary = _summarize_model_usage(
+                    list(result.get("model_usage") or []), run_id
+                )
                 _append_chat_run_event(run_id, {
                     "type": "idea_context",
                     "schema_version": 1,
@@ -499,6 +521,7 @@ def _run_chat_job(
                     "output_checkpoint_id": checkpoint_id,
                     "checkpoint_source": checkpoint_source,
                     "active_artifact_id": result.get("active_artifact_id"),
+                    "model_usage": usage_summary,
                     "execution_refs": [
                         item.get("execution_id")
                         for item in (result.get("python_executions") or [])[-20:]
@@ -510,6 +533,7 @@ def _run_chat_job(
                     status=final_status,
                     thread_id=graph_thread_id,
                     checkpoint_id=checkpoint_id,
+                    model_usage=usage_summary,
                     completed_at=datetime.utcnow().isoformat(),
                     updated_at=datetime.utcnow().isoformat(),
                 )

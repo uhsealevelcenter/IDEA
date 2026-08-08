@@ -12,6 +12,27 @@ import langgraph_service  # noqa: E402
 
 
 class ChatRunEventTests(unittest.TestCase):
+    def test_summarizes_only_current_run_model_usage(self):
+        summary = langgraph_service._summarize_model_usage([
+            {
+                "run_id": "run-1", "input_tokens": 100,
+                "cached_input_tokens": 40, "output_tokens": 20,
+                "total_tokens": 120, "model_image_count": 1,
+            },
+            {
+                "run_id": "run-1", "input_tokens": 80,
+                "output_tokens": 10, "total_tokens": 90,
+                "model_image_count": 0,
+            },
+            {"run_id": "older", "total_tokens": 999},
+        ], "run-1")
+
+        self.assertEqual(summary["model_calls"], 2)
+        self.assertEqual(summary["input_tokens"], 180)
+        self.assertEqual(summary["cached_input_tokens"], 40)
+        self.assertEqual(summary["total_tokens"], 210)
+        self.assertEqual(summary["model_image_count"], 1)
+
     def test_sequence_and_append_are_one_atomic_redis_operation(self):
         encoded = json.dumps({
             "seq": 1,

@@ -481,6 +481,64 @@ def run_python(
     return result.get("chunks", [])
 
 
+_IDEA_NAMESPACE_MARKER = "__IDEA_KERNEL_NAMESPACE_V1__:"
+
+
+def inspect_python_namespace(
+    *,
+    session_id: str,
+    kernel_id: str,
+    names: list[str],
+    run_id: str = "",
+) -> list[dict]:
+    """Return a bounded structural summary of selected live kernel names.
+
+    Values and reprs are deliberately excluded: the model only needs enough
+    evidence to know that reusable objects still exist and what broad shape
+    they have. This is a best-effort internal kernel call, never model code.
+    """
+    selected = [name for name in names if str(name).isidentifier()][-100:]
+    if not selected:
+        return []
+    names_json = json.dumps(selected)
+    code = (
+        "print(" + repr(_IDEA_NAMESPACE_MARKER) + " + "
+        "__import__('json').dumps(["
+        "{'name': __idea_name, "
+        "'type': type(globals()[__idea_name]).__name__, "
+        "'shape': list(getattr(globals()[__idea_name], 'shape')) "
+        "if isinstance(getattr(globals()[__idea_name], 'shape', None), tuple) "
+        "else None, "
+        "'length': len(globals()[__idea_name]) "
+        "if isinstance(globals()[__idea_name], (str, bytes, list, tuple, dict, set)) "
+        "else None} "
+        "for __idea_name in " + names_json + " if __idea_name in globals()], "
+        "separators=(',', ':'), default=str))"
+    )
+    chunks = run_python(
+        code,
+        session_id=session_id,
+        kernel_id=kernel_id,
+        run_id=run_id,
+    )
+    for chunk in chunks:
+        if chunk.get("type") != "console":
+            continue
+        content = str(chunk.get("content") or "")
+        marker_at = content.find(_IDEA_NAMESPACE_MARKER)
+        if marker_at < 0:
+            continue
+        payload = content[marker_at + len(_IDEA_NAMESPACE_MARKER):].strip()
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(decoded, list):
+            return []
+        return [item for item in decoded if isinstance(item, dict)][:100]
+    return []
+
+
 def interrupt_run(session_id: str, run_id: str) -> bool:
     """Best-effort, run-scoped interruption that preserves workspace files."""
     try:
@@ -649,8 +707,10 @@ def make_agent_tools(session_id: str):
         automatically. Prefer this over run_terminal_tool for Python data
         analysis/plotting, so you don't have to re-load data or re-import
         libraries every call. Plots created with matplotlib are
-        automatically captured and shown to the user - no need to save to
-        a file or call show_image_tool for them.
+        automatically captured, shown to the user, and supplied to model
+        vision on the next iteration - no need to save to a file or call
+        inspect_image_tool/show_image_tool for them. For follow-up changes,
+        reuse live variables instead of repeating unchanged setup.
 
         Args:
             code: Python code to execute
@@ -709,10 +769,12 @@ def make_agent_tools(session_id: str):
     def inspect_image_tool(filepath: str) -> str:
         """
         Load an image file into model vision so you can visually inspect and
-        describe it. Use this for images already in the sandbox, including
-        generated plots that you need to validate. This does not display the
-        image to the user; call show_image_tool separately when the user
-        should see it.
+        describe it. Use this for existing images in the sandbox and for a
+        saved image that has not already been supplied to model vision. This
+        does not display the image to the user. Call show_image_tool
+        separately for an existing image that the user should see; plots
+        produced by run_python_tool are already displayed and supplied to
+        model vision automatically.
 
         Args:
             filepath: Path to a PNG, JPEG, GIF, or WebP image.

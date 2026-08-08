@@ -105,21 +105,49 @@ def execution_memory_block(
     max_bytes: int = IDEA_MAX_EXECUTION_MEMORY_BYTES,
 ) -> str:
     """Build a newest-first, byte-bounded model view of execution memory."""
-    records = list(state.get("python_executions") or [])[-recent:]
-    actions = list(state.get("completed_actions") or [])[-recent:]
+    current_run_id = str(state.get("run_id") or "")
+    records = [
+        record for record in (state.get("python_executions") or [])
+        if not current_run_id or str(record.get("run_id") or "") != current_run_id
+    ][-recent:]
+    actions = [
+        action for action in (state.get("completed_actions") or [])
+        if not current_run_id or str(action.get("run_id") or "") != current_run_id
+    ][-recent:]
     if not records and not actions:
         return ""
-    header = "Prior IDEA execution memory (authoritative machine state):"
+    header = (
+        "Prior IDEA execution memory (authoritative checkpoint state). "
+        "The listed kernel variables are reusable when the kernel ID still "
+        "matches; prefer reusing them for follow-up edits instead of "
+        "reloading unchanged data:"
+    )
     entries: list[str] = []
     for record in reversed(records):
+        namespace = [
+            item for item in (record.get("namespace") or [])
+            if isinstance(item, dict) and item.get("name")
+        ]
+        variable_summary = ", ".join(
+            f"{item.get('name')}: {item.get('type', 'object')}"
+            + (
+                f" shape={tuple(item.get('shape'))}"
+                if isinstance(item.get("shape"), list) else ""
+            )
+            + (
+                f" len={item.get('length')}"
+                if item.get("length") is not None else ""
+            )
+            for item in namespace
+        )
         entries.append("\n".join([
             f"- Python execution {record.get('execution_id')} [{record.get('status')}]",
             f"  kernel: {record.get('kernel_id')}",
             f"  source path: {record.get('source_path')}",
-            "  exact submitted code:",
-            "```python",
-            str(record.get("submitted_code") or ""),
-            "```",
+            f"  code sha256: {record.get('code_sha256')}",
+            f"  reusable variables: {variable_summary or ', '.join(record.get('defined_names') or []) or 'unknown'}",
+            f"  outputs: {', '.join(record.get('output_artifacts') or []) or 'none recorded'}",
+            f"  result: {bounded_text_bytes(str(record.get('console_excerpt') or ''), 1200)}",
         ]))
     for action in reversed(actions):
         if action.get("tool_name") == "run_python_tool":

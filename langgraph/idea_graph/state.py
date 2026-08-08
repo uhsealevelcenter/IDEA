@@ -33,6 +33,7 @@ class PythonExecutionRecord(TypedDict, total=False):
     console_excerpt: str
     error_summary: str
     defined_names: list[str]
+    namespace: list[dict[str, Any]]
     output_artifacts: list[str]
 
 
@@ -98,3 +99,4 @@ class IDEAState(TypedDict, total=False):
     iteration: int
     vision_images: list[str]
     vision_consumed_count: int
+    model_usage: list[dict[str, Any]]

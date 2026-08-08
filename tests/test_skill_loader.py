@@ -614,6 +614,45 @@ class ViewSkillToolTests(unittest.TestCase):
 
 
 class TerminalAgentSkillIntegrationTests(unittest.TestCase):
+    def test_prompt_prefers_one_persistent_python_analysis_call(self):
+        base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "Use `run_python_tool` as the default for Python data loading",
+            base_prompt,
+        )
+        self.assertIn(
+            "prefer one cohesive call that loads the data",
+            base_prompt,
+        )
+        self.assertIn(
+            "Do not create a standalone Python script merely to run an "
+            "ordinary interactive analysis",
+            base_prompt,
+        )
+        self.assertNotIn(
+            "use `write_file_tool` to author a script, then "
+            "`run_terminal_tool`",
+            base_prompt,
+        )
+
+    def test_prompt_does_not_redisplay_python_plots(self):
+        base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "Plots created by `run_python_tool` are captured, shown to the "
+            "user, and supplied to model vision automatically",
+            base_prompt,
+        )
+        self.assertIn(
+            "do not call `inspect_image_tool` or `show_image_tool` for them",
+            base_prompt,
+        )
+
     def test_prompt_requires_openwebui_safe_math_delimiters(self):
         base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
             encoding="utf-8"

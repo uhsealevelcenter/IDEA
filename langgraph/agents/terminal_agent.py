@@ -355,6 +355,10 @@ class TerminalAgent:
         llm_kwargs: Dict[str, Any] = {
             "model": model,
             "streaming": True,
+            # A custom LiteLLM base URL disables langchain-openai's default
+            # streaming usage collection. Request the final usage chunk
+            # explicitly so LangGraph can persist per-call token telemetry.
+            "stream_usage": True,
             "api_key": LITELLM_VIRTUAL_KEY,
             "base_url": LITELLM_PROXY_URL,
             "default_headers": {LITELLM_END_USER_HEADER: end_user_id},

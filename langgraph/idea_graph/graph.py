@@ -40,6 +40,13 @@ _CONTINUE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_VISUAL_FOLLOWUP_RE = re.compile(
+    r"\b(?:plot|figure|chart|graph|image|visual(?:ly)?|layout|shading|"
+    r"colour|color|legend|axis|axes|title|annotation|line style|"
+    r"marker|font|spacing)\b",
+    re.IGNORECASE,
+)
+
 
 def _is_continuation_request(objective: str) -> bool:
     return bool(_CONTINUE_RE.fullmatch(str(objective or "")))
@@ -47,6 +54,88 @@ def _is_continuation_request(objective: str) -> bool:
 
 def _tool_id(call: dict[str, Any]) -> str:
     return str(call.get("id") or uuid.uuid4().hex)
+
+
+def _requests_visual_context(objective: str) -> bool:
+    return bool(_VISUAL_FOLLOWUP_RE.search(str(objective or "")))
+
+
+def _message_metrics(messages: list[Any]) -> tuple[int, int]:
+    """Count model-visible text characters and image parts without logging data."""
+    text_characters = 0
+    image_count = 0
+    for message in messages:
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            text_characters += len(content)
+            continue
+        if not isinstance(content, list):
+            text_characters += len(str(content or ""))
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                text_characters += len(str(part))
+            elif part.get("type") in {"text", "input_text"}:
+                text_characters += len(str(part.get("text") or ""))
+            elif part.get("type") in {"image_url", "input_image"}:
+                image_count += 1
+    return text_characters, image_count
+
+
+def _model_usage_record(
+    response: AIMessage,
+    *,
+    run_id: str,
+    iteration: int,
+    messages: list[Any],
+) -> dict[str, Any]:
+    usage = dict(getattr(response, "usage_metadata", None) or {})
+    metadata = dict(getattr(response, "response_metadata", None) or {})
+    token_usage = dict(metadata.get("token_usage") or {})
+    input_details = dict(usage.get("input_token_details") or {})
+    output_details = dict(usage.get("output_token_details") or {})
+    prompt_details = dict(token_usage.get("prompt_tokens_details") or {})
+    completion_details = dict(token_usage.get("completion_tokens_details") or {})
+
+    def number(*values: Any) -> int | None:
+        for value in values:
+            if isinstance(value, (int, float)):
+                return int(value)
+        return None
+
+    text_characters, image_count = _message_metrics(messages)
+    record = {
+        "run_id": run_id,
+        "iteration": iteration,
+        "message_count": len(messages),
+        "model_text_characters": text_characters,
+        "model_image_count": image_count,
+        "input_tokens": number(
+            usage.get("input_tokens"), token_usage.get("prompt_tokens")
+        ),
+        "cached_input_tokens": number(
+            input_details.get("cache_read"),
+            input_details.get("cached_tokens"),
+            prompt_details.get("cached_tokens"),
+        ),
+        "output_tokens": number(
+            usage.get("output_tokens"), token_usage.get("completion_tokens")
+        ),
+        "reasoning_tokens": number(
+            output_details.get("reasoning"),
+            output_details.get("reasoning_tokens"),
+            completion_details.get("reasoning_tokens"),
+        ),
+        "total_tokens": number(
+            usage.get("total_tokens"), token_usage.get("total_tokens")
+        ),
+        "response_id": str(
+            metadata.get("id") or getattr(response, "id", None) or ""
+        ),
+        "model": str(metadata.get("model_name") or metadata.get("model") or ""),
+        "recorded_at": utc_now(),
+    }
+    return {key: value for key, value in record.items() if value is not None}
 
 
 def build_idea_graph(
@@ -113,6 +202,19 @@ def build_idea_graph(
                 "description": objective[:1000],
                 "status": "pending",
             }]
+        initial_vision: list[str] = []
+        if _requests_visual_context(objective):
+            active_id = str(state.get("active_artifact_id") or "")
+            active = next(
+                (
+                    item for item in reversed(state.get("artifacts") or [])
+                    if str(item.get("artifact_id") or "") == active_id
+                    and item.get("path")
+                ),
+                None,
+            )
+            if active:
+                initial_vision.append(str(active["path"]))
         return {
             "schema_version": 1,
             "objective": objective,
@@ -129,7 +231,7 @@ def build_idea_graph(
             "final_status": "stopping" if cancellation.requested else "running",
             "final_response": None,
             "iteration": 0,
-            "vision_images": [],
+            "vision_images": initial_vision,
             "vision_consumed_count": 0,
         }
 
@@ -174,6 +276,13 @@ def build_idea_graph(
                 "stop_reason": str(exc) or cancellation.reason or "user_requested",
                 "final_status": "stopping",
             }
+        usage_record = _model_usage_record(
+            response,
+            run_id=str(state.get("run_id") or ""),
+            iteration=iteration,
+            messages=messages,
+        )
+        runtime.emit({"type": "model_usage", **usage_record})
         tool_calls = []
         for raw in response.tool_calls or []:
             call = dict(raw)
@@ -186,6 +295,9 @@ def build_idea_graph(
             ) + [response],
             "pending_tool_calls": tool_calls,
             "iteration": iteration,
+            "model_usage": [
+                *(state.get("model_usage") or []), usage_record
+            ][-100:],
             "final_response": str(response.content or "") if not tool_calls else None,
             "vision_consumed_count": len(state.get("vision_images") or []),
         }
@@ -253,6 +365,9 @@ def build_idea_graph(
             "description": f"Running {name}…", "tool_name": name, "done": False,
         })
         python_record: dict[str, Any] | None = None
+        outcome_artifacts: list[str] = []
+        outcome_vision_images: list[str] = []
+        outcome_namespace: list[dict[str, Any]] = []
         if name == "run_python_tool":
             code = str(args.get("code") or "")
             python_record = {
@@ -286,6 +401,9 @@ def build_idea_graph(
                 outcome_content = outcome.content
                 outcome_status = outcome.status
                 outcome_error = outcome.error
+                outcome_artifacts = list(outcome.artifacts or [])
+                outcome_vision_images = list(outcome.vision_images or [])
+                outcome_namespace = list(outcome.kernel_namespace or [])
         except Exception as exc:
             outcome_content = f"✗ {name} failed: {exc}"
             outcome_status = "failed"
@@ -318,20 +436,47 @@ def build_idea_graph(
                 "status": outcome_status,
                 "completed_at": completed,
                 "console_excerpt": bounded_excerpt(outcome_content, result_excerpt_bytes),
+                "namespace": outcome_namespace,
+                "output_artifacts": outcome_artifacts,
                 **({"error_summary": bounded_excerpt(outcome_error, 2000)} if outcome_error else {}),
             })
             update["python_executions"] = bounded_python(
                 state, python_record
             )
+        if outcome_artifacts:
+            existing_artifacts = list(state.get("artifacts") or [])
+            new_artifacts = []
+            for path in outcome_artifacts:
+                artifact_id = f"artifact_{sha256_text(path)[:20]}"
+                new_artifacts.append({
+                    "artifact_id": artifact_id,
+                    "path": path,
+                    "description": "Python-generated image preview",
+                    "source_execution_id": execution_id,
+                    "content_hash": "",
+                    "status": "generated_preview",
+                })
+            known_paths = {item.get("path") for item in new_artifacts}
+            update["artifacts"] = [
+                item for item in existing_artifacts
+                if item.get("path") not in known_paths
+            ][-91:] + new_artifacts[-9:]
+            update["active_artifact_id"] = new_artifacts[-1]["artifact_id"]
+        if outcome_vision_images:
+            combined = [
+                *(state.get("vision_images") or []), *outcome_vision_images
+            ]
+            update["vision_images"] = list(dict.fromkeys(combined))[-16:]
         if (
             name == "inspect_image_tool"
             and outcome_status == "completed"
             and args.get("filepath")
         ):
-            update["vision_images"] = [
-                *(state.get("vision_images") or []),
+            combined = [
+                *(update.get("vision_images") or state.get("vision_images") or []),
                 str(args["filepath"]),
-            ][-16:]
+            ]
+            update["vision_images"] = list(dict.fromkeys(combined))[-16:]
         if cancellation.requested or outcome_status == "interrupted":
             update.update({
                 "stop_requested": True,

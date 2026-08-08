@@ -31,10 +31,11 @@ A production-ready AI agent microservice built on LangGraph and LangChain, provi
 - **Command Output**: Streamed to console panels (`type: 'console', format: 'output'`)
 - **File Operations**: File writes displayed with language-specific syntax highlighting
 - **Status Updates**: Real-time tool execution feedback
-- **Images**: Displayed explicitly via `show_image_tool`, base64 encoding, and inline display
+- **Images**: Python plot output is captured and displayed automatically; existing image files are displayed explicitly via `show_image_tool`
 
 ### **Explicit Image Display**
-- The LLM calls `show_image_tool(filepath)` whenever it wants to show an image
+- The LLM calls `show_image_tool(filepath)` when it wants to show an existing image file
+- Plots produced by `run_python_tool` are streamed automatically and must not be shown a second time with `show_image_tool`
 - Supports `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg` files
 - Base64-encodes the file on demand
 - Streams as `type: 'image', format: 'base64.{ext}'` chunks
@@ -47,6 +48,9 @@ A production-ready AI agent microservice built on LangGraph and LangChain, provi
   the same file with code
 - `inspect_image_tool(filepath)` supplies an existing sandbox image to model
   vision in the next iteration
+- Plots produced by `run_python_tool` are persisted and supplied to model
+  vision automatically on the next iteration; the most recent plot is also
+  restored for an explicit visual follow-up
 - `show_image_tool` is display-only and never implies that the model has
   inspected the pixels
 - Vision input defaults to 20 MiB per image and 8 images per turn
@@ -375,9 +379,9 @@ User: "Find NOAA sea level data for Hawaii and create a visualization"
 
 Agent:
 1. Queries NOAA API for tide gauge data
-2. Creates Python script with matplotlib
-3. Runs script to generate PNG
-4. Calls `show_image_tool(filepath)` to display the image inline
+2. Uses one `run_python_tool` call to validate and analyze the data
+3. Creates the matplotlib plot in that same call
+4. Receives the plot inline automatically
 ```
 
 ### **Code Execution**
@@ -385,9 +389,9 @@ Agent:
 User: "Write and run code for Fibonacci sequence n=50"
 
 Agent:
-1. Writes Python script
-2. Executes with python command
-3. Streams output to console
+1. Uses `run_python_tool` for an interactive result, or writes a script when the user wants the code as a file
+2. Executes the code
+3. Streams output to the console
 ```
 
 ### **Package Installation & Testing**
@@ -396,8 +400,8 @@ User: "Install pandas and create sample data analysis"
 
 Agent:
 1. Runs pip install pandas
-2. Creates analysis script
-3. Executes and shows results
+2. Uses one `run_python_tool` call to create, validate, and analyze the sample data
+3. Streams the results and any plots automatically
 ```
 
 ### **Multi-Step Tasks**
@@ -458,9 +462,11 @@ When the LLM calls `show_image_tool(filepath)`, the agent:
 **Supported formats:** `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg`
 
 For model-side visual interpretation, uploaded PNG/JPEG/GIF/WebP images are
-included automatically. Existing sandbox images must be passed through
+included automatically. Python-generated plots are also included on the next
+model request. Other existing sandbox images must be passed through
 `inspect_image_tool`; that tool adds validated high-detail image content to
-the next model request. Display and inspection are deliberately separate.
+the next model request. Display and inspection remain separate for those
+existing images.
 
 ### **Tool Call Streaming**
 
@@ -468,7 +474,7 @@ When LLM calls a tool:
 1. **Command Display**: Stream as `type: 'code', format: 'shell'`
 2. **Execution**: Run in persistent terminal
 3. **Output Display**: Stream as `type: 'console', format: 'output'`
-4. **Image Display**: LLM calls `show_image_tool(filepath)` to stream an image when it wants to show one
+4. **Image Display**: `run_python_tool` streams generated plots automatically; the LLM calls `show_image_tool(filepath)` only for an existing image file
 
 This creates the Open Interpreter experience where users see:
 - What code is being written
@@ -532,8 +538,8 @@ This creates the Open Interpreter experience where users see:
 - Add cleanup job for old images/scripts
 
 ### **Monitoring**
-- Token usage tracked per iteration
-- Cost estimates calculated (GPT-4o pricing)
+- Provider token usage, cache/reasoning details when available, model-visible
+  text size, and image counts are tracked per model call and aggregated per run
 - Full conversation logs available
 - Redis TTL prevents memory leaks (1 hour default)
 
