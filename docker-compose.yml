@@ -52,6 +52,9 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - IDEA_AGENT_RUNTIME=${IDEA_AGENT_RUNTIME:-langgraph}
+      # Primary model switch. Change only this value to gpt-5.6-sol to roll
+      # back; both aliases stay configured in LiteLLM.
+      - IDEA_AGENT_MODEL=${IDEA_AGENT_MODEL:-gpt-5.6-terra}
       - IDEA_MODEL_REQUEST_TIMEOUT_SECONDS=${IDEA_MODEL_REQUEST_TIMEOUT_SECONDS:-180}
       - IDEA_MODEL_MAX_RETRIES=${IDEA_MODEL_MAX_RETRIES:-1}
       - IDEA_KERNEL_SCOPE=${IDEA_KERNEL_SCOPE:-chat_assistant}
@@ -203,8 +206,9 @@ services:
       - idea_shared_data:/app/data
 
   # LiteLLM proxy - fronts the same Azure AI Foundry OpenAI-compatible
-  # endpoint langgraph/ already talks to directly. It exposes gpt-5.6-sol
-  # to the IDEA agent and gpt-5.6-luna to Open WebUI for background tasks
+  # endpoint langgraph/ already talks to directly. It exposes both
+  # gpt-5.6-terra and gpt-5.6-sol to the IDEA agent, with IDEA_AGENT_MODEL
+  # selecting the active route, and gpt-5.6-luna for background tasks
   # (see litellm/litellm_config.yaml). Uses a dedicated Postgres
   # role+schema on the existing `db` service rather than its own database
   # container - see litellm/init_litellm_db.sql / setup_litellm_db.sh,

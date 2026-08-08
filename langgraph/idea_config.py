@@ -18,6 +18,14 @@ SANDBOX_SERVICE_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox:8020").rs
 # Agent orchestration and durable memory. ``manual`` remains available as a
 # rollback path while production checkpoints are introduced.
 IDEA_AGENT_RUNTIME = os.getenv("IDEA_AGENT_RUNTIME", "manual").strip().lower()
+# One switch controls the primary IDEA agent and its lightweight model-backed
+# helper tools. Keep both Terra and Sol aliases configured in LiteLLM so a
+# rollback only requires changing this environment variable and restarting
+# the LangGraph service.
+IDEA_AGENT_MODEL = (
+    os.getenv("IDEA_AGENT_MODEL", "gpt-5.6-terra").strip()
+    or "gpt-5.6-terra"
+)
 IDEA_KERNEL_SCOPE = os.getenv("IDEA_KERNEL_SCOPE", "chat_assistant").strip().lower()
 LANGGRAPH_DATABASE_URL = os.getenv("LANGGRAPH_DATABASE_URL", "").strip()
 LANGGRAPH_AES_KEY = os.getenv("LANGGRAPH_AES_KEY", "").strip()

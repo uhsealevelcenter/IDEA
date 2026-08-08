@@ -648,10 +648,6 @@ class Pipe:
             default="http://langgraph:8010",
             description="Base URL of the langgraph_service.py microservice.",
         )
-        MODEL: str = Field(
-            default="gpt-5.6-sol",
-            description="Model name passed through to ConversationOrchestrator.",
-        )
         REQUEST_TIMEOUT_SECONDS: int = Field(
             default=1800,
             description="Matches the terminal agent's own 30-minute exec timeout.",
@@ -740,7 +736,6 @@ class Pipe:
             ) or None,
             "input_checkpoint_id": idea_context.get("output_checkpoint_id"),
             "idea_context": idea_context,
-            "model": self.valves.MODEL,
             "assistant_id": assistant_id,
             "assistant_system_prompt": assistant_system_prompt,
             "paperqa_enabled": paperqa_enabled,

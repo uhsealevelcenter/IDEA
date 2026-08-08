@@ -1016,7 +1016,9 @@ bound to the correct user's sandbox.
 
 #### 7. **Vision Support**
 **Location in OI:** `app.py:1765`
-- ✅ The configured `gpt-5.6-sol` route advertises `supports_vision: true`
+- ✅ The configured `IDEA_AGENT_MODEL` route (`gpt-5.6-terra` by default,
+  with `gpt-5.6-sol` retained as an environment-variable rollback) supports
+  image input and function calling
   through LiteLLM model metadata
 - ✅ Authorized PNG/JPEG/GIF/WebP uploads are included as high-detail
   multimodal content in the initial model message

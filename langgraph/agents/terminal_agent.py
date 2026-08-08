@@ -51,6 +51,7 @@ from utils.tools import (
     make_query_knowledge_base_tool,
 )
 from idea_config import (
+    IDEA_AGENT_MODEL,
     IDEA_AGENT_RUNTIME,
     IDEA_MODEL_MAX_RETRIES,
     IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
@@ -228,7 +229,7 @@ class TerminalAgent:
         session_id: str,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
-        model: str = "gpt-5.6-sol",
+        model: str = IDEA_AGENT_MODEL,
         temperature: Optional[float] = None,
         max_iterations: int = 20,
         assistant_id: Optional[str] = None,
@@ -361,7 +362,7 @@ class TerminalAgent:
         # key shared by every user (a $100 total budget, not per-user), and
         # LITELLM_END_USER_HEADER carries this user's email so LiteLLM can
         # still attribute spend/usage per end user despite the shared key.
-        # Reasoning models (e.g., gpt-5.6-sol) only support the provider default
+        # Reasoning models in the GPT-5.6 family only support the provider default
         # temperature - omit the kwarg entirely when temperature is None.
         if not LITELLM_VIRTUAL_KEY:
             raise RuntimeError(

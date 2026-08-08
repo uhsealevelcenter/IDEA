@@ -365,7 +365,7 @@ web:
 
 ```python
 agent = TerminalAgent(
-    model="gpt-5.6-sol",     # Azure AI Foundry deployment name
+    model="gpt-5.6-terra",   # Or set IDEA_AGENT_MODEL=gpt-5.6-sol to roll back
     temperature=0.2,         # 0.0-1.0, lower = more deterministic
     max_iterations=20        # Max iteration limit
 )

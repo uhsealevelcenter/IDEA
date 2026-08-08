@@ -55,7 +55,8 @@ tags, follow-up suggestions, and search queries. IDEA keeps this separate
 from the user-facing Pipe model:
 
 - `IDEA Agent` remains the only visible chat model and continues
-  to use `gpt-5.6-sol` through LangGraph.
+  to use the centrally configured `IDEA_AGENT_MODEL` through LangGraph
+  (`gpt-5.6-terra` by default; set it to `gpt-5.6-sol` to roll back).
 - `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
   Open WebUI, and marked hidden so it remains available to backend tasks
   without appearing in the chat model selector.

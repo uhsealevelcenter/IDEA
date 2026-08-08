@@ -29,6 +29,7 @@ except ImportError:
     DB_AVAILABLE = False
 
 from agents.terminal_agent import TerminalAgent
+from idea_config import IDEA_AGENT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class ConversationOrchestrator:
         session_id: str,
         is_guest: bool,
         db: Optional[Session] = None,
-        model: str = "gpt-5.6-sol",
+        model: str = IDEA_AGENT_MODEL,
         temperature: Optional[float] = None,
         max_iterations: int = 20,
         user_email: Optional[str] = None,
@@ -298,7 +299,7 @@ class ConversationOrchestrator:
 def run_agent_task(
     prompt: str,
     session_id: Optional[str] = None,
-    model: str = "gpt-5.6-sol",
+    model: str = IDEA_AGENT_MODEL,
     temperature: Optional[float] = None,
     max_iterations: int = 20,
     stream_callback: Optional[Callable[[str], None]] = None
@@ -337,7 +338,7 @@ if __name__ == "__main__":
         prompt="Create a Python script that prints 'Hello from Terminal Agent!' and run it.",
         max_iterations=10,
         stream_callback=stream_output,
-        model="gpt-5.6-sol"
+        model=IDEA_AGENT_MODEL
     )
     
     print(f"\n{'='*80}")

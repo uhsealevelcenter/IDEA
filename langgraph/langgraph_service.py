@@ -16,6 +16,7 @@ import redis
 
 from multi_agent import ConversationOrchestrator
 from idea_config import (
+    IDEA_AGENT_MODEL,
     IDEA_AGENT_RUNTIME,
     IDEA_CHECKPOINT_MAP_TTL_SECONDS,
     IDEA_KERNEL_SCOPE,
@@ -337,7 +338,7 @@ class ChatRequest(BaseModel):
     chat_id: Optional[str] = None
     input_checkpoint_id: Optional[str] = None
     idea_context: dict[str, Any] = Field(default_factory=dict)
-    model: Optional[str] = "gpt-5.6-sol"
+    model: Optional[str] = None
     temperature: Optional[float] = None
     max_iterations: Optional[int] = 20
     restore_history: Optional[bool] = True
@@ -357,7 +358,7 @@ class ChatRunRequest(BaseModel):
     response_message_id: Optional[str] = None
     input_checkpoint_id: Optional[str] = None
     idea_context: dict[str, Any] = Field(default_factory=dict)
-    model: Optional[str] = "gpt-5.6-sol"
+    model: Optional[str] = None
     assistant_id: Optional[str] = None
     assistant_system_prompt: Optional[str] = None
     attached_files: list[dict[str, Any]] = Field(default_factory=list)
@@ -676,7 +677,7 @@ async def start_chat_run(request: ChatRunRequest):
             "is_guest": request.is_guest,
             "messages": request.messages,
             "response_message_id": request.response_message_id,
-            "model": request.model,
+            "model": request.model or IDEA_AGENT_MODEL,
             "assistant_id": request.assistant_id,
             "assistant_system_prompt": request.assistant_system_prompt,
             "attached_files": request.attached_files,
@@ -772,7 +773,7 @@ async def chat_endpoint(request: ChatRequest):
             session_id=session_key,
             is_guest=request.is_guest,
             db=None,
-            model=request.model,
+            model=request.model or IDEA_AGENT_MODEL,
             temperature=request.temperature,
             max_iterations=request.max_iterations,
             user_email=request.user_email,

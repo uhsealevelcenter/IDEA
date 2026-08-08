@@ -7,7 +7,7 @@ major changes.
 1. IDEA now uses the newest pinned UHSLC Open WebUI customization, incorporating the interface and integration changes needed by the IDEA deployment.
 2. Official Welcome, SEA, and Mars Assistants now preserve the legacy prompts and branding while being deployed and managed through Open WebUI.
 3. The user-facing base model is named **IDEA Agent**, replacing **IDEA Terminal Agent**, while stable internal function and model identifiers retain their existing machine-readable names for compatibility.
-4. The main agent now uses `gpt-5.6-sol`, while a hidden `gpt-5.6-luna` task model handles Open WebUI titles and other auxiliary work through LiteLLM.
+4. The main agent model is selected by `IDEA_AGENT_MODEL` (`gpt-5.6-terra` by default, with `gpt-5.6-sol` retained as a one-variable rollback), while a hidden `gpt-5.6-luna` task model handles Open WebUI titles and other auxiliary work through LiteLLM.
 5. Deployment configuration now reconciles Open WebUI context compaction, token limits, title generation, Assistant permissions, and shared Workspace feature policies.
 6. Data uploaded through Open WebUI is authorized and copied without format changes into each user's persistent private sandbox, with exact file paths supplied to the agent for analysis.
 7. Generated artifacts are synchronized back to Open WebUI with reusable links, and browser-safe HTML and image previews are supported.

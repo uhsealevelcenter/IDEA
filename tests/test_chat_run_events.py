@@ -12,6 +12,17 @@ import langgraph_service  # noqa: E402
 
 
 class ChatRunEventTests(unittest.TestCase):
+    def test_chat_requests_defer_to_the_configured_agent_model(self):
+        request = langgraph_service.ChatRunRequest(
+            session_id="chat-1",
+            user_id="user-1",
+            is_guest=False,
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+        self.assertIsNone(request.model)
+        self.assertEqual(langgraph_service.IDEA_AGENT_MODEL, "gpt-5.6-terra")
+
     def test_summarizes_only_current_run_model_usage(self):
         summary = langgraph_service._summarize_model_usage([
             {

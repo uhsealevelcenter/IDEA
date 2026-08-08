@@ -362,6 +362,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(payload["assistant_id"], "sea")
         self.assertEqual(payload["assistant_system_prompt"], "You are SEA.")
         self.assertEqual(payload["session_id"], "chat-123")
+        self.assertNotIn("model", payload)
         self.assertEqual(
             payload["response_message_id"], "assistant-response-1"
         )

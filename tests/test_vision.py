@@ -351,15 +351,15 @@ class LangGraphKernelImageTests(unittest.TestCase):
         }])
 
     def test_prompt_cache_key_is_stable_and_privacy_preserving(self):
-        first = terminal_agent._prompt_cache_key("gpt-5.6-sol", "session-secret")
-        second = terminal_agent._prompt_cache_key("gpt-5.6-sol", "session-secret")
+        first = terminal_agent._prompt_cache_key("gpt-5.6-terra", "session-secret")
+        second = terminal_agent._prompt_cache_key("gpt-5.6-terra", "session-secret")
 
         self.assertEqual(first, second)
         self.assertTrue(first.startswith("idea:"))
         self.assertNotIn("session-secret", first)
         self.assertNotEqual(
             first,
-            terminal_agent._prompt_cache_key("gpt-5.6-sol", "other-session"),
+            terminal_agent._prompt_cache_key("gpt-5.6-terra", "other-session"),
         )
 
     @patch("tools.persistent_terminal.run_python")
