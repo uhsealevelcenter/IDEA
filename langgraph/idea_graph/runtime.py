@@ -115,6 +115,7 @@ class TerminalGraphRuntime:
             OUTPUTS_DIR,
             SYSTEM_PROMPT_PATH,
             TerminalAgent,
+            _cacheable_system_message,
             compose_system_prompt,
         )
 
@@ -139,6 +140,7 @@ class TerminalGraphRuntime:
             assistant_system_prompt,
             self.agent.builtin_skill_loader.render_manifest(),
         )
+        self.cacheable_system_message = _cacheable_system_message
 
     def emit(self, chunk: dict[str, Any] | str) -> None:
         if self.event_callback:
@@ -154,7 +156,12 @@ class TerminalGraphRuntime:
         return {"synced_inputs": synced}
 
     def model_messages(self, state: dict[str, Any]) -> list[BaseMessage]:
-        result: list[BaseMessage] = [SystemMessage(content=self.system_prompt)]
+        cacheable_system_message = getattr(
+            self,
+            "cacheable_system_message",
+            lambda content: SystemMessage(content=content),
+        )
+        result: list[BaseMessage] = [cacheable_system_message(self.system_prompt)]
         memory = execution_memory_block(state)
         if memory:
             result.append(SystemMessage(content=memory))

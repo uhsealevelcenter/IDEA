@@ -332,6 +332,36 @@ class LangGraphKernelImageTests(unittest.TestCase):
         self.assertIn("IDEA supplied an image", vision_message.content[0]["text"])
         self.assertEqual(vision_message.content[1]["type"], "image_url")
 
+    def test_system_prompt_has_an_explicit_cache_breakpoint(self):
+        runtime = self.make_runtime()
+        runtime.system_prompt = "stable IDEA instructions"
+        runtime.cacheable_system_message = terminal_agent._cacheable_system_message
+
+        messages = runtime.model_messages({
+            "conversation_messages": [
+                {"role": "user", "content": "changing request"},
+            ],
+            "turn_messages": [],
+        })
+
+        self.assertEqual(messages[0].content, [{
+            "type": "text",
+            "text": "stable IDEA instructions",
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        }])
+
+    def test_prompt_cache_key_is_stable_and_privacy_preserving(self):
+        first = terminal_agent._prompt_cache_key("gpt-5.6-sol", "session-secret")
+        second = terminal_agent._prompt_cache_key("gpt-5.6-sol", "session-secret")
+
+        self.assertEqual(first, second)
+        self.assertTrue(first.startswith("idea:"))
+        self.assertNotIn("session-secret", first)
+        self.assertNotEqual(
+            first,
+            terminal_agent._prompt_cache_key("gpt-5.6-sol", "other-session"),
+        )
+
     @patch("tools.persistent_terminal.run_python")
     def test_namespace_inspection_returns_structure_without_values(self, run_python):
         run_python.return_value = [{

@@ -17,6 +17,7 @@ class ChatRunEventTests(unittest.TestCase):
             {
                 "run_id": "run-1", "input_tokens": 100,
                 "cached_input_tokens": 40, "output_tokens": 20,
+                "cache_write_input_tokens": 60,
                 "total_tokens": 120, "model_image_count": 1,
             },
             {
@@ -30,6 +31,7 @@ class ChatRunEventTests(unittest.TestCase):
         self.assertEqual(summary["model_calls"], 2)
         self.assertEqual(summary["input_tokens"], 180)
         self.assertEqual(summary["cached_input_tokens"], 40)
+        self.assertEqual(summary["cache_write_input_tokens"], 60)
         self.assertEqual(summary["total_tokens"], 210)
         self.assertEqual(summary["model_image_count"], 1)
 

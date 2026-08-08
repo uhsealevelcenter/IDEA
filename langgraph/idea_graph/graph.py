@@ -40,10 +40,26 @@ _CONTINUE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_VISUAL_FOLLOWUP_RE = re.compile(
-    r"\b(?:plot|figure|chart|graph|image|visual(?:ly)?|layout|shading|"
-    r"colour|color|legend|axis|axes|title|annotation|line style|"
-    r"marker|font|spacing)\b",
+_VISUAL_ARTIFACT_RE = re.compile(
+    r"\b(?:plot|figure|chart|graph|image|visuali[sz]ation)\b",
+    re.IGNORECASE,
+)
+_VISUAL_ARTIFACT_REFERENCE_RE = re.compile(
+    r"\b(?:this|that|the|current|existing|previous|last|above|same)\s+"
+    r"(?:plot|figure|chart|graph|image|visuali[sz]ation)\b",
+    re.IGNORECASE,
+)
+_VISUAL_PRONOUN_RE = re.compile(r"\b(?:it|this|that)\b", re.IGNORECASE)
+_VISUAL_FOLLOWUP_ACTION_RE = re.compile(
+    r"\b(?:change|convert|describe|explain|fix|improve|inspect|make|modify|"
+    r"redraw|restyle|revise|show|update|adjust|look|see|grayscale|greyscale|"
+    r"black\s+and\s+white|colour|color|layout|shading|legend|axis|axes|"
+    r"title|annotation|line style|marker|font|spacing)\b",
+    re.IGNORECASE,
+)
+_DIRECT_VISUAL_INSPECTION_RE = re.compile(
+    r"\b(?:what\s+(?:can\s+)?(?:you|we)\s+see|describe\s+what\s+you\s+see|"
+    r"how\s+does\s+(?:it|this|that)\s+look)\b",
     re.IGNORECASE,
 )
 
@@ -57,7 +73,16 @@ def _tool_id(call: dict[str, Any]) -> str:
 
 
 def _requests_visual_context(objective: str) -> bool:
-    return bool(_VISUAL_FOLLOWUP_RE.search(str(objective or "")))
+    text = str(objective or "")
+    if _VISUAL_ARTIFACT_REFERENCE_RE.search(text):
+        return True
+    if _DIRECT_VISUAL_INSPECTION_RE.search(text):
+        return True
+    if not _VISUAL_FOLLOWUP_ACTION_RE.search(text):
+        return False
+    return bool(
+        _VISUAL_PRONOUN_RE.search(text) or _VISUAL_ARTIFACT_RE.search(text)
+    )
 
 
 def _message_metrics(messages: list[Any]) -> tuple[int, int]:
@@ -117,6 +142,12 @@ def _model_usage_record(
             input_details.get("cache_read"),
             input_details.get("cached_tokens"),
             prompt_details.get("cached_tokens"),
+        ),
+        "cache_write_input_tokens": number(
+            input_details.get("cache_write"),
+            input_details.get("cache_creation"),
+            input_details.get("cache_write_tokens"),
+            prompt_details.get("cache_write_tokens"),
         ),
         "output_tokens": number(
             usage.get("output_tokens"), token_usage.get("completion_tokens")

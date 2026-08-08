@@ -1036,6 +1036,25 @@ logs. Redact or omit image data-URI payloads there before declaring this
 suitable for sensitive-image deployments. The application itself omits
 multimodal image data from its terminal-agent summary logs.
 
+**Prompt-cache forwarding TODO (Aug 8, 2026):** IDEA now sends a stable,
+privacy-preserving `prompt_cache_key`, marks the stable system prompt with an
+explicit cache breakpoint, and requests
+`prompt_cache_options: {"mode": "explicit"}`. A live four-turn test confirmed
+that provider caching is materially active (51,968 of 110,925 IDEA input
+tokens were cache reads), but the observed cache depths sometimes extended
+beyond the sole explicit system-prompt breakpoint. This indicates that
+implicit conversation-prefix caching remains active. The installed LiteLLM
+v1.92.0 provider mapping advertises `prompt_cache_key` but not
+`prompt_cache_options`; its spend log records the inbound option but does not
+prove that the transformed upstream request includes it.
+
+Before treating explicit-only caching as complete, upgrade or patch LiteLLM
+to forward `prompt_cache_options`, capture/inspect the transformed upstream
+request, and repeat a changing-suffix test. Verify that cache reads occur only
+at the explicit stable prefix and that provider `cache_write_tokens` are
+surfaced in LangGraph telemetry. Keep the current key and breakpoint: they
+already produce useful discounted cache reads while this proxy gap remains.
+
 #### 8. **Pre-loaded Python Environment**
 **Location in OI:** `app.py:1807`, `utils/custom_functions.py:1-16`
 - ❌ All custom functions pre-injected via `custom_tool` string

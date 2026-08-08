@@ -13,7 +13,7 @@ from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 
 from idea_graph.control import RunCancellation  # noqa: E402
 from idea_graph import checkpoints  # noqa: E402
-from idea_graph.graph import build_idea_graph  # noqa: E402
+from idea_graph.graph import _requests_visual_context, build_idea_graph  # noqa: E402
 from idea_graph.identities import derive_execution_identities  # noqa: E402
 from idea_graph.memory import (  # noqa: E402
     bounded_records,
@@ -120,6 +120,15 @@ class RepeatingRuntime(FakeRuntime):
 
 
 class LangGraphMemoryTests(unittest.TestCase):
+    def test_visual_context_requires_a_reference_or_followup_action(self):
+        self.assertTrue(
+            _requests_visual_context("Please change it to black and white.")
+        )
+        self.assertTrue(_requests_visual_context("Describe what you see."))
+        self.assertTrue(_requests_visual_context("Improve the plot layout."))
+        self.assertFalse(_requests_visual_context("Please plot the trend of ONI."))
+        self.assertFalse(_requests_visual_context("Create another chart."))
+
     def test_execution_memory_is_newest_first_and_byte_bounded(self):
         state = {
             "python_executions": [
@@ -246,6 +255,29 @@ class LangGraphMemoryTests(unittest.TestCase):
         }, config=config)
 
         self.assertEqual(second["vision_images"], [image_path])
+
+    def test_new_plot_request_does_not_receive_the_active_image(self):
+        runtime = FakeRuntime()
+        graph = build_idea_graph(runtime, checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "thread-new-plot"}}
+        graph.invoke({
+            "conversation_messages": [{"role": "user", "content": "plot values"}],
+            "run_id": "run-1", "thread_id": "thread-new-plot",
+            "workspace_id": "workspace-1", "kernel_id": "kernel-1",
+        }, config=config)
+
+        runtime.model_calls = 1
+        result = graph.invoke({
+            "conversation_messages": [
+                {"role": "user", "content": "plot values"},
+                {"role": "assistant", "content": "done"},
+                {"role": "user", "content": "Please plot the trend of ONI."},
+            ],
+            "run_id": "run-2", "thread_id": "thread-new-plot",
+            "workspace_id": "workspace-1", "kernel_id": "kernel-1",
+        }, config=config)
+
+        self.assertEqual(result["vision_images"], [])
 
     def test_model_usage_is_recorded_per_call_and_emitted(self):
         runtime = FakeRuntime()

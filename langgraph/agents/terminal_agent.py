@@ -90,6 +90,23 @@ VISION_MAX_IMAGES_PER_TURN = max(
 VISION_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
+def _prompt_cache_key(model: str, session_id: str) -> str:
+    """Partition provider prompt-cache routing without exposing identifiers."""
+    digest = hashlib.sha256(
+        f"{model}\0{session_id}".encode("utf-8")
+    ).hexdigest()[:32]
+    return f"idea:{digest}"
+
+
+def _cacheable_system_message(content: str) -> SystemMessage:
+    """Mark the stable IDEA instructions as the explicit cache prefix."""
+    return SystemMessage(content=[{
+        "type": "text",
+        "text": content,
+        "prompt_cache_breakpoint": {"mode": "explicit"},
+    }])
+
+
 def _safe_input_component(value: str, fallback: str, max_length: int = 180) -> str:
     """Produce one non-traversing, shell-friendly sandbox path component."""
     basename = str(value or "").replace("\\", "/").rsplit("/", 1)[-1]
@@ -363,6 +380,15 @@ class TerminalAgent:
             "base_url": LITELLM_PROXY_URL,
             "default_headers": {LITELLM_END_USER_HEADER: end_user_id},
             "timeout": IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
+            # GPT-5.6's implicit breakpoint includes the changing latest user
+            # or tool message. Route calls from this session together and use
+            # only the explicit stable-system-prompt breakpoint instead.
+            "model_kwargs": {
+                "prompt_cache_key": _prompt_cache_key(model, session_id),
+            },
+            "extra_body": {
+                "prompt_cache_options": {"mode": "explicit"},
+            },
             # LangGraph owns retries so it can report them to the UI and
             # decline to replay a response after partial output was streamed.
             # Preserve the SDK retry for the supported manual rollback path.
@@ -1038,7 +1064,7 @@ class TerminalAgent:
         
         # Initialize conversation
         messages = [
-            SystemMessage(content=system_prompt),
+            _cacheable_system_message(system_prompt),
             self._user_message_with_attached_images(
                 user_prompt,
                 synced_inputs,

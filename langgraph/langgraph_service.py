@@ -71,7 +71,8 @@ def _summarize_model_usage(records: list[dict[str, Any]], run_id: str) -> dict[s
     ]
     summary: dict[str, Any] = {"model_calls": len(selected)}
     for key in (
-        "input_tokens", "cached_input_tokens", "output_tokens",
+        "input_tokens", "cached_input_tokens", "cache_write_input_tokens",
+        "output_tokens",
         "reasoning_tokens", "total_tokens", "model_text_characters",
         "model_image_count",
     ):
