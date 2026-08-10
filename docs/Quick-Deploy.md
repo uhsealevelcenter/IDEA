@@ -32,8 +32,10 @@ or changing defaults.
    `LANGGRAPH_DB_PASSWORD`, `LANGGRAPH_AES_KEY`, `IDEA_IDENTITY_SECRET`,
    `LITELLM_MASTER_KEY`, `LITELLM_VIRTUAL_KEY`, and
    `INTERNAL_SERVICE_TOKEN`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
-   host and review `ENABLE_SIGNUP`, `CORS_ORIGINS`, registry credentials, and
-   the model names.
+   host, set `IDEA_CODEX_ENABLED=true` when the published guest image is
+   selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`, `ENABLE_SIGNUP`,
+   `CORS_ORIGINS`, registry credentials, and the model names. Blank dedicated
+   Codex endpoint/key values currently reuse the external `OPENAI_*` values.
 
 3. Create the isolated LiteLLM and LangGraph database roles, schemas, and
    checkpoint tables:
@@ -134,7 +136,7 @@ start can be performed with
 users, implement and rehearse a snapshot/restore workspace migration; the
 destructive refresh is not an acceptable user rollout strategy.
 
-The current GitHub Actions workflow maps only `dev`, `staging`, and `main`,
-so a `next-dev` instance needs its branch-to-environment mapping, GitHub
-Environment secrets/variables, DNS/TLS route, and smoke-check URL configured
-before automated deployment can be used.
+The GitHub Actions workflow maps `next-dev` to the GitHub Environment of the
+same name. Automatic deployment still requires that environment's
+`DEPLOY_ENABLED=true`, SSH and app-directory values, deployment command,
+DNS/TLS route, and smoke-check URL to be configured.

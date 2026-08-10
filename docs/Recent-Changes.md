@@ -50,9 +50,10 @@ major changes.
 2. Separate persistent user workspaces from per-chat Python kernels and per-response run identities so concurrent conversations cannot leak or overwrite in-memory state.
 3. Add a true cancellation endpoint so Open WebUI's Stop action can interrupt an active LangGraph/tool run safely.
 4. Finish production hardening for guest and pending users, LiteLLM prompt/completion retention, transport heartbeats, sandbox-image pinning, backups, and non-destructive sandbox upgrades.
-5. Provision and map the `next-dev` environment in the deployment workflow, then complete production-like smoke, persistence, recovery, concurrency, attachment, PaperQA, and security testing before promotion.
+5. Finish provisioning the mapped `next-dev` GitHub Environment and complete production-like smoke, persistence, recovery, concurrency, attachment, PaperQA, and security testing before promotion.
 
 ## Minor TODOs
 
 1. Add cron-based scheduling for routine scientific-data updates inside the user VM environment.
 2. Reconcile and clean up inconsistencies between the LangGraph implementation-status and integration-plan documents.
+3. Route Codex through a guest-reachable LiteLLM endpoint with its own model-restricted, low-budget virtual key instead of the temporary developer-stage `OPENAI_*` credential fallback.

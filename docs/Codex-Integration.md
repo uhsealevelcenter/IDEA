@@ -14,19 +14,23 @@ as Python execution.
 ## Model and endpoint policy
 
 `IDEA_CODEX_MODEL` defaults to `IDEA_AGENT_MODEL`, so both can use the same
-model alias, but it remains independently configurable. `IDEA_CODEX_BASE_URL`
-is also separate because the URL must be reachable from inside a microVM;
-Docker's `http://litellm:8080` service name is generally only resolvable on the
-Compose network. Configure a private, TLS-protected LiteLLM address that the
-guest network can reach and that serves the OpenAI Responses API.
+model alias, but it remains independently configurable. During the current
+developer-only rollout, blank `IDEA_CODEX_BASE_URL` and `IDEA_CODEX_API_KEY`
+values fall back to `OPENAI_BASE_URL` and `OPENAI_API_KEY`. This lets Codex use
+the same external OpenAI-compatible endpoint and provider credential as IDEA;
+it deliberately bypasses LiteLLM budgeting and per-user attribution.
 
-`IDEA_CODEX_API_KEY` must be a separate, revocable LiteLLM virtual key with
-only the selected Codex model and an appropriately low budget. Do not use the
-LiteLLM master key, provider credential, or IDEA's shared conversation key.
-The key is absent from the model's tool schema and command line; it is passed
-by the LangGraph service through the authenticated sandbox API, written to a
-short-lived request file in the VM, exposed to the child process through its
-environment, and removed after the turn.
+TODO (low priority before non-developer rollout): expose a private,
+TLS-protected LiteLLM Responses API address that microVM guests can reach, and
+set the dedicated Codex variables to that URL plus a separate, revocable,
+model-restricted, low-budget virtual key. Docker's `http://litellm:8080`
+service name is only available on the Compose network. Never use the LiteLLM
+master key or IDEA's shared conversation virtual key for Codex.
+
+Whichever credential is selected is absent from the model's tool schema and
+command line. It is passed by LangGraph through the authenticated sandbox API,
+written to a short-lived request file in the VM, exposed to the child process
+through its environment, and removed after the turn.
 
 ## Security defaults
 
@@ -45,9 +49,12 @@ environment, and removed after the turn.
 1. Build and publish `interpreter_kernel/`, which installs
    `openai-codex==0.144.4` and its pinned CLI runtime.
 2. Roll the new guest image out according to `interpreter_kernel/README.md`.
-3. Provision the restricted virtual key and a guest-reachable LiteLLM URL.
-4. Set the `IDEA_CODEX_*` variables and restart LangGraph.
-5. Smoke-test a read-only repository summary, a workspace-write edit with a
+3. For developer testing, set `IDEA_CODEX_ENABLED=true` and leave the
+   dedicated endpoint/key blank to reuse the external `OPENAI_*` values.
+4. Before non-developer rollout, provision the restricted virtual key and a
+   guest-reachable LiteLLM URL, then set the dedicated Codex overrides.
+5. Restart LangGraph.
+6. Smoke-test a read-only repository summary, a workspace-write edit with a
    focused test, thread resumption, Stop/cancellation, and key redaction in
    service logs and persisted graph actions.
 
