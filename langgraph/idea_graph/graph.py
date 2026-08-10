@@ -264,6 +264,8 @@ def build_idea_graph(
             "iteration": 0,
             "vision_images": initial_vision,
             "vision_consumed_count": 0,
+            "codex_threads": dict(state.get("codex_threads") or {}),
+            "codex_usage": list(state.get("codex_usage") or [])[-100:],
         }
 
     def call_model(state: IDEAState) -> dict[str, Any]:
@@ -399,6 +401,7 @@ def build_idea_graph(
         outcome_artifacts: list[str] = []
         outcome_vision_images: list[str] = []
         outcome_namespace: list[dict[str, Any]] = []
+        outcome_metadata: dict[str, Any] = {}
         if name == "run_python_tool":
             code = str(args.get("code") or "")
             python_record = {
@@ -435,6 +438,7 @@ def build_idea_graph(
                 outcome_artifacts = list(outcome.artifacts or [])
                 outcome_vision_images = list(outcome.vision_images or [])
                 outcome_namespace = list(outcome.kernel_namespace or [])
+                outcome_metadata = dict(outcome.metadata or {})
         except Exception as exc:
             outcome_content = f"✗ {name} failed: {exc}"
             outcome_status = "failed"
@@ -498,6 +502,23 @@ def build_idea_graph(
                 *(state.get("vision_images") or []), *outcome_vision_images
             ]
             update["vision_images"] = list(dict.fromkeys(combined))[-16:]
+        codex_thread_id = str(outcome_metadata.get("codex_thread_id") or "")
+        codex_cwd = str(outcome_metadata.get("codex_cwd") or "")
+        if codex_thread_id and codex_cwd:
+            update["codex_threads"] = {
+                **dict(state.get("codex_threads") or {}),
+                codex_cwd: codex_thread_id,
+            }
+        codex_usage = outcome_metadata.get("codex_usage")
+        if codex_usage:
+            update["codex_usage"] = [
+                *(state.get("codex_usage") or []),
+                {
+                    "run_id": state.get("run_id", ""),
+                    "thread_id": codex_thread_id,
+                    "usage": codex_usage,
+                },
+            ][-100:]
         if (
             name == "inspect_image_tool"
             and outcome_status == "completed"

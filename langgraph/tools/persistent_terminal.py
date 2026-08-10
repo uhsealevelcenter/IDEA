@@ -34,6 +34,10 @@ from idea_config import (
     INTERNAL_SERVICE_TOKEN as _INTERNAL_SERVICE_TOKEN,
     OUTPUT_HEAD_TAIL_LINES,
     MAX_OUTPUT_TOKENS,
+    IDEA_CODEX_API_KEY,
+    IDEA_CODEX_BASE_URL,
+    IDEA_CODEX_MAX_EVENTS,
+    IDEA_CODEX_MODEL,
     TEMP_OUTPUT_DIR as _TEMP_OUTPUT_DIR,
 )
 
@@ -129,6 +133,75 @@ _default_headers = (
 )
 
 _client = httpx.Client(base_url=SANDBOX_SERVICE_URL, timeout=_HTTP_TIMEOUT, headers=_default_headers)
+
+
+def run_codex(
+    task: str,
+    session_id: str,
+    *,
+    cwd: str = "/workspace",
+    access: str = "read-only",
+    thread_id: str = "",
+    run_id: str = "",
+) -> dict:
+    """Delegate one coding turn to Codex inside the user's sandbox."""
+    payload = {
+        "task": task,
+        "cwd": cwd,
+        "access": access,
+        "thread_id": thread_id,
+        "run_id": run_id,
+        "model": IDEA_CODEX_MODEL,
+        "base_url": IDEA_CODEX_BASE_URL,
+        "api_key": IDEA_CODEX_API_KEY,
+        "max_events": IDEA_CODEX_MAX_EVENTS,
+    }
+    try:
+        response = _client.post(f"/sandboxes/{session_id}/codex/runs", json=payload)
+        response.raise_for_status()
+        result = response.json()
+        return result if isinstance(result, dict) else {
+            "ok": False, "status": "failed", "error": "Invalid Codex response"
+        }
+    except httpx.HTTPStatusError as exc:
+        try:
+            detail = exc.response.json().get("detail", str(exc))
+        except Exception:
+            detail = str(exc)
+        return {"ok": False, "status": "failed", "error": detail, "events": []}
+    except httpx.HTTPError as exc:
+        return {
+            "ok": False,
+            "status": "failed",
+            "error": f"Failed to reach sandbox service: {exc}",
+            "events": [],
+        }
+
+
+def make_codex_tool():
+    """Return the model-facing schema; runtime injects identity and credentials."""
+    @tool
+    def delegate_to_codex(
+        task: str,
+        cwd: str = "/workspace",
+        access: str = "read-only",
+    ) -> str:
+        """
+        Delegate a substantial repository investigation or coding task to
+        Codex in the same private workspace. Codex can inspect files, edit
+        them when access is workspace-write, run commands, and verify its
+        work. Prefer read-only for investigation and workspace-write only
+        when the user requested changes. Do not use for trivial one-command
+        tasks. The thread is resumed automatically for each working directory.
+
+        Args:
+            task: Complete, bounded task and desired verification criteria.
+            cwd: Working directory under /workspace.
+            access: Either "read-only" or "workspace-write".
+        """
+        return "Codex delegation must be invoked through the IDEA graph runtime."
+
+    return delegate_to_codex
 
 
 def close_terminal(session_id: str) -> None:

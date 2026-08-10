@@ -119,7 +119,54 @@ class RepeatingRuntime(FakeRuntime):
         )
 
 
+class CodexRuntime(FakeRuntime):
+    def call_model(self, messages, *, cancellation=None):
+        self.model_inputs.append(messages)
+        self.model_calls += 1
+        if self.model_calls == 1:
+            return AIMessage(content="", tool_calls=[{
+                "id": "codex-call-1",
+                "name": "delegate_to_codex",
+                "args": {
+                    "task": "Review the parser",
+                    "cwd": "/workspace/repo",
+                    "access": "read-only",
+                },
+                "type": "tool_call",
+            }])
+        return AIMessage(content="Codex review complete.")
+
+    def execute_tool(self, tool_call, state):
+        return ToolOutcome(
+            content="Reviewed parser.py",
+            metadata={
+                "codex_cwd": "/workspace/repo",
+                "codex_thread_id": "codex-thread-123",
+                "codex_usage": {"total_tokens": 42},
+            },
+        )
+
+
 class LangGraphMemoryTests(unittest.TestCase):
+    def test_codex_thread_and_usage_are_checkpointed(self):
+        runtime = CodexRuntime()
+        graph = build_idea_graph(runtime, checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "idea-thread-codex"}}
+
+        result = graph.invoke({
+            "conversation_messages": [{"role": "user", "content": "Review it"}],
+            "run_id": "run-codex",
+            "thread_id": "idea-thread-codex",
+            "workspace_id": "workspace-1",
+            "kernel_id": "kernel-1",
+        }, config=config)
+
+        self.assertEqual(
+            result["codex_threads"]["/workspace/repo"],
+            "codex-thread-123",
+        )
+        self.assertEqual(result["codex_usage"][-1]["usage"]["total_tokens"], 42)
+
     def test_visual_context_requires_a_reference_or_followup_action(self):
         self.assertTrue(
             _requests_visual_context("Please change it to black and white.")

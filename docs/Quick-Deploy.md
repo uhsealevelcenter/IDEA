@@ -61,6 +61,25 @@ or changing defaults.
    docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
    ```
 
+   If `interpreter_kernel/` changed, first build and test its guest image
+   locally; this command never publishes anything:
+
+   ```bash
+   ./interpreter_kernel/test_image.sh idea/oi-kernel:research-local
+   ```
+
+   On the Linux/KVM deployment host, also test one disposable microVM through
+   IDEA's production SDK path:
+
+   ```bash
+   ./interpreter_kernel/test_microsandbox_image.sh \
+     idea/oi-kernel:research-local
+   ```
+
+   Only after it passes, manually run the **Microsandbox image** workflow with
+   an immutable version and `publish=true`, then set `SANDBOX_IMAGE` to that
+   versioned tag (or, preferably, its recorded digest).
+
 6. Open the instance, create the first Open WebUI account as the administrator,
    generate an API key under **Settings > Account > API Keys**, and save it as
    `OPENWEBUI_API_KEY` in `.env`.
@@ -109,7 +128,11 @@ back up the named Docker volumes before migrations or rollback testing.
 
 Do not run `interpreter_kernel/refresh_sandboxes.sh` as a routine deployment
 step: it recreates existing microVMs and wipes their writable filesystem
-state.
+state. During the present developer-only testing phase, a deliberately fresh
+start can be performed with
+`--allow-destructive-developer-refresh`. Before IDEA admits non-developer
+users, implement and rehearse a snapshot/restore workspace migration; the
+destructive refresh is not an acceptable user rollout strategy.
 
 The current GitHub Actions workflow maps only `dev`, `staging`, and `main`,
 so a `next-dev` instance needs its branch-to-environment mapping, GitHub

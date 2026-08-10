@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import posixpath
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -31,7 +32,7 @@ from idea_config import (
     IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
 )
 
-from .memory import compact_turn_messages, execution_memory_block
+from .memory import bounded_text_bytes, compact_turn_messages, execution_memory_block
 from .memory import defined_names
 
 
@@ -79,6 +80,7 @@ class ToolOutcome:
     vision_images: list[str] = field(default_factory=list)
     kernel_namespace: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class GraphRuntime(Protocol):
@@ -537,6 +539,69 @@ class TerminalGraphRuntime:
     def execute_tool(self, tool_call: dict[str, Any], state: dict[str, Any]) -> ToolOutcome:
         name = str(tool_call.get("name") or "")
         args = dict(tool_call.get("args") or {})
+        if name == "delegate_to_codex":
+            from tools.persistent_terminal import run_codex
+
+            cwd = str(args.get("cwd") or "/workspace")
+            if not cwd.startswith("/"):
+                cwd = f"/workspace/{cwd}"
+            cwd = posixpath.normpath(cwd)
+            access = str(args.get("access") or "read-only")
+            if access not in {"read-only", "workspace-write"}:
+                return ToolOutcome(
+                    content="Codex access must be read-only or workspace-write.",
+                    status="failed",
+                    error="unsupported access mode",
+                )
+            thread_id = str((state.get("codex_threads") or {}).get(cwd) or "")
+            self.emit({
+                "type": "status",
+                "phase": "codex",
+                "description": "Codex is working in the private workspace…",
+                "done": False,
+            })
+            result = run_codex(
+                str(args.get("task") or ""),
+                session_id=self.agent.sandbox_id,
+                cwd=cwd,
+                access=access,
+                thread_id=thread_id,
+                run_id=str(state.get("run_id") or ""),
+            )
+            status = str(result.get("status") or "failed")
+            error = str(result.get("error") or "")
+            final_response = str(result.get("final_response") or "").strip()
+            changed_paths = [str(path) for path in result.get("changed_paths") or []]
+            lines = [final_response] if final_response else []
+            if changed_paths:
+                lines.append("Changed paths:\n" + "\n".join(f"- {path}" for path in changed_paths))
+            if error:
+                lines.append(f"Codex error: {error}")
+            content = bounded_text_bytes(
+                "\n\n".join(lines) or "Codex returned no response.",
+                IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
+            )
+            self.emit({
+                "type": "status",
+                "phase": "codex",
+                "description": "Codex delegation finished" if result.get("ok") else "Codex delegation failed",
+                "done": True,
+            })
+            mapped_status = (
+                "completed" if result.get("ok") else
+                "interrupted" if status == "interrupted" else "failed"
+            )
+            return ToolOutcome(
+                content=content,
+                status=mapped_status,
+                error=(error or None) if mapped_status != "completed" else None,
+                metadata={
+                    "codex_cwd": cwd,
+                    "codex_thread_id": str(result.get("thread_id") or ""),
+                    "codex_usage": result.get("usage") or {},
+                    "codex_events": result.get("events") or [],
+                },
+            )
         if name == "run_python_tool":
             from tools.persistent_terminal import (
                 inspect_python_namespace,

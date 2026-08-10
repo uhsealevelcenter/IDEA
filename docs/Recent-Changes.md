@@ -54,6 +54,5 @@ major changes.
 
 ## Minor TODOs
 
-1. Integrate the Codex CLI into the IDEA agent and sandbox workflow.
-2. Add cron-based scheduling for routine scientific-data updates inside the user VM environment.
-3. Reconcile and clean up inconsistencies between the LangGraph implementation-status and integration-plan documents.
+1. Add cron-based scheduling for routine scientific-data updates inside the user VM environment.
+2. Reconcile and clean up inconsistencies between the LangGraph implementation-status and integration-plan documents.

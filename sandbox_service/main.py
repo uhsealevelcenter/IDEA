@@ -15,7 +15,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import terminal_registry as registry
 
@@ -87,6 +87,18 @@ class RunPythonRequest(BaseModel):
     code: str
     kernel_id: str = "default"
     run_id: str = ""
+
+
+class CodexRunRequest(BaseModel):
+    task: str
+    cwd: str = "/workspace"
+    access: str = "read-only"
+    thread_id: str = ""
+    run_id: str = ""
+    model: str
+    base_url: str
+    api_key: str = Field(repr=False)
+    max_events: int = Field(default=100, ge=1, le=500)
 
 
 class GrepSearchRequest(BaseModel):
@@ -233,11 +245,26 @@ async def run_python(sandbox_id: str, request: RunPythonRequest):
 
 
 @app.post(
+    "/sandboxes/{sandbox_id}/codex/runs",
+    dependencies=[Depends(require_internal_token)],
+)
+async def run_codex(sandbox_id: str, request: CodexRunRequest):
+    """Run a Codex turn inside this user's isolated microVM."""
+    if request.access not in {"read-only", "workspace-write"}:
+        raise HTTPException(status_code=400, detail="Unsupported Codex access mode")
+    return await asyncio.to_thread(
+        registry.run_codex,
+        request.model_dump(),
+        sandbox_id,
+    )
+
+
+@app.post(
     "/sandboxes/{sandbox_id}/runs/{run_id}/interrupt",
     dependencies=[Depends(require_internal_token)],
 )
 async def interrupt_run(sandbox_id: str, run_id: str):
-    """Interrupt this run's active Python kernel without deleting its files."""
+    """Interrupt this run's active Python kernel or Codex turn."""
     return {"ok": True, "interrupted": registry.interrupt_run(sandbox_id, run_id)}
 
 

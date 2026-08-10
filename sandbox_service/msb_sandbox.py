@@ -47,6 +47,7 @@ SHARED_DATA_REQUIRED_PATHS = (
 # Only meaningful when SANDBOX_IMAGE is that image (or one built on top of
 # it); run_python() below fails clearly if the VM doesn't have it.
 OI_KERNEL_CLIENT_PATH = os.getenv("OI_KERNEL_CLIENT_PATH", "/opt/oi_kernel/client.py")
+CODEX_RUNNER_PATH = os.getenv("CODEX_RUNNER_PATH", "/opt/oi_kernel/codex_runner.py")
 
 # Where entrypoint.sh drops Open Terminal's per-VM API key - see
 # ../interpreter_kernel/entrypoint.sh. Read once per MicrosandboxTerminal
@@ -364,6 +365,63 @@ class MicrosandboxTerminal:
             )
             payload = json.loads((output.stdout_text or "").strip())
             return bool(payload.get("interrupted"))
+        except Exception:
+            return False
+
+    def run_codex(self, request: dict) -> dict:
+        """Run the guest Codex SDK bridge using a credential-safe request file."""
+        request_path = f"/tmp/.idea_codex_request_{uuid.uuid4().hex}.json"
+        run_id = str(request.get("run_id", ""))
+        cancel_path = (
+            f"/tmp/.idea_codex_cancel_{self._safe_run_id(run_id)}" if run_id else ""
+        )
+        try:
+            data = json.dumps(request).encode("utf-8")
+            self._exec(lambda: self._sandbox.fs.write(request_path, data))
+            self._exec(
+                lambda: self._sandbox.shell(
+                    f"chmod 600 -- {shlex.quote(request_path)}"
+                )
+            )
+            output = self._exec(
+                lambda: self._sandbox.shell(
+                    f"python3 {shlex.quote(CODEX_RUNNER_PATH)} "
+                    f"--request-file {shlex.quote(request_path)}"
+                ),
+                timeout=self._exec_timeout(str(request.get("task", ""))),
+            )
+            text = (output.stdout_text or "").strip()
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                stderr = getattr(output, "stderr_text", None) or ""
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error": text or stderr or "Codex runner returned no JSON",
+                    "events": [],
+                }
+        except Exception as exc:
+            return {"ok": False, "status": "failed", "error": str(exc), "events": []}
+        finally:
+            targets = " ".join(shlex.quote(path) for path in (request_path, cancel_path) if path)
+            try:
+                self._exec(lambda: self._sandbox.shell(f"rm -f -- {targets}"))
+            except Exception:
+                pass
+
+    @staticmethod
+    def _safe_run_id(run_id: str) -> str:
+        return "".join(char if char.isalnum() or char in "_.-" else "_" for char in run_id)[:160]
+
+    def interrupt_codex(self, run_id: str) -> bool:
+        """Signal the guest runner's cancellation watcher without taking its lock."""
+        if not run_id:
+            return False
+        path = f"/tmp/.idea_codex_cancel_{self._safe_run_id(run_id)}"
+        try:
+            self._exec(lambda: self._sandbox.fs.write(path, b"cancel\n"), timeout=10.0)
+            return True
         except Exception:
             return False
 

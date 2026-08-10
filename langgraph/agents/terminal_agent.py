@@ -24,6 +24,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from tools.persistent_terminal import (
     make_agent_tools,
+    make_codex_tool,
     close_terminal,
     read_file_bytes,
     file_exists,
@@ -53,6 +54,9 @@ from utils.tools import (
 from idea_config import (
     IDEA_AGENT_MODEL,
     IDEA_AGENT_RUNTIME,
+    IDEA_CODEX_API_KEY,
+    IDEA_CODEX_BASE_URL,
+    IDEA_CODEX_ENABLED,
     IDEA_MODEL_MAX_RETRIES,
     IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
     LITELLM_END_USER_HEADER,
@@ -353,6 +357,9 @@ class TerminalAgent:
         ]
         if self.query_knowledge_base_tool is not None:
             self.all_tools.append(self.query_knowledge_base_tool)
+        if IDEA_CODEX_ENABLED and IDEA_CODEX_API_KEY and IDEA_CODEX_BASE_URL:
+            self.delegate_to_codex = make_codex_tool()
+            self.all_tools.append(self.delegate_to_codex)
         self.tools_by_name = {t.name: t for t in self.all_tools}
         
         # Initialize LLM with tools

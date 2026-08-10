@@ -100,3 +100,5 @@ class IDEAState(TypedDict, total=False):
     vision_images: list[str]
     vision_consumed_count: int
     model_usage: list[dict[str, Any]]
+    codex_threads: dict[str, str]
+    codex_usage: list[dict[str, Any]]

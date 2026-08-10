@@ -32,11 +32,14 @@ because Microsandbox attaches mounts only when a sandbox is created:
 
 ```bash
 docker compose up -d --build sandbox
-./interpreter_kernel/refresh_sandboxes.sh --skip-pull
+./interpreter_kernel/refresh_sandboxes.sh \
+  --skip-pull --allow-destructive-developer-refresh
 ```
 
 `refresh_sandboxes.sh` permanently replaces each user's old microVM filesystem.
-Files already synchronized to Open WebUI remain available there.
+Files already synchronized to Open WebUI remain available there. This is only
+permitted while all instances are disposable developer workspaces. A
+snapshot/restore migration is required before non-developer users exist.
 
 ## Updating altimetry
 

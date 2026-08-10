@@ -195,6 +195,7 @@ _terminals: dict = {}
 _terminal_locks: dict = {}
 _registry_lock = threading.Lock()
 _active_python_runs: dict[str, tuple[str, str, object]] = {}
+_active_codex_runs: dict[str, tuple[str, object]] = {}
 
 
 def _use_microsandbox() -> bool:
@@ -371,10 +372,39 @@ def run_python(
         }
 
 
+def run_codex(request: dict, sandbox_id: str) -> dict:
+    """Execute Codex inside the user's microVM; never fall back to the host."""
+    terminal = _get_terminal(sandbox_id)
+    if not isinstance(terminal, MicrosandboxTerminal):
+        return {
+            "ok": False,
+            "status": "failed",
+            "error": (
+                "Codex delegation requires the microsandbox backend and an "
+                "IDEA guest image containing the Codex runner."
+            ),
+            "events": [],
+        }
+    run_id = str(request.get("run_id", ""))
+    with _get_lock(sandbox_id):
+        if run_id:
+            with _registry_lock:
+                _active_codex_runs[run_id] = (sandbox_id, terminal)
+        try:
+            return terminal.run_codex(request)
+        finally:
+            if run_id:
+                with _registry_lock:
+                    _active_codex_runs.pop(run_id, None)
+
+
 def interrupt_run(sandbox_id: str, run_id: str) -> bool:
     """Interrupt without taking the sandbox execution lock held by the run."""
     with _registry_lock:
+        active_codex = _active_codex_runs.get(run_id)
         active = _active_python_runs.get(run_id)
+    if active_codex and active_codex[0] == sandbox_id:
+        return active_codex[1].interrupt_codex(run_id)
     if not active or active[0] != sandbox_id:
         return False
     _, kernel_id, terminal = active

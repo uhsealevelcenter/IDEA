@@ -26,6 +26,30 @@ IDEA_AGENT_MODEL = (
     os.getenv("IDEA_AGENT_MODEL", "gpt-5.6-terra").strip()
     or "gpt-5.6-terra"
 )
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, "1" if default else "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+# Codex is a delegated coding runtime, not IDEA's primary conversation model.
+# Dedicated values remain supported, but the developer deployment currently
+# reuses the app's external OpenAI-compatible endpoint and credential.
+# TODO(low priority): route Codex through a microVM-reachable LiteLLM endpoint
+# and use a separate, revocable, model-restricted, low-budget virtual key.
+IDEA_CODEX_ENABLED = _env_bool("IDEA_CODEX_ENABLED", False)
+IDEA_CODEX_MODEL = os.getenv("IDEA_CODEX_MODEL", IDEA_AGENT_MODEL).strip() or IDEA_AGENT_MODEL
+IDEA_CODEX_BASE_URL = (
+    os.getenv("IDEA_CODEX_BASE_URL", "").strip()
+    or os.getenv("OPENAI_BASE_URL", "").strip()
+).rstrip("/")
+IDEA_CODEX_API_KEY = (
+    os.getenv("IDEA_CODEX_API_KEY", "").strip()
+    or os.getenv("OPENAI_API_KEY", "").strip()
+)
+IDEA_CODEX_MAX_EVENTS = max(1, min(int(os.getenv("IDEA_CODEX_MAX_EVENTS", "100")), 500))
 IDEA_KERNEL_SCOPE = os.getenv("IDEA_KERNEL_SCOPE", "chat_assistant").strip().lower()
 LANGGRAPH_DATABASE_URL = os.getenv("LANGGRAPH_DATABASE_URL", "").strip()
 LANGGRAPH_AES_KEY = os.getenv("LANGGRAPH_AES_KEY", "").strip()

@@ -57,6 +57,12 @@ services:
       - IDEA_AGENT_MODEL=${IDEA_AGENT_MODEL:-gpt-5.6-terra}
       - IDEA_MODEL_REQUEST_TIMEOUT_SECONDS=${IDEA_MODEL_REQUEST_TIMEOUT_SECONDS:-180}
       - IDEA_MODEL_MAX_RETRIES=${IDEA_MODEL_MAX_RETRIES:-1}
+      # Optional Codex delegation. IDEA_CODEX_API_KEY is intentionally not
+      # repeated here because env_file injects the scoped key literally.
+      - IDEA_CODEX_ENABLED=${IDEA_CODEX_ENABLED:-false}
+      - IDEA_CODEX_MODEL=${IDEA_CODEX_MODEL:-gpt-5.6-terra}
+      - IDEA_CODEX_BASE_URL=${IDEA_CODEX_BASE_URL:-}
+      - IDEA_CODEX_MAX_EVENTS=${IDEA_CODEX_MAX_EVENTS:-100}
       - IDEA_KERNEL_SCOPE=${IDEA_KERNEL_SCOPE:-chat_assistant}
       - IDEA_IDENTITY_SECRET=${IDEA_IDENTITY_SECRET:-}
       - IDEA_MAX_STATE_BYTES=${IDEA_MAX_STATE_BYTES:-524288}
