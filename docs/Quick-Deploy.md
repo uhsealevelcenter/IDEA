@@ -32,8 +32,8 @@ or changing defaults.
    `LANGGRAPH_DB_PASSWORD`, `LANGGRAPH_AES_KEY`, `IDEA_IDENTITY_SECRET`,
    `LITELLM_MASTER_KEY`, `LITELLM_VIRTUAL_KEY`, and
    `INTERNAL_SERVICE_TOKEN`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
-   host, set `IDEA_CODEX_ENABLED=true` when the published guest image is
-   selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`, `ENABLE_SIGNUP`,
+   host, keep the default `IDEA_CODEX_ENABLED=true` when the published guest
+   image is selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`, `ENABLE_SIGNUP`,
    `CORS_ORIGINS`, registry credentials, and the model names. Blank dedicated
    Codex endpoint/key values currently reuse the external `OPENAI_*` values.
 

@@ -34,8 +34,9 @@ through its environment, and removed after the turn.
 
 ## Security defaults
 
-- The feature is off unless `IDEA_CODEX_ENABLED=true`, a key is configured,
-  and a guest-reachable base URL is configured.
+- The feature defaults to enabled, but its tool is only registered when a key
+  and guest-reachable base URL are configured. Set
+  `IDEA_CODEX_ENABLED=false` for an explicit rollback.
 - Delegation fails closed when the sandbox backend is the local host fallback.
 - Only `read-only` and `workspace-write` are accepted; full access is not.
 - The working directory must resolve to `/workspace` or a descendant.
@@ -49,7 +50,7 @@ through its environment, and removed after the turn.
 1. Build and publish `interpreter_kernel/`, which installs
    `openai-codex==0.144.4` and its pinned CLI runtime.
 2. Roll the new guest image out according to `interpreter_kernel/README.md`.
-3. For developer testing, set `IDEA_CODEX_ENABLED=true` and leave the
+3. For developer testing, leave the default `IDEA_CODEX_ENABLED=true` and the
    dedicated endpoint/key blank to reuse the external `OPENAI_*` values.
 4. Before non-developer rollout, provision the restricted virtual key and a
    guest-reachable LiteLLM URL, then set the dedicated Codex overrides.

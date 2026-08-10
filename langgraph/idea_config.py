@@ -39,7 +39,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # reuses the app's external OpenAI-compatible endpoint and credential.
 # TODO(low priority): route Codex through a microVM-reachable LiteLLM endpoint
 # and use a separate, revocable, model-restricted, low-budget virtual key.
-IDEA_CODEX_ENABLED = _env_bool("IDEA_CODEX_ENABLED", False)
+IDEA_CODEX_ENABLED = _env_bool("IDEA_CODEX_ENABLED", True)
 IDEA_CODEX_MODEL = os.getenv("IDEA_CODEX_MODEL", IDEA_AGENT_MODEL).strip() or IDEA_AGENT_MODEL
 IDEA_CODEX_BASE_URL = (
     os.getenv("IDEA_CODEX_BASE_URL", "").strip()

@@ -59,7 +59,7 @@ services:
       - IDEA_MODEL_MAX_RETRIES=${IDEA_MODEL_MAX_RETRIES:-1}
       # Optional Codex delegation. IDEA_CODEX_API_KEY is intentionally not
       # repeated here because env_file injects the scoped key literally.
-      - IDEA_CODEX_ENABLED=${IDEA_CODEX_ENABLED:-false}
+      - IDEA_CODEX_ENABLED=${IDEA_CODEX_ENABLED:-true}
       - IDEA_CODEX_MODEL=${IDEA_CODEX_MODEL:-gpt-5.6-terra}
       - IDEA_CODEX_BASE_URL=${IDEA_CODEX_BASE_URL:-}
       - IDEA_CODEX_MAX_EVENTS=${IDEA_CODEX_MAX_EVENTS:-100}
