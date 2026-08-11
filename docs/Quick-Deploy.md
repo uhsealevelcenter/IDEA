@@ -18,7 +18,7 @@ or changing defaults.
    ```bash
    git clone https://github.com/uhsealevelcenter/IDEA.git
    cd IDEA
-   git checkout idea-next/system-prompt-AND-functions
+   git checkout next-dev
    ```
 
 2. Create the environment file and replace every placeholder secret:
@@ -119,8 +119,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs \
 
 Log in through the public HTTPS URL and confirm that Welcome Assistant can
 answer a prompt, run Python, read an uploaded file and image, use PaperQA on
-an attached PDF, and return a downloadable artifact whose link still works
-on a later turn.
+an attached PDF, delegate one read-only and one workspace-write task to Codex,
+and return a downloadable artifact whose link still works on a later turn.
 
 ## Update or Roll Back
 

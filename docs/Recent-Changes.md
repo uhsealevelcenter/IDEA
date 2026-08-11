@@ -3,14 +3,14 @@
 ## Changes in `feature/langgraph-memory`
 
 This listing compares `feature/langgraph-memory` with its parent branch,
-`next-dev`, at merge base `e6dc507`. It covers the 18 commits currently unique
+`next-dev`, at merge base `e6dc507`. It covers the 22 commits currently unique
 to this branch.
 
 1. The agent loop is now a checkpointed LangGraph state graph with explicit model, tool, finalization, and cancellation stages instead of relying on an in-process linear loop for durable state.
 2. LangGraph checkpoints use a dedicated least-privilege PostgreSQL role and schema, with deployment setup scripts and optional AES encryption for persisted checkpoint data.
 3. Open WebUI's selected, compacted conversation branch is now authoritative model context. Assistant-message-to-checkpoint mappings preserve the correct execution branch across edits and regenerations without restoring a competing Redis conversation transcript.
 4. User, chat, Assistant, workspace, kernel, thread, checkpoint, and run identities are derived separately so persistent files, Python state, conversation branches, and individual responses have the intended isolation boundaries.
-5. Chat runs execute as durable background jobs with persisted, sequence-numbered events. Open WebUI can poll after a disconnect, recover terminal results, and avoid duplicating streamed errors; event storage is compacted to limit Redis growth.
+5. Chat runs execute as background jobs with durable, sequence-numbered events. Open WebUI can poll after a disconnect, recover terminal results, and avoid duplicating streamed errors; event storage is compacted to limit Redis growth. Active workers remain in-process and do not survive a LangGraph container failure.
 6. Stop requests now cooperatively cancel queued work, active model streams, and sandbox execution while retaining completed checkpoint state. PaperQA setup is deferred until it is actually needed so cancellation and ordinary turns do not pay its initialization cost.
 7. Tool execution memory now records bounded action ledgers, Python source and namespace metadata, artifacts, warnings, and error summaries. Repeated identical calls are blocked, oversized outputs can be archived and paged, and model context receives compact tool-history summaries.
 8. Resumed microVMs lazily restore Open Terminal, and persistent-kernel behavior is more reliable across service restarts without routinely recreating users' writable sandboxes.
@@ -24,6 +24,8 @@ to this branch.
 16. Climate-index parsing is compatible with pandas 3 while preserving the existing climate-data workflow and test coverage.
 17. The primary agent model is centrally selected through `IDEA_AGENT_MODEL`, defaults to `gpt-5.6-terra`, and retains `gpt-5.6-sol` as a one-variable rollback through the same LiteLLM endpoint and credentials.
 18. Python kernel failures retain structured error metadata through the kernel, sandbox, and LangGraph layers, are marked as failed tool executions, and render in Open WebUI as labeled traceback blocks without marking the entire assistant response as failed.
+19. IDEA can now delegate substantial repository investigation, implementation, debugging, and review to Codex inside the user's existing microsandbox workspace. LangGraph remains the conversation orchestrator, checkpoints resumable Codex threads, applies read-only or workspace-write policy, and propagates Stop requests to active Codex turns.
+20. The microsandbox guest image now includes the pinned Codex runtime and a reviewed research software environment that restores the broadly useful legacy IDEA analysis stack while adding commonly needed CIndRA, document, OCR, browser, geospatial, and ocean-data packages. Local and microVM smoke tests, dependency auditing, immutable multi-architecture publication, and an explicitly destructive developer-only refresh workflow are documented.
 
 ## Previous change listing
 
@@ -46,14 +48,10 @@ major changes.
 
 ## Major TODOs
 
-1. Make Open WebUI's branch-aware, compacted message history the authoritative conversation context and retire the competing durable LangGraph transcript in Redis.
-2. Separate persistent user workspaces from per-chat Python kernels and per-response run identities so concurrent conversations cannot leak or overwrite in-memory state.
-3. Add a true cancellation endpoint so Open WebUI's Stop action can interrupt an active LangGraph/tool run safely.
-4. Finish production hardening for guest and pending users, LiteLLM prompt/completion retention, transport heartbeats, sandbox-image pinning, backups, and non-destructive sandbox upgrades.
-5. Finish provisioning the mapped `next-dev` GitHub Environment and complete production-like smoke, persistence, recovery, concurrency, attachment, PaperQA, and security testing before promotion.
+1. Finish production hardening for guest and pending users, LiteLLM prompt/completion retention, sandbox-image pinning, backups, and non-destructive sandbox upgrades.
+2. Finish provisioning the mapped `next-dev` GitHub Environment and complete production-like smoke, persistence, recovery, concurrency, attachment, PaperQA, Codex, and security testing before promotion.
 
 ## Minor TODOs
 
 1. Add cron-based scheduling for routine scientific-data updates inside the user VM environment.
-2. Reconcile and clean up inconsistencies between the LangGraph implementation-status and integration-plan documents.
-3. Route Codex through a guest-reachable LiteLLM endpoint with its own model-restricted, low-budget virtual key instead of the temporary developer-stage `OPENAI_*` credential fallback.
+2. Route Codex through a guest-reachable LiteLLM endpoint with its own model-restricted, low-budget virtual key instead of the temporary developer-stage `OPENAI_*` credential fallback.

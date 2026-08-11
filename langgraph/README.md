@@ -1,554 +1,156 @@
-# LangGraph Terminal Agent Microservice
+# IDEA LangGraph service
 
-A production-ready AI agent microservice built on LangGraph and LangChain, providing a persistent terminal session for executing commands, writing scripts, and solving tasks iteratively. Fully integrated with IDEA's `/chat-runs` async job queue architecture.
+This service is IDEA's tool-using conversation runtime. Open WebUI supplies the
+selected Assistant policy and the authoritative, branch-aware conversation;
+LangGraph performs model/tool iterations, checkpoints bounded execution memory,
+and streams progress and results back through IDEA's Open WebUI Pipe.
 
-## Architecture Overview
+The Compose deployment runs the service on internal port `8010`. Its HTTP API
+must remain private and protected with `INTERNAL_SERVICE_TOKEN`.
 
-### **Microservice Deployment**
-- **Independent FastAPI Service**: Runs on port 8010 in separate Docker container
-- **Async Job Queue**: `/chat-runs` endpoints for non-blocking execution
-- **Redis-Backed**: Job status and event streaming via Redis
-- **Main App Proxy**: `/chat-runs-langgraph` endpoints in main app forward to microservice
-- **Frontend Integration**: Full SSE event streaming with `start`/`end` flags
+## Request flow
 
-### **Key Components**
-- **`langgraph_service.py`**: FastAPI server with `/chat-runs` endpoints
-- **`multi_agent.py`**: ConversationOrchestrator with streaming support
-- **`agents/terminal_agent.py`**: TerminalAgent with LangChain tool binding
-- **`tools/persistent_terminal.py`**: Reliable 30-min timeout terminal sessions
+1. `openwebui/functions/idea_pipe.py` normalizes the selected conversation
+   branch, attachments, Assistant instructions, and compact IDEA context.
+2. `POST /chat-runs` persists a queued run record in Redis and starts its
+   worker thread. The Pipe polls the status and sequence-numbered events.
+3. `langgraph_service.py` derives separate thread, workspace, kernel, and run
+   identities and resolves the checkpoint for the visible parent assistant
+   message.
+4. `idea_graph/graph.py` runs the checkpointed state graph: prepare the turn,
+   call the model, execute at most one tool, pass through the cancellation
+   gate, and either continue or finalize.
+5. Terminal, file, Python, image, and Codex operations go through the
+   authenticated `sandbox_service`; LangGraph never executes user code in its
+   own container.
+6. Generated artifacts are synchronized into Open WebUI under the current
+   user's authorization and returned as durable file links.
 
-## Features
+## State and persistence
 
-### **Core Capabilities**
-- **Persistent Terminal Session**: Execute bash commands with persistent state (environment variables, working directory, etc.)
-- **Natural Language Interface**: Describe tasks in plain English
-- **Iterative Problem Solving**: Agent can debug and iterate until tasks are complete
-- **Extended Timeout**: 30-minute timeout for long-running operations
-- **Full Logging**: Complete logs and messages without truncation
+- **Open WebUI PostgreSQL data** is the authoritative conversational record.
+  Edits, regenerations, branch selection, and context compaction happen there.
+- **LangGraph PostgreSQL checkpoints** retain bounded execution state: action
+  and Python ledgers, artifact/dataset references, continuation state, model
+  usage, and Codex thread IDs. A dedicated role/schema is created by
+  `db/setup_langgraph_db.sh`; `LANGGRAPH_AES_KEY` enables checkpoint
+  encryption.
+- **Redis** stores transient chat-run status/events and maps Open WebUI
+  assistant message IDs to LangGraph checkpoint branches. It is not the
+  authoritative conversation transcript for `/chat-runs`.
+- **Microsandbox** owns persistent per-user workspace files. Python kernels
+  default to a separate user/chat/Assistant identity, controlled by
+  `IDEA_KERNEL_SCOPE`.
 
-### **Real-Time Streaming**
-- **Shell Commands**: Streamed as syntax-highlighted code blocks (`type: 'code', format: 'shell'`)
-- **Command Output**: Streamed to console panels (`type: 'console', format: 'output'`)
-- **File Operations**: File writes displayed with language-specific syntax highlighting
-- **Status Updates**: Real-time tool execution feedback
-- **Images**: Python plot output is captured and displayed automatically; existing image files are displayed explicitly via `show_image_tool`
+State limits are configured through the `IDEA_MAX_*` variables in
+`example.env`. Large tool output is archived in the sandbox and represented to
+the model by bounded excerpts.
 
-### **Explicit Image Display**
-- The LLM calls `show_image_tool(filepath)` when it wants to show an existing image file
-- Plots produced by `run_python_tool` are streamed automatically and must not be shown a second time with `show_image_tool`
-- Supports `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg` files
-- Base64-encodes the file on demand
-- Streams as `type: 'image', format: 'base64.{ext}'` chunks
-- Displays inline in chat (Open Interpreter style)
+## Tools
 
-### **Model Vision**
-- Uploaded PNG/JPEG/GIF/WebP images are included in the initial model call
-  as validated, high-detail multimodal content
-- The synchronized sandbox path is retained so the model can also analyze
-  the same file with code
-- `inspect_image_tool(filepath)` supplies an existing sandbox image to model
-  vision in the next iteration
-- Plots produced by `run_python_tool` are persisted and supplied to model
-  vision automatically on the next iteration; the most recent plot is also
-  restored for an explicit visual follow-up
-- `show_image_tool` is display-only and never implies that the model has
-  inspected the pixels
-- Vision input defaults to 20 MiB per image and 8 images per turn
+`agents/terminal_agent.py` registers the current tool surface:
 
-### **Async Job Queue**
-- Non-blocking execution via `/chat-runs` endpoints
-- Redis-backed status and event storage
-- Background thread processing
-- Polling-based event streaming
-- Compatible with existing IDEA frontend
+- persistent shell execution and direct file writes;
+- a persistent Python kernel with automatic plot capture;
+- artifact publication and paged retrieval of archived output;
+- explicit image display and model-side image inspection;
+- built-in and Open WebUI Workspace skills;
+- scientific data, station, climate, and web tools;
+- PaperQA for authorized, non-guest knowledge collections; and
+- optional `delegate_to_codex` for substantial coding work.
 
-## Deployment
+Codex runs inside the same microsandbox workspace. It is subordinate to the
+LangGraph graph, supports only `read-only` and `workspace-write`, and resumes a
+checkpointed thread by working directory. See
+[`../docs/Codex-Integration.md`](../docs/Codex-Integration.md).
 
-### **Docker Compose (Recommended)**
+## Model routing
 
-1. Ensure environment variables are set (Azure AI Foundry OpenAI-compatible endpoint):
+The primary IDEA model is selected with `IDEA_AGENT_MODEL` and defaults to
+`gpt-5.6-terra`. Normal agent and helper-model calls use the internal LiteLLM
+proxy and `LITELLM_VIRTUAL_KEY`; the end user's email is forwarded for usage
+attribution. `gpt-5.6-sol` remains the one-variable rollback model.
+
+During the developer-only Codex rollout, blank `IDEA_CODEX_BASE_URL` and
+`IDEA_CODEX_API_KEY` values fall back to `OPENAI_BASE_URL` and
+`OPENAI_API_KEY`. This is intentionally temporary because it bypasses LiteLLM
+budgeting and per-user attribution.
+
+## API
+
+All endpoints except `/health` require the internal bearer token when
+`INTERNAL_SERVICE_TOKEN` is configured.
+
+- `GET /health` — service health.
+- `POST /chat-runs` — queue a run and return its `run_id`.
+- `GET /chat-runs/{run_id}` — read queued/running/terminal status.
+- `GET /chat-runs/{run_id}/events?after=<seq>` — poll ordered events.
+- `POST /chat-runs/{run_id}/stop` — request cooperative cancellation.
+- `POST /chat` — legacy direct-streaming compatibility path.
+- `POST /clear` — clears only the legacy direct-streaming Redis history.
+
+The normal Open WebUI integration uses `/chat-runs`. Event records have a
+24-hour default TTL (`CHAT_RUN_TTL_SECONDS=86400`) and are compacted to avoid
+unbounded Redis growth.
+
+## Configuration and startup
+
+Copy `example.env` to `.env`, configure the provider, database, LiteLLM,
+identity, and internal-service secrets, then initialize the database roles:
+
 ```bash
-export OPENAI_API_KEY="your-azure-api-key-here"
-export OPENAI_BASE_URL="https://<your-resource>.services.ai.azure.com/openai/v1"
+./litellm/setup_litellm_db.sh
+./langgraph/db/setup_langgraph_db.sh
+docker compose up -d --build
 ```
 
-2. Start the entire stack:
+Compose sets `IDEA_AGENT_RUNTIME=langgraph`; `manual` remains a rollback path.
+The main deployment instructions are in [`../README.md`](../README.md), with a
+short production checklist in [`../docs/Quick-Deploy.md`](../docs/Quick-Deploy.md).
+
+Important variables are documented inline in `example.env`:
+
+- `IDEA_AGENT_RUNTIME`, `IDEA_AGENT_MODEL`, and model timeout/retry settings;
+- `LANGGRAPH_DATABASE_URL`, `LANGGRAPH_AES_KEY`, and `IDEA_IDENTITY_SECRET`;
+- `LITELLM_PROXY_URL` and `LITELLM_VIRTUAL_KEY`;
+- `INTERNAL_SERVICE_TOKEN` and `SANDBOX_SERVICE_URL`;
+- `IDEA_KERNEL_SCOPE` and the `IDEA_MAX_*` state bounds; and
+- `IDEA_CODEX_ENABLED`, `IDEA_CODEX_MODEL`, endpoint/key overrides, and event
+  limit.
+
+## Verification
+
+Run the focused unit suite from the repository root:
+
 ```bash
-docker compose up -d
+pytest -q \
+  tests/test_langgraph_memory.py \
+  tests/test_chat_run_events.py \
+  tests/test_model_cancellation.py \
+  tests/test_terminal_output_archiving.py \
+  tests/test_vision.py \
+  tests/test_codex_integration.py
 ```
 
-The LangGraph service will be available at `http://localhost:8010` and proxied through the main app at `/chat-runs-langgraph`.
-
-### **Services**
-- **Main App** (`idea_container`): Port 8001, proxies requests to LangGraph
-- **LangGraph** (`idea_langgraph`): Port 8010, runs terminal agent
-- **Redis**: Stores job status and events
-- **Nginx**: Routes frontend requests
-
-### **Volume Mounts (Development)**
-```yaml
-volumes:
-  - ./langgraph:/app  # Hot reload for development
-```
-Files created by the agent appear in `./langgraph/` on your local filesystem.
-
-## API Endpoints
-
-### **Main App Proxy Endpoints**
-
-#### Start Chat Run
-```http
-POST /chat-runs-langgraph
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "message": "Create a visualization of sea level rise in Hawaii",
-  "session_id": "session-abc123"
-}
-
-Response:
-{
-  "run_id": "50317ad2a1864fd583f0a7d244f0c7f2",
-  "status": "running"
-}
-```
-
-#### Get Run Status
-```http
-GET /chat-runs-langgraph/{run_id}
-Authorization: Bearer <token>
-
-Response:
-{
-  "run_id": "50317ad2...",
-  "status": "completed",  # or "running", "failed"
-  "error": null
-}
-```
-
-#### Poll Events
-```http
-GET /chat-runs-langgraph/{run_id}/events?after=0
-Authorization: Bearer <token>
-
-Response:
-{
-  "run_id": "50317ad2...",
-  "status": "running",
-  "events": [
-    {
-      "seq": 1,
-      "chunk": {
-        "role": "assistant",
-        "type": "message",
-        "content": "I'll create a visualization...",
-        "start": true
-      }
-    },
-    {
-      "seq": 2,
-      "chunk": {
-        "role": "computer",
-        "type": "code",
-        "format": "python",
-        "content": "import matplotlib.pyplot as plt\n...",
-        "start": true,
-        "end": true
-      }
-    },
-    {
-      "seq": 3,
-      "chunk": {
-        "role": "computer",
-        "type": "image",
-        "format": "base64.png",
-        "content": "iVBORw0KGgo...",
-        "start": true,
-        "end": true
-      }
-    }
-  ],
-  "next_after": 3,
-  "error": null
-}
-```
-
-### **Direct Microservice Endpoints** (Port 8010)
-
-Same schema as above, but without `/langgraph` prefix:
-- `POST /chat-runs`
-- `GET /chat-runs/{run_id}`
-- `GET /chat-runs/{run_id}/events`
-
-## Event Streaming Format
-
-### **Message Types**
-
-The agent streams different message types to the frontend:
-
-#### **1. Progress Status**
-```json
-{
-  "role": "assistant",
-  "type": "status",
-  "action": "idea_agent",
-  "phase": "preparing_tool",
-  "description": "Preparing a file…",
-  "tool_name": "write_file_tool",
-  "done": false
-}
-```
-
-Status events describe phase transitions only. They never contain tool
-arguments or generated file contents.
-
-#### **2. Text Messages**
-```json
-{
-  "role": "assistant",
-  "type": "message",
-  "content": "I'll help you create that visualization...",
-  "start": true,
-  "end": false
-}
-```
-
-#### **3. Shell Commands**
-```json
-{
-  "role": "computer",
-  "type": "code",
-  "format": "shell",
-  "content": "python hawaii_sea_level.py",
-  "start": true,
-  "end": true
-}
-```
-
-#### **4. File Writes**
-```json
-{
-  "role": "computer",
-  "type": "code",
-  "format": "python",
-  "content": "import matplotlib.pyplot as plt\n...",
-  "start": true,
-  "end": true
-}
-```
-
-#### **5. Console Output**
-```json
-{
-  "role": "computer",
-  "type": "console",
-  "format": "output",
-  "content": "✓ Wrote 1234 characters (45 lines) to script.py",
-  "start": true,
-  "end": true
-}
-```
-
-#### **6. Images** (via `show_image_tool`)
-```json
-{
-  "role": "assistant",
-  "type": "image",
-  "format": "base64.png",
-  "content": "iVBORw0KGgoAAAANSUhEUgAAA...",
-  "start": true,
-  "end": true
-}
-```
-
-### **Flags**
-- `start: true` - First chunk of a message (creates new message bubble)
-- `end: true` - Last chunk of a message (marks as complete, enables features like math typesetting)
-- Both flags on same chunk = single-chunk complete message
-
-## Terminal Capabilities
-
-The persistent terminal session allows:
-- Installing packages (pip, apt, etc.)
-- Managing files and directories
-- Running scripts in any language
-- Setting environment variables
-- Changing working directories
-- Long-running operations (up to 30 minutes)
-
-## Configuration
-
-### Timeout
-Default timeout: 1800 seconds (30 minutes)
-Can be modified in `PersistentTerminal.__init__()`:
-```python
-PersistentTerminal(timeout=1800)  # 30 minutes
-```
-
-### Max Iterations
-Default: 20 iterations
-Can be modified when creating the agent:
-```python
-agent = TerminalAgent(max_iterations=30)
-```
-
-## Agent Tools
-
-### **1. run_terminal_tool**
-Executes shell commands in persistent terminal session.
-
-```python
-run_terminal_tool(command="pip install matplotlib")
-# Returns: "✓ Command executed successfully in 3s.\nOutput:\n..."
-```
-
-**Features:**
-- Persistent environment (cd, export, etc. persist)
-- 30-minute timeout for long-running commands
-- Real-time progress monitoring
-- Proper error handling and exit codes
-
-### **2. write_file_tool**
-Writes content to files (use this instead of shell redirection).
-
-```python
-write_file_tool(
-    filepath="script.py",
-    content="print('Hello World')\n",
-    append=False
-)
-# Returns: "✓ Wrote 19 characters (1 lines) to script.py"
-```
-
-**Features:**
-- Creates parent directories automatically
-- Handles encoding properly
-- Supports append mode
-- Returns file stats
-
-## Configuration
-
-### **Environment Variables**
-
-```yaml
-# Required
-OPENAI_API_KEY=sk-...
-OPENAI_BASE_URL=https://<your-resource>.services.ai.azure.com/openai/v1
-
-# Optional
-REDIS_HOST=redis         # Default: redis
-REDIS_PORT=6379          # Default: 6379
-PYTHONUNBUFFERED=1      # Recommended for logging
-```
-
-### **Service Configuration**
-
-#### LangGraph Service
-```yaml
-# docker-compose.override.yml
-langgraph:
-  volumes:
-    - ./langgraph:/app
-  command: uvicorn langgraph_service:app --host 0.0.0.0 --port 8010
-  # Note: --reload is DISABLED to prevent interruption during file creation
-```
-
-#### Main App
-```yaml
-web:
-  command: uvicorn app:app --reload --reload-exclude 'langgraph/*' --host 0.0.0.0 --port 8001
-  # Excludes langgraph/* to prevent auth session invalidation
-```
-
-### **Agent Parameters**
-
-```python
-agent = TerminalAgent(
-    model="gpt-5.6-terra",   # Or set IDEA_AGENT_MODEL=gpt-5.6-sol to roll back
-    temperature=0.2,         # 0.0-1.0, lower = more deterministic
-    max_iterations=20        # Max iteration limit
-)
-```
-
-## Example Use Cases
-
-### **Data Visualization**
-```
-User: "Find NOAA sea level data for Hawaii and create a visualization"
-
-Agent:
-1. Queries NOAA API for tide gauge data
-2. Uses one `run_python_tool` call to validate and analyze the data
-3. Creates the matplotlib plot in that same call
-4. Receives the plot inline automatically
-```
-
-### **Code Execution**
-```
-User: "Write and run code for Fibonacci sequence n=50"
-
-Agent:
-1. Uses `run_python_tool` for an interactive result, or writes a script when the user wants the code as a file
-2. Executes the code
-3. Streams output to the console
-```
-
-### **Package Installation & Testing**
-```
-User: "Install pandas and create sample data analysis"
-
-Agent:
-1. Runs pip install pandas
-2. Uses one `run_python_tool` call to create, validate, and analyze the sample data
-3. Streams the results and any plots automatically
-```
-
-### **Multi-Step Tasks**
-```
-User: "Set up a web scraper for weather data"
-
-Agent:
-1. Installs beautifulsoup4 and requests
-2. Writes scraper script
-3. Tests on sample URL
-4. Debugs and iterates until working
-5. Saves final version
-```
-
-## Implementation Details
-
-### **Redis Storage Schema**
-
-#### Run Status
-```python
-# Key: langgraph_run:{run_id}
-{
-    "status": "running",  # or "completed", "failed"
-    "error": null,
-    "user_id": "3d6bfbea-71b6-4ebe-a59e-c846e39d0134"
-}
-# TTL: 3600 seconds
-```
-
-#### Events List
-```python
-# Key: langgraph_run_events:{run_id}
-[
-    {"seq": 1, "chunk": {...}},
-    {"seq": 2, "chunk": {...}},
-    ...
-]
-# TTL: 3600 seconds
-```
-
-#### Sequence Counter
-```python
-# Key: langgraph_run_seq:{run_id}
-42  # Current sequence number
-# TTL: 3600 seconds
-```
-
-### **Image Display**
-
-When the LLM calls `show_image_tool(filepath)`, the agent:
-1. Validates the file exists and has a supported image extension
-2. Base64-encodes the image
-3. Streams as two chunks:
-   - Chunk 1: Empty content with `start: true`
-   - Chunk 2: Base64 data with `end: true`
-5. Frontend renders on `isComplete = true`
-
-**Supported formats:** `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg`
-
-For model-side visual interpretation, uploaded PNG/JPEG/GIF/WebP images are
-included automatically. Python-generated plots are also included on the next
-model request. Other existing sandbox images must be passed through
-`inspect_image_tool`; that tool adds validated high-detail image content to
-the next model request. Display and inspection remain separate for those
-existing images.
-
-### **Tool Call Streaming**
-
-When LLM calls a tool:
-1. **Command Display**: Stream as `type: 'code', format: 'shell'`
-2. **Execution**: Run in persistent terminal
-3. **Output Display**: Stream as `type: 'console', format: 'output'`
-4. **Image Display**: `run_python_tool` streams generated plots automatically; the LLM calls `show_image_tool(filepath)` only for an existing image file
-
-This creates the Open Interpreter experience where users see:
-- What code is being written
-- What commands are running
-- What output is produced
-- What images are created
-
-## Troubleshooting
-
-### **401 Unauthorized Errors**
-
-**Symptom:** Getting 401 errors immediately after login
-
-**Cause:** Auth sessions are stored in-memory and cleared on container restart. Creating files triggers auto-reload in development.
-
-**Solution:**
-1. Set `--reload-exclude 'langgraph/*'` in main app (already configured)
-2. Disable `--reload` on LangGraph service (already configured)
-3. Re-login if container restarts
-
-### **Images Not Displaying**
-
-**Symptom:** Seeing broken image icon
-
-**Cause:** Base64 data was duplicated due to `start` and `end` both being true
-
-**Solution:** Images are split into two chunks (empty `start` chunk, then data on the `end` chunk)
-
-### **Job Stuck in "Running" State**
-
-**Symptom:** Frontend shows "Step is still running" with no events
-
-**Cause:** Container restarted mid-execution, killing background thread
-
-**Solution:**
-1. Check logs: `docker logs idea_langgraph --tail 100`
-2. Verify `--reload` is disabled
-3. Ensure volume mounts aren't triggering restarts
-
-### **Files Not Persisting**
-
-**Symptom:** Agent-created files disappear after container restart
-
-**Solution:** Volume mounts are configured - files appear in `./langgraph/` locally. They persist across restarts.
-
-## Production Considerations
-
-### **Security**
-- Agent has full terminal access - run in isolated container
-- Limit network access if executing untrusted code
-- Consider sandboxing for multi-tenant deployments
-
-### **Performance**
-- Redis for event storage - scales horizontally
-- Background threads prevent blocking
-- Consider task queue (Celery) for high volume
-
-### **Storage**
-- Agent workspace is volume-mounted in development
-- For production, use dedicated volume or temp directory
-- Add cleanup job for old images/scripts
-
-### **Monitoring**
-- Provider token usage, cache/reasoning details when available, model-visible
-  text size, and image counts are tracked per model call and aggregated per run
-- Full conversation logs available
-- Redis TTL prevents memory leaks (1 hour default)
-
-## Notes
-
-- Terminal session persists across command executions
-- Full logs retained without truncation
-- Real-time streaming with proper `start`/`end` flags
-- 30-minute timeout for long-running tasks
-- Explicit, LLM-triggered image display via `show_image_tool`
-- Compatible with Open Interpreter frontend patterns
-- Production-ready async job queue architecture
+For a deployed stack, also verify an ordinary answer, Python state across
+turns, an uploaded file and image, a generated downloadable artifact,
+Stop/cancellation, branch regeneration, PaperQA, and a Codex read-only and
+workspace-write turn.
+
+## Known limitations
+
+- Chat-run execution uses in-process worker threads. Status and events survive
+  a client disconnect, but an unexpected LangGraph container restart can
+  terminate an active run; a durable external task queue remains future work.
+- The direct `/chat` path retains the old Redis transcript behavior and is not
+  the production Open WebUI path.
+- Codex currently uses the developer-stage external `OPENAI_*` fallback until
+  a guest-reachable, restricted LiteLLM Responses API route is available.
+- Existing user microVMs do not automatically adopt a new guest image. The
+  current refresh script is destructive and is acceptable only while all
+  workspaces belong to developers.
+
+See [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) for the concise
+status and remaining production gates. `INTEGRATION_PLAN.md` records the
+current rollout plan; the original adapter-era plan is available in Git
+history rather than being presented as current architecture.

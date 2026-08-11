@@ -58,12 +58,12 @@ IDEA is built to be customized. You can tailor behavior by adding domain instruc
 
 IDEA combines:
 
-- A conversational interface with a multimodal large language model (e.g., gpt-5.2 from OpenAI; AI model updates to the latest state-of-the-art)
+- A conversational interface with a multimodal large language model (`gpt-5.6-terra` by default, configurable through `IDEA_AGENT_MODEL`)
 - Information and data context (provide custom "Instruction" manuals, "Knowledge" documents, and Data files)
 - Tool use for real actions (file I/O, code execution, plotting, and reporting)
 - Human-driven and reproducible science workflows (code reviews and "Conversation" sharing)
 
-Internally, chat requests flow through [Open WebUI](https://github.com/open-webui/open-webui) (`openwebui/`) into a LangGraph agent service (`langgraph/`), which delegates code execution to per-user isolated microVMs (`sandbox_service/`, built on [microsandbox](https://microsandbox.dev/)) running a persistent Python kernel derived from Open Interpreter's execution engine (`interpreter_kernel/`, using [Open Terminal](https://github.com/open-webui/open-terminal) for shell/grep/glob). This means results are inspectable and reproducible rather than “black box” outputs.
+Internally, chat requests flow through [Open WebUI](https://github.com/open-webui/open-webui) (`openwebui/`) into a checkpointed LangGraph agent service (`langgraph/`). It delegates code execution to per-user isolated microVMs (`sandbox_service/`, built on [microsandbox](https://microsandbox.dev/)) running a persistent Python kernel derived from Open Interpreter's execution engine (`interpreter_kernel/`, using [Open Terminal](https://github.com/open-webui/open-terminal) for shell/grep/glob). For substantial coding work, LangGraph can also delegate to Codex inside that same private workspace; Codex is a subordinate coding runtime, not a second conversation agent. See [`docs/Codex-Integration.md`](docs/Codex-Integration.md).
 
 ## Limitations and Scientific Caution
 
