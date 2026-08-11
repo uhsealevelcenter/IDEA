@@ -7,6 +7,10 @@ matplotlib==3.11.0
 seaborn==0.13.2
 langchain-core==1.4.9
 langchain-openai==1.1.10
+langgraph==1.2.6
+langgraph-checkpoint-postgres==3.1.0
+psycopg[binary,pool]==3.2.9
+pycryptodome==3.23.0
 litellm==1.83.14
 beautifulsoup4==4.12.3
 nest-asyncio==1.6.0

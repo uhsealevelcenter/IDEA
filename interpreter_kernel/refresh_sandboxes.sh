@@ -8,9 +8,10 @@
 # stopped-but-resumable) VMs never pick up either kind of change on their own.
 #
 # Removing a VM wipes its filesystem (installed packages, any in-progress
-# files not yet synced to /outputs). Only run this during an announced
-# migration where every active session must pick up a new image or mount
-# configuration.
+# files not yet synced to /outputs). This is acceptable only while every
+# workspace belongs to a developer who has agreed to start fresh. Before IDEA
+# has non-developer users, replace this workflow with a versioned migration
+# that snapshots, validates, and restores each writable workspace.
 #
 # `msb remove` is used directly (inside the `sandbox` container) rather
 # than sandbox_service's own /destroy endpoint, since that endpoint only
@@ -18,9 +19,11 @@
 # after any sandbox_service restart) - see terminal_registry.destroy_terminal.
 #
 # Usage:
-#   ./interpreter_kernel/refresh_sandboxes.sh [--skip-pull] [sandbox-service-name]
+#   ./interpreter_kernel/refresh_sandboxes.sh \
+#     --allow-destructive-developer-refresh [--skip-pull] [sandbox-service-name]
 #   sandbox-service-name defaults to "sandbox". --skip-pull is appropriate
-#   for mount-only changes when SANDBOX_IMAGE is already cached.
+#   for mount-only changes when SANDBOX_IMAGE is already cached. The explicit
+#   destructive flag is mandatory; it is not a substitute for user backups.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,11 +31,40 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 PULL_IMAGE=1
-if [ "${1:-}" = "--skip-pull" ]; then
-  PULL_IMAGE=0
+ALLOW_DESTRUCTIVE=0
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --skip-pull)
+      PULL_IMAGE=0
+      ;;
+    --allow-destructive-developer-refresh)
+      ALLOW_DESTRUCTIVE=1
+      ;;
+    *)
+      echo "Error: unknown option '$1'." >&2
+      exit 2
+      ;;
+  esac
   shift
+done
+
+if [ "${ALLOW_DESTRUCTIVE}" -ne 1 ]; then
+  cat >&2 <<'EOF'
+Refusing to replace sandbox workspaces without explicit acknowledgement.
+
+This developer-stage operation permanently deletes every sandbox filesystem.
+Run again with --allow-destructive-developer-refresh only after confirming all
+affected developers can start fresh. Do not use this workflow once IDEA has
+non-developer users; implement a snapshot/restore migration first.
+EOF
+  exit 2
 fi
+
 SANDBOX_SERVICE="${1:-sandbox}"
+if [ "$#" -gt 1 ]; then
+  echo "Error: expected at most one sandbox service name." >&2
+  exit 2
+fi
 
 CONTAINER="$(docker compose ps -q "${SANDBOX_SERVICE}")"
 if [ -z "${CONTAINER}" ]; then

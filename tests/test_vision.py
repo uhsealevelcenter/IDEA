@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import sys
 import unittest
@@ -11,6 +12,7 @@ sys.path.insert(0, str(LANGGRAPH_DIR))
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
 from agents import terminal_agent  # noqa: E402
+from idea_graph.runtime import TerminalGraphRuntime  # noqa: E402
 from tools import persistent_terminal  # noqa: E402
 
 
@@ -219,6 +221,281 @@ class InspectImageToolTests(unittest.TestCase):
             result["final_response"],
             "The figure contains a red line.",
         )
+
+
+class LangGraphShowImageTests(unittest.TestCase):
+    def make_runtime(self):
+        show_tool = Mock()
+        show_tool.invoke.return_value = "✓ Image ready to display: /outputs/plot.png"
+        agent = Mock()
+        agent.tools_by_name = {"show_image_tool": show_tool}
+        agent._encode_image_to_base64.return_value = ("BASE64-PLOT", "png")
+        agent._shown_image_hashes = set()
+
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = agent
+        runtime.event_callback = Mock()
+        runtime.displayed_image_paths = set()
+        return runtime, agent, show_tool
+
+    def test_show_image_tool_emits_a_lightweight_file_reference(self):
+        runtime, agent, show_tool = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {
+                "name": "show_image_tool",
+                "args": {"filepath": "/outputs/plot.png"},
+            },
+            {},
+        )
+
+        self.assertEqual(outcome.status, "completed")
+        show_tool.invoke.assert_called_once_with({"filepath": "/outputs/plot.png"})
+        agent._encode_image_to_base64.assert_called_once_with("/outputs/plot.png")
+        runtime.event_callback.assert_called_once_with({
+            "role": "assistant",
+            "type": "image",
+            "format": "png",
+            "filename": "/outputs/plot.png",
+            "start": True,
+            "end": True,
+        })
+        self.assertEqual(runtime.displayed_image_paths, {"/outputs/plot.png"})
+
+    def test_show_image_tool_deduplicates_identical_content(self):
+        runtime, agent, _ = self.make_runtime()
+        digest = hashlib.sha256(b"BASE64-PLOT").hexdigest()
+        agent._shown_image_hashes.add(digest)
+
+        outcome = runtime.execute_tool(
+            {
+                "name": "show_image_tool",
+                "args": {"filepath": "/outputs/plot.png"},
+            },
+            {},
+        )
+
+        self.assertIn("already displayed", outcome.content)
+        runtime.event_callback.assert_not_called()
+
+    def test_workspace_image_also_references_default_published_path(self):
+        runtime, _, show_tool = self.make_runtime()
+        show_tool.invoke.return_value = (
+            "✓ Image ready to display: /workspace/plots/plot.png"
+        )
+
+        outcome = runtime.execute_tool(
+            {
+                "name": "show_image_tool",
+                "args": {"filepath": "/workspace/plots/plot.png"},
+            },
+            {},
+        )
+
+        self.assertEqual(outcome.status, "completed")
+        self.assertEqual(runtime.displayed_image_paths, {
+            "/workspace/plots/plot.png",
+            "/outputs/plots/plot.png",
+        })
+
+
+class LangGraphKernelImageTests(unittest.TestCase):
+    def make_runtime(self):
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = Mock()
+        runtime.agent.sandbox_id = "sandbox-1"
+        runtime.event_callback = Mock()
+        runtime.outputs_dir = "/outputs"
+        runtime.displayed_image_paths = set()
+        return runtime
+
+    @patch("tools.persistent_terminal.inspect_python_namespace")
+    @patch("tools.persistent_terminal.run_python")
+    def test_python_error_format_is_preserved_and_marks_tool_failed(
+        self, run_python, inspect_python_namespace
+    ):
+        traceback = "Traceback (most recent call last):\nNameError: missing"
+        run_python.return_value = [{
+            "type": "console",
+            "format": "error",
+            "content": traceback,
+        }]
+        runtime = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {"name": "run_python_tool", "args": {"code": "missing"}},
+            {"run_id": "run-1", "kernel_id": "kernel-1"},
+        )
+
+        self.assertEqual(outcome.status, "failed")
+        self.assertEqual(outcome.error, traceback)
+        inspect_python_namespace.assert_not_called()
+        self.assertIn({
+            "role": "computer",
+            "type": "console",
+            "format": "error",
+            "content": traceback,
+            "start": True,
+            "end": True,
+        }, [call.args[0] for call in runtime.event_callback.call_args_list])
+
+    def test_pending_generated_image_is_supplied_to_model_vision(self):
+        runtime = self.make_runtime()
+        runtime.system_prompt = "test prompt"
+        runtime.agent._model_image_part.return_value = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,PRIVATE", "detail": "high"},
+        }
+
+        messages = runtime.model_messages({
+            "run_id": "run-1",
+            "conversation_messages": [],
+            "turn_messages": [],
+            "vision_images": ["/outputs/.idea/kernel-images/run-1-1.png"],
+            "vision_consumed_count": 0,
+        })
+
+        vision_message = next(
+            message for message in messages
+            if isinstance(message, HumanMessage) and isinstance(message.content, list)
+        )
+        self.assertIn("IDEA supplied an image", vision_message.content[0]["text"])
+        self.assertEqual(vision_message.content[1]["type"], "image_url")
+
+    def test_system_prompt_has_an_explicit_cache_breakpoint(self):
+        runtime = self.make_runtime()
+        runtime.system_prompt = "stable IDEA instructions"
+        runtime.cacheable_system_message = terminal_agent._cacheable_system_message
+
+        messages = runtime.model_messages({
+            "conversation_messages": [
+                {"role": "user", "content": "changing request"},
+            ],
+            "turn_messages": [],
+        })
+
+        self.assertEqual(messages[0].content, [{
+            "type": "text",
+            "text": "stable IDEA instructions",
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        }])
+
+    def test_prompt_cache_key_is_stable_and_privacy_preserving(self):
+        first = terminal_agent._prompt_cache_key("gpt-5.6-terra", "session-secret")
+        second = terminal_agent._prompt_cache_key("gpt-5.6-terra", "session-secret")
+
+        self.assertEqual(first, second)
+        self.assertTrue(first.startswith("idea:"))
+        self.assertNotIn("session-secret", first)
+        self.assertNotEqual(
+            first,
+            terminal_agent._prompt_cache_key("gpt-5.6-terra", "other-session"),
+        )
+
+    @patch("tools.persistent_terminal.run_python")
+    def test_namespace_inspection_returns_structure_without_values(self, run_python):
+        run_python.return_value = [{
+            "type": "console",
+            "format": "output",
+            "content": (
+                "__IDEA_KERNEL_NAMESPACE_V1__:"
+                '[{"name":"df","type":"DataFrame","shape":[3,2],"length":null}]\n'
+            ),
+        }]
+
+        summary = persistent_terminal.inspect_python_namespace(
+            session_id="sandbox-1",
+            kernel_id="kernel-1",
+            names=["df", "secret_value"],
+            run_id="run-1",
+        )
+
+        self.assertEqual(summary[0]["shape"], [3, 2])
+        self.assertNotIn("secret", str(summary[0]))
+        submitted_code = run_python.call_args.args[0]
+        compile(submitted_code, "<namespace-inspection>", "exec")
+
+    @patch(
+        "tools.persistent_terminal.inspect_python_namespace",
+        return_value=[{"name": "df", "type": "DataFrame", "shape": [3, 2]}],
+    )
+    @patch("tools.persistent_terminal.write_file_stream")
+    @patch("tools.persistent_terminal.run_python")
+    def test_python_image_is_persisted_and_emitted_as_a_file_reference(
+        self, run_python, write_file_stream, inspect_python_namespace
+    ):
+        run_python.return_value = [{
+            "type": "image",
+            "format": "base64.png",
+            "content": base64.b64encode(PNG_BYTES).decode(),
+        }]
+        runtime = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {"name": "run_python_tool", "args": {"code": "plt.show()"}},
+            {"run_id": "run-1", "kernel_id": "kernel-1"},
+        )
+
+        image_path = "/outputs/.idea/kernel-images/run-1-1.png"
+        self.assertEqual(outcome.status, "completed")
+        self.assertIn("1 image(s) generated", outcome.content)
+        self.assertEqual(outcome.artifacts, [image_path])
+        self.assertEqual(outcome.vision_images, [image_path])
+        self.assertEqual(
+            outcome.kernel_namespace,
+            [{"name": "df", "type": "DataFrame", "shape": [3, 2]}],
+        )
+        inspect_python_namespace.assert_called_once_with(
+            session_id="sandbox-1",
+            kernel_id="kernel-1",
+            names=[],
+            run_id="run-1",
+        )
+        write_file_stream.assert_called_once_with(
+            image_path,
+            [PNG_BYTES],
+            session_id="sandbox-1",
+            expected_size=len(PNG_BYTES),
+        )
+        self.assertEqual(runtime.displayed_image_paths, {image_path})
+        emitted = [call.args[0] for call in runtime.event_callback.call_args_list]
+        self.assertIn({
+            "role": "assistant",
+            "type": "image",
+            "format": "png",
+            "filename": image_path,
+            "start": True,
+            "end": True,
+        }, emitted)
+        self.assertNotIn("base64", str(emitted))
+        self.assertNotIn(PNG_BYTES.decode("latin1"), str(emitted))
+
+    @patch("tools.persistent_terminal.write_file_stream")
+    @patch("tools.persistent_terminal.run_python")
+    def test_invalid_python_image_never_falls_back_to_inline_base64(
+        self, run_python, write_file_stream
+    ):
+        run_python.return_value = [{
+            "type": "image",
+            "format": "base64.png",
+            "content": "not-base64!",
+        }]
+        runtime = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {"name": "run_python_tool", "args": {"code": "plt.show()"}},
+            {"run_id": "run-2", "kernel_id": "kernel-2"},
+        )
+
+        self.assertEqual(outcome.status, "failed")
+        write_file_stream.assert_not_called()
+        emitted = [call.args[0] for call in runtime.event_callback.call_args_list]
+        self.assertNotIn("not-base64!", str(emitted))
+        self.assertTrue(any(
+            isinstance(event, dict)
+            and "Could not save Python image" in str(event.get("content"))
+            for event in emitted
+        ))
 
 
 if __name__ == "__main__":

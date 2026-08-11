@@ -55,7 +55,8 @@ tags, follow-up suggestions, and search queries. IDEA keeps this separate
 from the user-facing Pipe model:
 
 - `IDEA Agent` remains the only visible chat model and continues
-  to use `gpt-5.6-sol` through LangGraph.
+  to use the centrally configured `IDEA_AGENT_MODEL` through LangGraph
+  (`gpt-5.6-terra` by default; set it to `gpt-5.6-sol` to roll back).
 - `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
   Open WebUI, and marked hidden so it remains available to backend tasks
   without appearing in the chat model selector.
@@ -69,9 +70,13 @@ After Open WebUI and LiteLLM are running, apply the configuration with:
 The script reads `.env`, authenticates with the admin
 `OPENWEBUI_API_KEY`, and idempotently reconciles the internal LiteLLM
 connection, Luna's hidden/public model metadata, `TASK_MODEL_EXTERNAL`,
-context compaction, and the title-generation prompt. Context compaction is
-enabled at 136,000 tokens by default, matching legacy IDEA's production
-policy of compacting at 50% of its 272,000-token long-context threshold.
+Open WebUI's native execution settings, context compaction, and the
+title-generation prompt. Native Code Execution and Code Interpreter are
+disabled by default because they run in a separate Pyodide/Jupyter runtime
+that cannot access IDEA's persistent LangGraph kernel or workspace. This
+does not disable IDEA's own Python tools. Context compaction is enabled at
+136,000 tokens by default, matching legacy IDEA's production policy of
+compacting at 50% of its 272,000-token long-context threshold.
 The configurator also raises Open WebUI's Token Cap to at least that
 threshold, while preserving an existing higher cap, so a stale lower cap
 cannot cause earlier-than-configured compaction. The existing compaction
@@ -315,17 +320,28 @@ This runs *alongside* the existing custom frontend (`frontend/`, `nginx`,
 `langgraph` + `sandbox` backend. See `langgraph/IMPLEMENTATION_STATUS.md`
 for the underlying agent/sandbox architecture this depends on.
 
-**Not yet handled by the Pipe function:**
-- **Major conversation-context TODO:** Open WebUI's branch-aware,
-  compacted chat history and LangGraph's linear Redis history
-  (`langgraph_messages:{session_key}`) are not reconciled. The investigated
-  proposal is to make the structured Open WebUI branch authoritative,
-  preserve message roles through LangGraph, persist only bounded IDEA
-  dataset/artifact/script state, and retire Redis as a conversation store.
-  See **"MAJOR TODO (Jul 29, 2026): Make Open WebUI the authoritative
-  conversation context"** in `langgraph/IMPLEMENTATION_STATUS.md` for the
-  findings, staged plan, and acceptance tests.
-- Interruption/stop button (`ConversationOrchestrator` has no cancel
-  endpoint exposed yet).
-- Mapping Open WebUI's guest/pending-approval users to this repo's own
-  guest-model/guest-scrutiny policies beyond the basic `is_guest` flag.
+**Context and interruption behavior:**
+- Open WebUI's selected, compacted branch is the authoritative conversation
+  history. The Pipe preserves user/assistant roles, sends conversation
+  summaries as context rather than Assistant policy, and removes legacy
+  inline generated-image bytes before LangGraph model assembly.
+- LangGraph stores bounded execution memory in PostgreSQL checkpoints.
+  Redis maps each Open WebUI assistant message ID to its graph thread and
+  checkpoint, preserving the correct execution branch across edits and
+  regenerations without requiring custom frontend event support. Mappings
+  expire after one year by default and refresh when used.
+- Open WebUI Stop requests cooperatively cancel the active model or sandbox
+  operation and preserve completed checkpoints.
+- Python source intended for `run_python_tool` streams into the response as
+  the model generates it, before execution begins. The Pipe renders one
+  Markdown code block and suppresses the legacy completed-code replay; other
+  LangGraph consumers still receive that backward-compatible full event.
+- A complete preflight token budget covering provider-specific tool schemas
+  remains future work; the bounded execution-memory block and Open WebUI's
+  136,000-token compaction threshold currently provide conservative headroom.
+- Chat deletion does not yet eagerly remove PostgreSQL checkpoints or Redis
+  message mappings; mappings expire according to
+  `IDEA_CHECKPOINT_MAP_TTL_SECONDS`.
+- Still not handled by the Pipe function: mapping Open WebUI's
+  guest/pending-approval users to this repo's own guest-model/guest-scrutiny
+  policies beyond the basic `is_guest` flag.

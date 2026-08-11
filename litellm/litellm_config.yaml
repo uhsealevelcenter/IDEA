@@ -1,10 +1,20 @@
 # LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
 # `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
 # endpoint that langgraph/ already talks to directly (see
-# langgraph/agents/terminal_agent.py). gpt-5.6-sol serves the IDEA agent;
+# langgraph/agents/terminal_agent.py). IDEA_AGENT_MODEL selects Terra or Sol;
 # gpt-5.6-luna is available to Open WebUI for background task generation.
 
 model_list:
+  # Keep both primary aliases available. Switching IDEA_AGENT_MODEL between
+  # gpt-5.6-terra and gpt-5.6-sol then requires no proxy-config edit.
+  - model_name: gpt-5.6-terra
+    litellm_params:
+      model: openai/gpt-5.6-terra
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
   - model_name: gpt-5.6-sol
     litellm_params:
       # "openai/" provider (not "azure/") since OPENAI_BASE_URL is the
@@ -77,7 +87,11 @@ general_settings:
 litellm_settings:
   set_verbose: false # Disable debug logging in production.
   json_logs: true # Structured (JSON) logs.
-  request_timeout: 600 # Seconds to wait on the upstream LLM API call.
+  request_timeout: 60 # Keep provider stalls bounded; the client uses the same ceiling.
+  # The router fallback below should run immediately when the primary is
+  # throttled. Retrying the same deployment first caused a silent ~30-second
+  # wait in the UI before another 429 response.
+  num_retries: 0
 
   # Cache responses in the existing `redis` service (see
   # docker-compose.yml) - same instance langgraph_service.py already uses
@@ -93,3 +107,12 @@ litellm_settings:
   # applicable here yet, but harmless to leave on); does not affect
   # store_prompts_in_spend_logs above.
   redact_user_api_key_info: true
+
+router_settings:
+  # The background-task deployment is also a capable chat/tool model. Use it
+  # when the primary deployment is throttled instead of retrying for minutes.
+  fallbacks:
+    - gpt-5.6-terra:
+        - gpt-5.6-luna
+    - gpt-5.6-sol:
+        - gpt-5.6-luna

@@ -18,7 +18,7 @@ or changing defaults.
    ```bash
    git clone https://github.com/uhsealevelcenter/IDEA.git
    cd IDEA
-   git checkout idea-next/system-prompt-AND-functions
+   git checkout next-dev
    ```
 
 2. Create the environment file and replace every placeholder secret:
@@ -29,15 +29,20 @@ or changing defaults.
 
    At minimum, set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, the Postgres
    credentials, `WEBUI_SECRET_KEY`, `LITELLM_DB_PASSWORD`,
+   `LANGGRAPH_DB_PASSWORD`, `LANGGRAPH_AES_KEY`, `IDEA_IDENTITY_SECRET`,
    `LITELLM_MASTER_KEY`, `LITELLM_VIRTUAL_KEY`, and
    `INTERNAL_SERVICE_TOKEN`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
-   host and review `ENABLE_SIGNUP`, `CORS_ORIGINS`, registry credentials, and
-   the model names.
+   host, keep the default `IDEA_CODEX_ENABLED=true` when the published guest
+   image is selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`, `ENABLE_SIGNUP`,
+   `CORS_ORIGINS`, registry credentials, and the model names. Blank dedicated
+   Codex endpoint/key values currently reuse the external `OPENAI_*` values.
 
-3. Create the isolated LiteLLM database role and schema:
+3. Create the isolated LiteLLM and LangGraph database roles, schemas, and
+   checkpoint tables:
 
    ```bash
    ./litellm/setup_litellm_db.sh
+   ./langgraph/db/setup_langgraph_db.sh
    ```
 
 4. Seed the shared scientific-data volume before first use, if a legacy data
@@ -57,6 +62,25 @@ or changing defaults.
      up -d --build
    docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
    ```
+
+   If `interpreter_kernel/` changed, first build and test its guest image
+   locally; this command never publishes anything:
+
+   ```bash
+   ./interpreter_kernel/test_image.sh idea/oi-kernel:research-local
+   ```
+
+   On the Linux/KVM deployment host, also test one disposable microVM through
+   IDEA's production SDK path:
+
+   ```bash
+   ./interpreter_kernel/test_microsandbox_image.sh \
+     idea/oi-kernel:research-local
+   ```
+
+   Only after it passes, manually run the **Microsandbox image** workflow with
+   an immutable version and `publish=true`, then set `SANDBOX_IMAGE` to that
+   versioned tag (or, preferably, its recorded digest).
 
 6. Open the instance, create the first Open WebUI account as the administrator,
    generate an API key under **Settings > Account > API Keys**, and save it as
@@ -95,8 +119,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs \
 
 Log in through the public HTTPS URL and confirm that Welcome Assistant can
 answer a prompt, run Python, read an uploaded file and image, use PaperQA on
-an attached PDF, and return a downloadable artifact whose link still works
-on a later turn.
+an attached PDF, delegate one read-only and one workspace-write task to Codex,
+and return a downloadable artifact whose link still works on a later turn.
 
 ## Update or Roll Back
 
@@ -106,9 +130,13 @@ back up the named Docker volumes before migrations or rollback testing.
 
 Do not run `interpreter_kernel/refresh_sandboxes.sh` as a routine deployment
 step: it recreates existing microVMs and wipes their writable filesystem
-state.
+state. During the present developer-only testing phase, a deliberately fresh
+start can be performed with
+`--allow-destructive-developer-refresh`. Before IDEA admits non-developer
+users, implement and rehearse a snapshot/restore workspace migration; the
+destructive refresh is not an acceptable user rollout strategy.
 
-The current GitHub Actions workflow maps only `dev`, `staging`, and `main`,
-so a `next-dev` instance needs its branch-to-environment mapping, GitHub
-Environment secrets/variables, DNS/TLS route, and smoke-check URL configured
-before automated deployment can be used.
+The GitHub Actions workflow maps `next-dev` to the GitHub Environment of the
+same name. Automatic deployment still requires that environment's
+`DEPLOY_ENABLED=true`, SSH and app-directory values, deployment command,
+DNS/TLS route, and smoke-check URL to be configured.

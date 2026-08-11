@@ -503,7 +503,7 @@ class ViewSkillToolTests(unittest.TestCase):
         builtin.load.assert_called_once_with("built")
         workspace.load.assert_called_once_with("custom")
 
-    def test_package_route_returns_complete_bundle(self):
+    def test_package_route_returns_plan_then_explicit_full_bundle(self):
         root = skill_loader.SkillBundleDocument(
             "root",
             "root",
@@ -538,14 +538,28 @@ class ViewSkillToolTests(unittest.TestCase):
         }))
 
         self.assertEqual(result["load_order"], ["root", "workflow"])
+        self.assertEqual(result["detail"], "plan")
+        self.assertNotIn("content", result["documents"][0])
+        planned_call = builtin.load_bundle.call_args
+
+        full_result = json.loads(view_skill.invoke({
+            "source": "builtin",
+            "id": "package",
+            "components": ["workflow"],
+            "detail": "full",
+        }))
         self.assertEqual(
-            [document["content"] for document in result["documents"]],
+            [document["content"] for document in full_result["documents"]],
             ["ROOT SECRET", "WORKFLOW SECRET"],
         )
-        builtin.load_bundle.assert_called_once_with(
+        self.assertEqual(planned_call.kwargs, {
+            "route": "standard",
+            "components": None,
+        })
+        builtin.load_bundle.assert_called_with(
             "package",
-            route="standard",
-            components=None,
+            route=None,
+            components=["workflow"],
         )
 
     def test_log_summary_does_not_include_skill_content(self):
@@ -600,6 +614,57 @@ class ViewSkillToolTests(unittest.TestCase):
 
 
 class TerminalAgentSkillIntegrationTests(unittest.TestCase):
+    def test_prompt_prefers_one_persistent_python_analysis_call(self):
+        base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "Use `run_python_tool` as the default for Python data loading",
+            base_prompt,
+        )
+        self.assertIn(
+            "prefer one cohesive call that loads the data",
+            base_prompt,
+        )
+        self.assertIn(
+            "Do not create a standalone Python script merely to run an "
+            "ordinary interactive analysis",
+            base_prompt,
+        )
+        self.assertNotIn(
+            "use `write_file_tool` to author a script, then "
+            "`run_terminal_tool`",
+            base_prompt,
+        )
+
+    def test_prompt_does_not_redisplay_python_plots(self):
+        base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "Plots created by `run_python_tool` are captured, shown to the "
+            "user, and supplied to model vision automatically",
+            base_prompt,
+        )
+        self.assertIn(
+            "do not call `inspect_image_tool` or `show_image_tool` for them",
+            base_prompt,
+        )
+
+    def test_prompt_requires_openwebui_safe_math_delimiters(self):
+        base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "never place a letter or number immediately after a closing `$`",
+            base_prompt,
+        )
+        self.assertIn("Prefer Unicode for simple units such as `°C`", base_prompt)
+        self.assertIn(r"(${}^{\circ}\mathrm{C}$)", base_prompt)
+
     def test_prompt_contains_generated_manifest_and_no_cat_workflow(self):
         base_prompt = (
             Path(terminal_agent.SYSTEM_PROMPT_PATH)

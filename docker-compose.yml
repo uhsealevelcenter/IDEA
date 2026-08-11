@@ -51,6 +51,31 @@ services:
       - PYTHONUNBUFFERED=1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - IDEA_AGENT_RUNTIME=${IDEA_AGENT_RUNTIME:-langgraph}
+      # Primary model switch. Change only this value to gpt-5.6-sol to roll
+      # back; both aliases stay configured in LiteLLM.
+      - IDEA_AGENT_MODEL=${IDEA_AGENT_MODEL:-gpt-5.6-terra}
+      - IDEA_MODEL_REQUEST_TIMEOUT_SECONDS=${IDEA_MODEL_REQUEST_TIMEOUT_SECONDS:-180}
+      - IDEA_MODEL_MAX_RETRIES=${IDEA_MODEL_MAX_RETRIES:-1}
+      # Optional Codex delegation. IDEA_CODEX_API_KEY is intentionally not
+      # repeated here because env_file injects the scoped key literally.
+      - IDEA_CODEX_ENABLED=${IDEA_CODEX_ENABLED:-true}
+      - IDEA_CODEX_MODEL=${IDEA_CODEX_MODEL:-gpt-5.6-terra}
+      - IDEA_CODEX_BASE_URL=${IDEA_CODEX_BASE_URL:-}
+      - IDEA_CODEX_MAX_EVENTS=${IDEA_CODEX_MAX_EVENTS:-100}
+      - IDEA_KERNEL_SCOPE=${IDEA_KERNEL_SCOPE:-chat_assistant}
+      - IDEA_IDENTITY_SECRET=${IDEA_IDENTITY_SECRET:-}
+      - IDEA_MAX_STATE_BYTES=${IDEA_MAX_STATE_BYTES:-524288}
+      - IDEA_MAX_RECENT_ACTIONS=${IDEA_MAX_RECENT_ACTIONS:-50}
+      - IDEA_MAX_RECENT_EXECUTIONS=${IDEA_MAX_RECENT_EXECUTIONS:-20}
+      - IDEA_MAX_CODE_INLINE_BYTES=${IDEA_MAX_CODE_INLINE_BYTES:-100000}
+      - IDEA_MAX_EXECUTION_MEMORY_BYTES=${IDEA_MAX_EXECUTION_MEMORY_BYTES:-48000}
+      - IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES=${IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES:-6000}
+      - IDEA_MAX_MODEL_HISTORY_MESSAGE_BYTES=${IDEA_MAX_MODEL_HISTORY_MESSAGE_BYTES:-16000}
+      - IDEA_MAX_IDENTICAL_TOOL_CALLS=${IDEA_MAX_IDENTICAL_TOOL_CALLS:-3}
+      - IDEA_CHECKPOINT_MAP_TTL_SECONDS=${IDEA_CHECKPOINT_MAP_TTL_SECONDS:-31536000}
+      - LANGGRAPH_DATABASE_URL=postgresql://idea_langgraph:${LANGGRAPH_DB_PASSWORD?Variable not set}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?options=-csearch_path%3Didea_langgraph%2Cpublic
+      - LANGGRAPH_AES_KEY=${LANGGRAPH_AES_KEY:-}
       # OPENAI_API_KEY / OPENAI_BASE_URL intentionally NOT re-declared here -
       # env_file above already injects them literally from .env. Re-declaring
       # them as ${OPENAI_API_KEY} would instead resolve from the host shell
@@ -89,9 +114,14 @@ services:
     volumes:
       - idea_paperqa_data:/app/data
     depends_on:
-      - redis
-      - sandbox
-      - litellm
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      sandbox:
+        condition: service_started
+      litellm:
+        condition: service_started
 
   sandbox:
     build:
@@ -182,8 +212,9 @@ services:
       - idea_shared_data:/app/data
 
   # LiteLLM proxy - fronts the same Azure AI Foundry OpenAI-compatible
-  # endpoint langgraph/ already talks to directly. It exposes gpt-5.6-sol
-  # to the IDEA agent and gpt-5.6-luna to Open WebUI for background tasks
+  # endpoint langgraph/ already talks to directly. It exposes both
+  # gpt-5.6-terra and gpt-5.6-sol to the IDEA agent, with IDEA_AGENT_MODEL
+  # selecting the active route, and gpt-5.6-luna for background tasks
   # (see litellm/litellm_config.yaml). Uses a dedicated Postgres
   # role+schema on the existing `db` service rather than its own database
   # container - see litellm/init_litellm_db.sql / setup_litellm_db.sh,
@@ -242,6 +273,12 @@ services:
     environment:
       - WEBUI_NAME=Open WebUI # Per license, Open WebUI NAME and LOGO must remain in their original, prominent locations throughout the application and user interface.
       - ENABLE_OLLAMA_API=false
+      # IDEA executes Python through its own authenticated, persistent
+      # LangGraph sandbox kernel. Open WebUI's native code-block Run button
+      # and Code Interpreter use a separate Pyodide/Jupyter environment that
+      # cannot see IDEA kernel state or workspace files, so keep both off.
+      - ENABLE_CODE_EXECUTION=${ENABLE_CODE_EXECUTION:-false}
+      - ENABLE_CODE_INTERPRETER=${ENABLE_CODE_INTERPRETER:-false}
       - LANGGRAPH_SERVICE_URL=http://langgraph:8010
       # Default (40) is a concurrency *ceiling* for blocking/sync ops, not
       # a thread/CPU count - too low for this deployment's usage (each

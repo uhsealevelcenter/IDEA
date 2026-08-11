@@ -171,6 +171,43 @@ class SkillBundle:
             ensure_ascii=False,
         )
 
+    def to_plan_result(self) -> str:
+        """Serialize routing metadata without injecting every instruction."""
+        return json.dumps(
+            {
+                "source": self.source,
+                "id": self.skill_id,
+                "name": self.name,
+                "description": self.description,
+                "status": self.status,
+                "detail": "plan",
+                "route": self.route,
+                "requested_components": list(self.requested_components),
+                "load_order": [
+                    document.component_id for document in self.documents
+                ],
+                "component_count": len(self.documents),
+                "bytes_if_loaded": self.byte_count,
+                "sha256": self.sha256,
+                "external_requirements": list(self.external_requirements),
+                "documents": [
+                    {
+                        "component": document.component_id,
+                        "kind": document.kind,
+                        "description": document.description,
+                        "bytes": document.byte_count,
+                        "sha256": document.sha256,
+                    }
+                    for document in self.documents
+                ],
+                "next_step": (
+                    "Load only the components needed now with detail='full' "
+                    "and components=['component-id']."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
 
 def _validate_content_size(
     content: str,
@@ -902,7 +939,7 @@ def make_view_skill_tool(
     builtin_loader: BuiltinSkillLoader,
     workspace_loader: OpenWebUISkillLoader,
 ):
-    """Create one source-aware tool that always returns complete skill text."""
+    """Create a source-aware tool with progressive package loading."""
 
     @tool
     def view_skill(
@@ -910,18 +947,21 @@ def make_view_skill_tool(
         id: str,
         route: str = "",
         components: list[str] | None = None,
+        detail: Literal["plan", "full"] = "plan",
     ) -> str:
         """
-        Load complete instructions for an available skill or package route.
+        Inspect or load instructions for an available skill/package.
 
         Use source="builtin" for entries in <available_builtin_skills> and
         source="workspace" for entries in Open WebUI's <available_skills>.
         Pass the exact manifest id. For a built-in package, pass either an
-        exact advertised route or a list of exact component ids; dependencies
-        are resolved automatically and every selected document is returned in
-        full. Do not pass both route and components. Workspace skills are
-        currently flat and reject hierarchical selections. Results are never
-        silently truncated.
+        exact advertised route with detail="plan" first. This returns the
+        route checklist, component metadata, dependencies, byte cost, and
+        external prerequisites without injecting every instruction. Then load
+        only needed exact components with detail="full" and components=[...].
+        Dependencies are resolved automatically. Use detail="full" on a whole
+        route only when every component is immediately necessary. Do not pass
+        both route and components. Flat skills always return their full text.
         """
         loader = builtin_loader if source == "builtin" else workspace_loader
         normalized_route = route.strip() if isinstance(route, str) else ""
@@ -930,11 +970,16 @@ def make_view_skill_tool(
                 "Specify either a skill package route or components, not both"
             )
         if normalized_route or components:
-            return loader.load_bundle(
+            bundle = loader.load_bundle(
                 id,
                 route=normalized_route or None,
                 components=components,
-            ).to_tool_result()
+            )
+            return (
+                bundle.to_tool_result()
+                if detail == "full"
+                else bundle.to_plan_result()
+            )
         # Preserve the long-standing flat/root result shape for callers that
         # request only source + id. Package roots act as routing instructions;
         # a route/component selection returns the structured bundle shape.
@@ -954,7 +999,7 @@ def summarize_skill_result(result: str) -> str:
     if "documents" in payload:
         documents = payload.get("documents")
         if not isinstance(documents, list) or not all(
-            isinstance(document, dict) and "content" in document
+            isinstance(document, dict) and "component" in document
             for document in documents
         ):
             return "Skill package load failed before structured content was returned"
@@ -963,11 +1008,14 @@ def summarize_skill_result(result: str) -> str:
             if payload.get("route")
             else ""
         )
+        action = "Planned" if payload.get("detail") == "plan" else "Loaded"
+        byte_label = "bytes if fully loaded" if payload.get("detail") == "plan" else "bytes"
+        byte_value = payload.get("bytes_if_loaded", payload.get("bytes", "unknown"))
         return (
-            f"Loaded {payload.get('source', 'unknown')} skill package "
+            f"{action} {payload.get('source', 'unknown')} skill package "
             f"{payload.get('id', 'unknown')!r}{selection} "
             f"({payload.get('component_count', len(documents))} documents, "
-            f"{payload.get('bytes', 'unknown')} bytes, "
+            f"{byte_value} {byte_label}, "
             f"sha256={payload.get('sha256', 'unknown')})"
         )
     if "content" not in payload:

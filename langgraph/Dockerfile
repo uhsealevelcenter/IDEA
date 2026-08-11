@@ -31,8 +31,10 @@ RUN pip install --no-cache-dir fastapi uvicorn[standard] httpx redis
 COPY agents/ ./agents/
 COPY tools/ ./tools/
 COPY utils/ ./utils/
+COPY idea_graph/ ./idea_graph/
 COPY multi_agent.py .
 COPY langgraph_service.py .
+COPY idea_config.py .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

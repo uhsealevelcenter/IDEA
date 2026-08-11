@@ -1,5 +1,6 @@
 import importlib.util
 import asyncio
+import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,43 @@ SPEC.loader.exec_module(idea_pipe)
 
 
 class IdeaPipeAssistantTests(unittest.TestCase):
+    @staticmethod
+    def _chat_run_client(aiter_lines):
+        """Adapt legacy SSE fixtures to the durable chat-run polling API."""
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-1", "status": "queued"}
+        client.post = AsyncMock(return_value=start_response)
+        source = aiter_lines()
+        sequence = 0
+
+        async def get(*args, **kwargs):
+            nonlocal sequence
+            response = Mock()
+            response.raise_for_status.return_value = None
+            try:
+                line = await anext(source)
+            except StopAsyncIteration:
+                response.json.return_value = {
+                    "run_id": "run-1", "status": "completed",
+                    "events": [], "next_after": sequence,
+                }
+                return response
+            sequence += 1
+            raw = line[len("data: "):] if line.startswith("data: ") else line
+            response.json.return_value = {
+                "run_id": "run-1", "status": "running",
+                "events": [{"seq": sequence, "chunk": json.loads(raw)}],
+                "next_after": sequence,
+            }
+            return response
+
+        client.get = AsyncMock(side_effect=get)
+        return client
+
     def test_extracts_assistant_system_prompt_and_latest_user_message(self):
         messages = [
             {"role": "system", "content": "You are SEA."},
@@ -34,6 +72,67 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(
             idea_pipe._latest_user_content(messages),
             "Latest question",
+        )
+        self.assertEqual(
+            idea_pipe._structured_messages(messages),
+            [
+                {"id": "", "role": "user", "content": "First question"},
+                {"id": "", "role": "assistant", "content": "First answer"},
+                {"id": "", "role": "user", "content": "Latest question"},
+            ],
+        )
+
+    def test_separates_compaction_summary_from_assistant_policy(self):
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are SEA.\n\n[CONVERSATION SUMMARY]\n"
+                    "The user plotted RONI and asked to revise it."
+                ),
+            },
+            {"id": "user-2", "role": "user", "content": "Make it red."},
+        ]
+
+        self.assertEqual(
+            idea_pipe._assistant_system_prompt(messages),
+            "You are SEA.",
+        )
+        self.assertEqual(
+            idea_pipe._structured_messages(messages),
+            [
+                {
+                    "id": "",
+                    "role": "system",
+                    "content": "The user plotted RONI and asked to revise it.",
+                },
+                {"id": "user-2", "role": "user", "content": "Make it red."},
+            ],
+        )
+    def test_structured_messages_strip_legacy_assistant_images_only(self):
+        generated = "data:image/png;base64," + ("A" * 1000)
+        user_image = "data:image/png;base64,USERIMAGE"
+
+        structured = idea_pipe._structured_messages([
+            {
+                "role": "assistant",
+                "content": f"Result\n\n![plot]({generated})\n\n[file](preview)",
+            },
+            {
+                "role": "user",
+                "content": [{
+                    "type": "image_url",
+                    "image_url": {"url": user_image},
+                }],
+            },
+        ])
+
+        self.assertNotIn("base64", structured[0]["content"])
+        self.assertIn("Generated image omitted", structured[0]["content"])
+        self.assertIn("[file](preview)", structured[0]["content"])
+        self.assertEqual(
+            structured[1]["content"][0]["image_url"]["url"],
+            user_image,
         )
 
     def test_preserves_complete_openwebui_skill_system_context(self):
@@ -187,13 +286,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                 yield ""
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
         body = {
             "messages": [
                 {"role": "system", "content": "You are SEA."},
@@ -213,6 +306,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         }
         metadata = {
             "chat_id": "chat-123",
+            "message_id": "assistant-response-1",
             "model": {
                 "id": "sea",
                 "name": "SEA",
@@ -264,11 +358,20 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             result = asyncio.run(collect())
 
         self.assertEqual(result, [])
-        payload = client.stream.call_args.kwargs["json"]
+        payload = client.post.call_args.kwargs["json"]
         self.assertEqual(payload["assistant_id"], "sea")
         self.assertEqual(payload["assistant_system_prompt"], "You are SEA.")
-        self.assertEqual(payload["session_key"], "user-1:chat-123:sea")
-        self.assertEqual(payload["message"], "Analyze Honolulu.")
+        self.assertEqual(payload["session_id"], "chat-123")
+        self.assertNotIn("model", payload)
+        self.assertEqual(
+            payload["response_message_id"], "assistant-response-1"
+        )
+        self.assertEqual(
+            payload["messages"],
+            [
+                {"id": "", "role": "user", "content": "Analyze Honolulu."},
+            ],
+        )
         self.assertEqual(
             payload["attached_files"],
             [
@@ -430,13 +533,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             )
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
 
         async def collect():
             return [
@@ -466,6 +563,41 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_pipe_renders_image_event_from_uploaded_file_without_base64(self):
+        async def aiter_lines():
+            yield (
+                'data: {"type":"image","format":"png",'
+                '"filename":"/workspace/oni/oni.png"}'
+            )
+            yield 'data: {"type":"message","content":"Here is the ONI."}'
+            yield (
+                'data: {"type":"file",'
+                '"filename":"/outputs/oni/oni.png",'
+                '"openwebui_file_id":"file-oni"}'
+            )
+
+        client = self._chat_run_client(aiter_lines)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Plot ONI"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, [
+            "Here is the ONI.",
+            "\n\n![generated image]"
+            "(/idea-file-preview/file-oni/oni.png)\n\n",
+        ])
+        self.assertNotIn("data:image", "".join(result))
+
     def test_pipe_yields_ordinary_assistant_text_before_stream_finishes(self):
         response = Mock()
         response.raise_for_status.return_value = None
@@ -477,13 +609,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             yield 'data: {"type":"message","content":" and done"}'
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
 
         async def collect_incrementally():
             stream = idea_pipe.Pipe().pipe(
@@ -530,13 +656,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             )
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
         event_emitter = AsyncMock()
 
         async def collect():
@@ -601,6 +721,185 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_pipe_renders_streamed_run_error_only_once(self):
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-timeout"}
+        failed_response = Mock()
+        failed_response.raise_for_status.return_value = None
+        failed_response.json.return_value = {
+            "run_id": "run-timeout",
+            "status": "failed",
+            "error": "Request timed out.",
+            "events": [{
+                "seq": 1,
+                "chunk": {"error": "Request timed out."},
+            }],
+        }
+        client.post = AsyncMock(return_value=start_response)
+        client.get = AsyncMock(return_value=failed_response)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Complex task"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, ["\n\n**Error:** Request timed out.\n\n"])
+
+    def test_pipe_uses_terminal_error_when_error_event_is_missing(self):
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-timeout"}
+        failed_response = Mock()
+        failed_response.raise_for_status.return_value = None
+        failed_response.json.return_value = {
+            "run_id": "run-timeout",
+            "status": "failed",
+            "error": "Request timed out.",
+            "events": [],
+        }
+        client.post = AsyncMock(return_value=start_response)
+        client.get = AsyncMock(return_value=failed_response)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Complex task"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, ["\n\n**Error:** Request timed out.\n\n"])
+
+    def test_pipe_preserves_classified_timeout_status(self):
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-timeout"}
+        timeout_message = (
+            "The model did not respond within 180 seconds. Any completed "
+            "tool operations were retained; please retry."
+        )
+        failed_response = Mock()
+        failed_response.raise_for_status.return_value = None
+        failed_response.json.return_value = {
+            "run_id": "run-timeout",
+            "status": "failed",
+            "error": timeout_message,
+            "events": [
+                {
+                    "seq": 1,
+                    "chunk": {
+                        "type": "status",
+                        "phase": "model_timeout",
+                        "description": timeout_message,
+                        "done": True,
+                        "error": True,
+                    },
+                },
+                {"seq": 2, "chunk": {"error": timeout_message}},
+            ],
+        }
+        client.post = AsyncMock(return_value=start_response)
+        client.get = AsyncMock(return_value=failed_response)
+        event_emitter = AsyncMock()
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Complex task"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                    __event_emitter__=event_emitter,
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        self.assertEqual(result, [f"\n\n**Error:** {timeout_message}\n\n"])
+        emitted_statuses = [
+            call.args[0]["data"] for call in event_emitter.await_args_list
+        ]
+        self.assertEqual(emitted_statuses[-1]["phase"], "model_timeout")
+        self.assertEqual(emitted_statuses[-1]["description"], timeout_message)
+
+    def test_pipe_stop_clears_thinking_status_and_requests_backend_stop(self):
+        client = Mock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        start_response = Mock()
+        start_response.raise_for_status.return_value = None
+        start_response.json.return_value = {"run_id": "run-stop", "status": "queued"}
+        stop_response = Mock()
+        stop_response.raise_for_status.return_value = None
+        client.post = AsyncMock(side_effect=[start_response, stop_response])
+        polling = asyncio.Event()
+
+        async def blocked_get(*args, **kwargs):
+            polling.set()
+            await asyncio.Event().wait()
+
+        client.get = AsyncMock(side_effect=blocked_get)
+        event_emitter = AsyncMock()
+
+        async def cancel_while_polling():
+            stream = idea_pipe.Pipe().pipe(
+                {"messages": [{"role": "user", "content": "Run Python"}]},
+                __user__={"id": "user-1", "role": "user"},
+                __metadata__={"chat_id": "chat-1"},
+                __event_emitter__=event_emitter,
+            )
+            pending = asyncio.create_task(anext(stream))
+            await asyncio.wait_for(polling.wait(), timeout=0.1)
+            pending.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await pending
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            asyncio.run(cancel_while_polling())
+
+        self.assertEqual(client.post.await_count, 2)
+        self.assertTrue(
+            client.post.await_args_list[-1].args[0].endswith(
+                "/chat-runs/run-stop/stop"
+            )
+        )
+        self.assertEqual(
+            event_emitter.await_args_list[-1].args[0],
+            {
+                "type": "status",
+                "data": {
+                    "action": "idea_agent",
+                    "phase": "stopped",
+                    "description": "Stopped",
+                    "done": True,
+                },
+            },
+        )
+
     def test_pipe_resolves_artifact_link_split_across_message_chunks(self):
         response = Mock()
         response.raise_for_status.return_value = None
@@ -622,13 +921,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             )
 
         response.aiter_lines = aiter_lines
-        response_context = Mock()
-        response_context.__aenter__ = AsyncMock(return_value=response)
-        response_context.__aexit__ = AsyncMock(return_value=None)
-        client = Mock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.stream.return_value = response_context
+        client = self._chat_run_client(aiter_lines)
 
         async def collect():
             return [
@@ -722,6 +1015,155 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                 "(/idea-file-preview/file-123/final.csv)\n\n"
             ],
         )
+
+    def test_translates_streamed_python_code_to_one_markdown_fence(self):
+        chunks = []
+        for event in (
+            {"type": "python_code_start", "format": "python"},
+            {"type": "python_code_delta", "content": "print("},
+            {"type": "python_code_delta", "content": "1)"},
+            {"type": "python_code_end", "complete": True},
+        ):
+            chunks.extend(idea_pipe.Pipe._translate_chunk(event))
+
+        self.assertEqual(
+            "".join(chunks),
+            f"\n\n{idea_pipe.TOOL_OUTPUT_START}\n"
+            "````python\nprint(1)\n````\n"
+            f"{idea_pipe.TOOL_OUTPUT_END}\n\n",
+        )
+
+    def test_translates_python_error_to_labeled_traceback_block(self):
+        rendered = "".join(idea_pipe.Pipe._translate_chunk({
+            "type": "console",
+            "format": "error",
+            "content": "Traceback (most recent call last):\nNameError: missing",
+        }))
+
+        self.assertIn("⚠️ **Python execution error**", rendered)
+        self.assertIn("````text\nTraceback", rendered)
+        self.assertIn("NameError: missing\n````", rendered)
+        self.assertIn(idea_pipe.TOOL_OUTPUT_START, rendered)
+        self.assertIn(idea_pipe.TOOL_OUTPUT_END, rendered)
+
+    def test_suppresses_only_matching_completed_python_replay(self):
+        completed = set()
+        self.assertFalse(idea_pipe._is_streamed_python_replay(
+            {
+                "type": "python_code_end",
+                "stream_id": "call-1",
+                "complete": True,
+            },
+            completed,
+        ))
+        self.assertFalse(idea_pipe._is_streamed_python_replay(
+            {
+                "type": "code",
+                "format": "python",
+                "tool_call_id": "different-call",
+            },
+            completed,
+        ))
+        self.assertTrue(idea_pipe._is_streamed_python_replay(
+            {
+                "type": "code",
+                "format": "python",
+                "tool_call_id": "call-1",
+            },
+            completed,
+        ))
+        self.assertEqual(completed, set())
+
+    def test_resolves_displayed_image_to_durable_preview(self):
+        rendered, referenced = idea_pipe._resolve_displayed_images(
+            ["/workspace/oni/oni plot.png"],
+            [{
+                "filename": "/outputs/oni/oni plot.png",
+                "openwebui_file_id": "file-oni",
+            }],
+            "http://localhost",
+        )
+
+        self.assertEqual(
+            rendered,
+            "\n\n![generated image]"
+            "(http://localhost/idea-file-preview/file-oni/oni%20plot.png)\n\n",
+        )
+        self.assertEqual(referenced, {"file-oni"})
+
+    def test_displayed_image_basename_fallback_rejects_ambiguity(self):
+        rendered, referenced = idea_pipe._resolve_displayed_images(
+            ["/workspace/source/plot.png"],
+            [
+                {
+                    "filename": "/outputs/first/plot.png",
+                    "openwebui_file_id": "file-first",
+                },
+                {
+                    "filename": "/outputs/second/plot.png",
+                    "openwebui_file_id": "file-second",
+                },
+            ],
+        )
+
+        self.assertIn("image preview unavailable", rendered)
+        self.assertEqual(referenced, set())
+
+    def test_missing_displayed_image_never_falls_back_to_base64(self):
+        rendered, referenced = idea_pipe._resolve_displayed_images(
+            ["/outputs/plot.png"], []
+        )
+
+        self.assertEqual(
+            rendered,
+            "\n\n⚠️ plot.png (image preview unavailable)\n\n",
+        )
+        self.assertEqual(referenced, set())
+        self.assertNotIn("data:image", rendered)
+
+    def test_generated_console_stays_visible_but_is_omitted_from_model_history(self):
+        rendered = "".join(idea_pipe.Pipe._translate_chunk({
+            "type": "console",
+            "content": "Output:\n" + "large-value " * 2000,
+        }))
+        self.assertIn("large-value", rendered)
+        self.assertNotIn("IDEA_TOOL", rendered)
+
+        structured = idea_pipe._structured_messages([
+            {"role": "assistant", "content": rendered + "Final finding."},
+            {"role": "user", "content": "Continue"},
+        ])
+
+        assistant = structured[0]["content"]
+        self.assertNotIn("large-value", assistant)
+        self.assertIn("tool display omitted", assistant)
+        self.assertIn("Final finding", assistant)
+
+    def test_legacy_visible_tool_markers_are_still_removed_from_context(self):
+        content = (
+            "Before\n<!-- IDEA_TOOL_OUTPUT_START -->\n```text\nsecret\n```\n"
+            "<!-- IDEA_TOOL_OUTPUT_END -->\nAfter"
+        )
+        structured = idea_pipe._structured_messages([
+            {"role": "assistant", "content": content},
+        ])
+
+        self.assertNotIn("secret", structured[0]["content"])
+        self.assertIn("Before", structured[0]["content"])
+        self.assertIn("After", structured[0]["content"])
+
+    def test_legacy_large_assistant_history_retains_final_answer(self):
+        content = "prefix\n" + ("tool noise " * 5000) + "\nFINAL ANSWER"
+        structured = idea_pipe._structured_messages([
+            {"role": "assistant", "content": content},
+        ])
+
+        assistant = structured[0]["content"]
+        self.assertLessEqual(
+            len(assistant.encode("utf-8")),
+            idea_pipe.MAX_ASSISTANT_MODEL_CONTEXT_BYTES + 10,
+        )
+        self.assertIn("FINAL ANSWER", assistant)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 """User-visible progress events for long-running IDEA agent turns."""
 
+import json
+import re
 from typing import Any
 
 
@@ -29,6 +31,68 @@ TOOL_STATUS_DESCRIPTIONS = {
         "Reading task instructions…",
     ),
 }
+
+_CODE_ARGUMENT_START = re.compile(r'(?:^|[{,])\s*"code"\s*:\s*"')
+_JSON_SIMPLE_ESCAPES = {'"', "\\", "/", "b", "f", "n", "r", "t"}
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def partial_python_code_argument(raw_arguments: str) -> tuple[str | None, bool]:
+    """Decode the complete prefix of a streamed JSON ``code`` string.
+
+    A trailing escape or partial ``\\uXXXX`` sequence is withheld until it is
+    complete, allowing callers to append only newly decoded Python text.
+    ``None`` means the code value has not begun or its prefix is invalid.
+    """
+    match = _CODE_ARGUMENT_START.search(raw_arguments)
+    if not match:
+        return None, False
+
+    value_start = match.end()
+    cursor = value_start
+    safe_end = value_start
+    complete = False
+    while cursor < len(raw_arguments):
+        char = raw_arguments[cursor]
+        if char == '"':
+            complete = True
+            break
+        if char == "\\":
+            if cursor + 1 >= len(raw_arguments):
+                break
+            escape = raw_arguments[cursor + 1]
+            if escape == "u":
+                escape_end = cursor + 6
+                if escape_end > len(raw_arguments):
+                    break
+                if any(
+                    digit not in _HEX_DIGITS
+                    for digit in raw_arguments[cursor + 2 : escape_end]
+                ):
+                    return None, False
+                cursor = escape_end
+                safe_end = cursor
+                continue
+            if escape not in _JSON_SIMPLE_ESCAPES:
+                return None, False
+            cursor += 2
+            safe_end = cursor
+            continue
+        if ord(char) < 0x20:
+            return None, False
+        cursor += 1
+        safe_end = cursor
+
+    try:
+        decoded = json.loads(f'"{raw_arguments[value_start:safe_end]}"')
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, False
+
+    # json.loads combines a complete surrogate pair. Withhold an unmatched
+    # high surrogate so later output always extends the previously sent text.
+    if decoded and 0xD800 <= ord(decoded[-1]) <= 0xDBFF:
+        decoded = decoded[:-1]
+    return decoded, complete
 
 
 def progress_chunk(

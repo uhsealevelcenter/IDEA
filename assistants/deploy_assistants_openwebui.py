@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import json
 import os
 import sys
@@ -72,6 +73,29 @@ OFFICIAL_ASSISTANT_BUILTIN_TOOLS = {
 }
 
 
+def validated_suggestion_prompts(value: Any, label: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) != 6:
+        raise RuntimeError(f"{label} must contain exactly 6 suggested prompts")
+    for index, suggestion in enumerate(value, start=1):
+        if not isinstance(suggestion, dict):
+            raise RuntimeError(f"{label} suggestion {index} must be an object")
+        title = suggestion.get("title")
+        content = suggestion.get("content")
+        if (
+            not isinstance(title, list)
+            or len(title) != 2
+            or not all(isinstance(part, str) and part.strip() for part in title)
+        ):
+            raise RuntimeError(
+                f"{label} suggestion {index} requires two non-empty title parts"
+            )
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError(
+                f"{label} suggestion {index} requires non-empty content"
+            )
+    return copy.deepcopy(value)
+
+
 def load_manifest(path: Path) -> dict[str, Any]:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     base_model_id = manifest.get("base_model_id")
@@ -86,6 +110,10 @@ def load_manifest(path: Path) -> dict[str, Any]:
         raise RuntimeError("Assistant manifest requires a non-empty base_model_logo")
     if not isinstance(assistants, list) or not assistants:
         raise RuntimeError("Assistant manifest requires a non-empty assistants list")
+    default_suggestions = validated_suggestion_prompts(
+        manifest.get("default_suggestion_prompts"),
+        "default_suggestion_prompts",
+    )
 
     seen: set[str] = set()
     for assistant in assistants:
@@ -105,11 +133,28 @@ def load_manifest(path: Path) -> dict[str, Any]:
             )
         if assistant_id in seen:
             raise RuntimeError(f"Duplicate Assistant ID {assistant_id!r}")
+        assistant["suggestion_prompts"] = validated_suggestion_prompts(
+            assistant.get("suggestion_prompts", default_suggestions),
+            f"Assistant {assistant_id!r} suggestion_prompts",
+        )
         seen.add(assistant_id)
 
     default_id = manifest.get("default_assistant_id")
     if default_id not in seen:
         raise RuntimeError("default_assistant_id must identify a manifest Assistant")
+    inherited_ids = manifest.get("welcome_suggestion_assistant_ids", [])
+    if (
+        not isinstance(inherited_ids, list)
+        or any(not isinstance(item, str) or not item for item in inherited_ids)
+        or len(set(inherited_ids)) != len(inherited_ids)
+    ):
+        raise RuntimeError(
+            "welcome_suggestion_assistant_ids must contain unique non-empty IDs"
+        )
+    if seen.intersection(inherited_ids):
+        raise RuntimeError(
+            "Official Assistants must define or inherit suggestions directly"
+        )
     return manifest
 
 
@@ -216,6 +261,9 @@ def official_assistant_payload(
             "tags": [{"name": name} for name in definition.get("tags", [])],
             "official_assistant": True,
             "paperqa_enabled": bool(definition.get("paperqa_enabled", False)),
+            "suggestion_prompts": copy.deepcopy(
+                definition["suggestion_prompts"]
+            ),
         }
     )
     capabilities = dict(meta.get("capabilities") or {})
@@ -322,6 +370,40 @@ def deploy_assistants(
     return results
 
 
+def deploy_welcome_suggestions(
+    client: OpenWebUIClient,
+    manifest: dict[str, Any],
+    dry_run: bool,
+    only: set[str] | None = None,
+) -> dict[str, str]:
+    """Manage only suggestion metadata on explicitly allowlisted Assistants."""
+    results: dict[str, str] = {}
+    suggestions = manifest["default_suggestion_prompts"]
+    for assistant_id in manifest.get("welcome_suggestion_assistant_ids", []):
+        if only and assistant_id not in only:
+            continue
+        existing = get_workspace_model(client, assistant_id)
+        if not existing:
+            raise RuntimeError(
+                f"Welcome-suggestion Assistant {assistant_id!r} is missing"
+            )
+        meta = dict(existing.get("meta") or {})
+        meta["suggestion_prompts"] = copy.deepcopy(suggestions)
+        payload = {
+            "id": existing["id"],
+            "base_model_id": existing.get("base_model_id"),
+            "name": existing["name"],
+            "meta": meta,
+            "params": dict(existing.get("params") or {}),
+            "access_grants": list(existing.get("access_grants") or []),
+            "is_active": bool(existing.get("is_active", True)),
+        }
+        if not dry_run:
+            client.post("/api/v1/models/model/update", payload)
+        results[assistant_id] = "updated"
+    return results
+
+
 def configure_user_assistant_permissions(
     client: OpenWebUIClient,
     dry_run: bool,
@@ -381,6 +463,31 @@ def verify_assistants(
             raise RuntimeError(f"Assistant base-model verification failed: {assistant_id!r}")
         if model.get("name") != definition["name"]:
             raise RuntimeError(f"Assistant name verification failed: {assistant_id!r}")
+        if (model.get("meta") or {}).get("suggestion_prompts") != definition[
+            "suggestion_prompts"
+        ]:
+            raise RuntimeError(
+                f"Assistant suggested-prompts verification failed: {assistant_id!r}"
+            )
+
+
+def verify_welcome_suggestions(
+    client: OpenWebUIClient,
+    manifest: dict[str, Any],
+    expected_ids: set[str],
+) -> None:
+    for assistant_id in expected_ids:
+        model = get_workspace_model(client, assistant_id)
+        if not model:
+            raise RuntimeError(
+                f"Welcome-suggestion verification failed: {assistant_id!r} is missing"
+            )
+        if (model.get("meta") or {}).get("suggestion_prompts") != manifest[
+            "default_suggestion_prompts"
+        ]:
+            raise RuntimeError(
+                f"Welcome-suggestion verification failed: {assistant_id!r}"
+            )
 
 
 def parse_args() -> argparse.Namespace:
@@ -429,7 +536,9 @@ def main() -> int:
     load_env_file(args.env_file)
     manifest_path = args.manifest.resolve()
     manifest = load_manifest(manifest_path)
-    known_ids = {item["id"] for item in manifest["assistants"]}
+    known_ids = {
+        item["id"] for item in manifest["assistants"]
+    } | set(manifest.get("welcome_suggestion_assistant_ids", []))
     only = set(args.only) or None
     unknown = (only or set()) - known_ids
     if unknown:
@@ -472,6 +581,12 @@ def main() -> int:
         args.dry_run,
         only,
     )
+    inherited_results = deploy_welcome_suggestions(
+        client,
+        manifest,
+        args.dry_run,
+        only,
+    )
     if only and manifest["default_assistant_id"] not in only:
         default_action = "skipped"
     else:
@@ -489,11 +604,18 @@ def main() -> int:
             if action != "skipped"
         }
         verify_assistants(client, manifest, changed_ids)
+        verify_welcome_suggestions(
+            client,
+            manifest,
+            set(inherited_results),
+        )
 
     prefix = "Would apply" if args.dry_run else "Applied"
     print(f"{prefix} Assistant base model: {base_action}")
     for assistant_id, action in results.items():
         print(f"{prefix} {assistant_id}: {action}")
+    for assistant_id, action in inherited_results.items():
+        print(f"{prefix} {assistant_id} Welcome suggestions: {action}")
     print(f"{prefix} default Assistant: {default_action}")
     print(
         "Verified users may create private Assistants; public and user-to-user "

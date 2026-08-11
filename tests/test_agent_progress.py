@@ -8,6 +8,7 @@ LANGGRAPH_DIR = Path(__file__).resolve().parents[1] / "langgraph"
 sys.path.insert(0, str(LANGGRAPH_DIR))
 
 from progress import (  # noqa: E402
+    partial_python_code_argument,
     progress_chunk,
     tool_call_chunk_names,
     tool_status_description,
@@ -59,6 +60,28 @@ class AgentProgressTests(unittest.TestCase):
                 preparing=False,
             ),
             "Inspecting an image…",
+        )
+
+    def test_decodes_partial_streamed_python_json_string(self):
+        self.assertEqual(
+            partial_python_code_argument('{"code":"print(\\"hi\\")\\n'),
+            ('print("hi")\n', False),
+        )
+        self.assertEqual(
+            partial_python_code_argument(
+                '{"code":"print(\\"hi\\")\\nname = \\u03b1"}'
+            ),
+            ('print("hi")\nname = α', True),
+        )
+
+    def test_withholds_incomplete_escape_from_streamed_python(self):
+        self.assertEqual(
+            partial_python_code_argument('{"code":"line 1\\nline 2\\'),
+            ("line 1\nline 2", False),
+        )
+        self.assertEqual(
+            partial_python_code_argument('{"code":"value = \\u03'),
+            ("value = ", False),
         )
 
 

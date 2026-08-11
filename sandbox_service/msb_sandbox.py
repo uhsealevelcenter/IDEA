@@ -47,6 +47,7 @@ SHARED_DATA_REQUIRED_PATHS = (
 # Only meaningful when SANDBOX_IMAGE is that image (or one built on top of
 # it); run_python() below fails clearly if the VM doesn't have it.
 OI_KERNEL_CLIENT_PATH = os.getenv("OI_KERNEL_CLIENT_PATH", "/opt/oi_kernel/client.py")
+CODEX_RUNNER_PATH = os.getenv("CODEX_RUNNER_PATH", "/opt/oi_kernel/codex_runner.py")
 
 # Where entrypoint.sh drops Open Terminal's per-VM API key - see
 # ../interpreter_kernel/entrypoint.sh. Read once per MicrosandboxTerminal
@@ -303,7 +304,12 @@ class MicrosandboxTerminal:
         # Generous ceiling; mirrors PersistentTerminal's default 1800s window.
         return 1800.0
 
-    def run_python(self, code: str) -> dict:
+    def run_python(
+        self,
+        code: str,
+        kernel_id: str = "default",
+        run_id: str = "",
+    ) -> dict:
         """
         Execute Python code in this sandbox's persistent Jupyter-backed
         kernel (see ../interpreter_kernel/daemon.py, baked into the VM
@@ -325,11 +331,14 @@ class MicrosandboxTerminal:
         try:
             self._exec(lambda: self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
             output = self._exec(
-                lambda: self._sandbox.shell(f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path}"),
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path} "
+                    f"--kernel-id {shlex.quote(kernel_id)} --run-id {shlex.quote(run_id)}"
+                ),
                 timeout=self._exec_timeout(code),
             )
         except Exception as e:
-            return {"chunks": [{"type": "console", "format": "output", "content": f"Kernel exec failed: {e}"}]}
+            return {"chunks": [{"type": "console", "format": "error", "content": f"Kernel exec failed: {e}"}]}
         finally:
             try:
                 self._exec(lambda: self._sandbox.shell(f"rm -f {tmp_path}"))
@@ -342,7 +351,79 @@ class MicrosandboxTerminal:
         except json.JSONDecodeError:
             stderr = getattr(output, "stderr_text", None) or ""
             content = text or stderr or "(no output from kernel client)"
-            return {"chunks": [{"type": "console", "format": "output", "content": content}]}
+            return {"chunks": [{"type": "console", "format": "error", "content": content}]}
+
+    def interrupt_python(self, kernel_id: str) -> bool:
+        """Send a Jupyter interrupt through the in-VM daemon."""
+        try:
+            output = self._exec(
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --interrupt "
+                    f"--kernel-id {shlex.quote(kernel_id)}"
+                ),
+                timeout=30.0,
+            )
+            payload = json.loads((output.stdout_text or "").strip())
+            return bool(payload.get("interrupted"))
+        except Exception:
+            return False
+
+    def run_codex(self, request: dict) -> dict:
+        """Run the guest Codex SDK bridge using a credential-safe request file."""
+        request_path = f"/tmp/.idea_codex_request_{uuid.uuid4().hex}.json"
+        run_id = str(request.get("run_id", ""))
+        cancel_path = (
+            f"/tmp/.idea_codex_cancel_{self._safe_run_id(run_id)}" if run_id else ""
+        )
+        try:
+            data = json.dumps(request).encode("utf-8")
+            self._exec(lambda: self._sandbox.fs.write(request_path, data))
+            self._exec(
+                lambda: self._sandbox.shell(
+                    f"chmod 600 -- {shlex.quote(request_path)}"
+                )
+            )
+            output = self._exec(
+                lambda: self._sandbox.shell(
+                    f"python3 {shlex.quote(CODEX_RUNNER_PATH)} "
+                    f"--request-file {shlex.quote(request_path)}"
+                ),
+                timeout=self._exec_timeout(str(request.get("task", ""))),
+            )
+            text = (output.stdout_text or "").strip()
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                stderr = getattr(output, "stderr_text", None) or ""
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error": text or stderr or "Codex runner returned no JSON",
+                    "events": [],
+                }
+        except Exception as exc:
+            return {"ok": False, "status": "failed", "error": str(exc), "events": []}
+        finally:
+            targets = " ".join(shlex.quote(path) for path in (request_path, cancel_path) if path)
+            try:
+                self._exec(lambda: self._sandbox.shell(f"rm -f -- {targets}"))
+            except Exception:
+                pass
+
+    @staticmethod
+    def _safe_run_id(run_id: str) -> str:
+        return "".join(char if char.isalnum() or char in "_.-" else "_" for char in run_id)[:160]
+
+    def interrupt_codex(self, run_id: str) -> bool:
+        """Signal the guest runner's cancellation watcher without taking its lock."""
+        if not run_id:
+            return False
+        path = f"/tmp/.idea_codex_cancel_{self._safe_run_id(run_id)}"
+        try:
+            self._exec(lambda: self._sandbox.fs.write(path, b"cancel\n"), timeout=10.0)
+            return True
+        except Exception:
+            return False
 
     def _get_open_terminal_key(self, retries: int = 10, delay: float = 0.5) -> str:
         """
@@ -356,6 +437,11 @@ class MicrosandboxTerminal:
         after Sandbox.create() and entrypoint.sh hasn't written the key file
         yet.
         """
+        # Microsandbox imports OCI entrypoint/CMD metadata but does not run
+        # the image's primary process when a detached sandbox is created or
+        # resumed. Start Open Terminal lazily (and restart it after an idle
+        # stop/resume) before trying to read the key generated for it.
+        self._ensure_open_terminal()
         if self._open_terminal_key:
             return self._open_terminal_key
 
@@ -375,6 +461,38 @@ class MicrosandboxTerminal:
             f"Open Terminal API key not available at {OPEN_TERMINAL_KEY_PATH} "
             f"in sandbox {self.session_id} after {retries} retries: {last_error}"
         )
+
+    def _ensure_open_terminal(self) -> None:
+        """Start the in-VM Open Terminal server if it is not already healthy."""
+        key_path = shlex.quote(OPEN_TERMINAL_KEY_PATH)
+        health_url = shlex.quote(
+            f"http://127.0.0.1:{OPEN_TERMINAL_PORT}/health"
+        )
+        command = (
+            f"if ! curl -fsS --max-time 2 {health_url} >/dev/null 2>&1; then "
+            f"KEY_PATH={key_path}; "
+            'if [ ! -s "$KEY_PATH" ]; then '
+            'head -c 32 /dev/urandom | od -An -tx1 | tr -d \' \\n\' > "$KEY_PATH"; '
+            "fi; "
+            'chmod 600 "$KEY_PATH"; '
+            'nohup env OPEN_TERMINAL_API_KEY="$(cat "$KEY_PATH")" '
+            "/app/entrypoint-slim.sh run "
+            ">/tmp/idea-open-terminal.log 2>&1 </dev/null & "
+            "fi; "
+            f"for attempt in $(seq 1 20); do "
+            f"curl -fsS --max-time 2 {health_url} >/dev/null 2>&1 && exit 0; "
+            "sleep 0.5; done; exit 1"
+        )
+        output = self._exec(
+            lambda: self._sandbox.shell(command),
+            timeout=20.0,
+        )
+        if output.exit_code != 0:
+            stderr = getattr(output, "stderr_text", None) or ""
+            raise RuntimeError(
+                f"Open Terminal failed to start in sandbox {self.session_id}: "
+                f"{stderr or 'health check timed out'}"
+            )
 
     def _open_terminal_get(self, path: str, params: dict) -> dict:
         """

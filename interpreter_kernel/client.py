@@ -62,30 +62,48 @@ def ensure_daemon(timeout: float = 60.0) -> None:
     raise RuntimeError("OI kernel daemon did not become healthy in time")
 
 
-def run(code_path: str) -> dict:
+def _post(path: str, body: dict) -> dict:
     ensure_daemon()
-    with open(code_path, "r", encoding="utf-8") as f:
-        code = f.read()
-
-    body = json.dumps({"language": "python", "code": code}).encode("utf-8")
-    # timeout=None: block indefinitely, matching the generous per-command
-    # ceiling already used elsewhere in this stack (sandbox_service's own
-    # 1800s default) - long-running analysis code shouldn't be cut off here.
+    encoded = json.dumps(body).encode("utf-8")
     conn = http.client.HTTPConnection(HOST, PORT, timeout=None)
     try:
-        conn.request("POST", "/run", body=body, headers={"Content-Type": "application/json"})
+        conn.request("POST", path, body=encoded, headers={"Content-Type": "application/json"})
         resp = conn.getresponse()
         return json.loads(resp.read())
     finally:
         conn.close()
 
 
+def run(code_path: str, kernel_id: str = "default", run_id: str = "") -> dict:
+    with open(code_path, "r", encoding="utf-8") as f:
+        code = f.read()
+    return _post("/run", {
+        "language": "python", "code": code,
+        "kernel_id": kernel_id, "run_id": run_id,
+    })
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--ensure-daemon":
         ensure_daemon()
         print(json.dumps({"ok": True}))
-    elif len(sys.argv) == 3 and sys.argv[1] == "--run-file":
-        print(json.dumps(run(sys.argv[2])))
+    elif "--run-file" in sys.argv:
+        code_path = sys.argv[sys.argv.index("--run-file") + 1]
+        kernel_id = (
+            sys.argv[sys.argv.index("--kernel-id") + 1]
+            if "--kernel-id" in sys.argv else "default"
+        )
+        run_id = (
+            sys.argv[sys.argv.index("--run-id") + 1]
+            if "--run-id" in sys.argv else ""
+        )
+        print(json.dumps(run(code_path, kernel_id, run_id)))
+    elif "--interrupt" in sys.argv:
+        kernel_id = (
+            sys.argv[sys.argv.index("--kernel-id") + 1]
+            if "--kernel-id" in sys.argv else "default"
+        )
+        print(json.dumps(_post("/interrupt", {"kernel_id": kernel_id})))
     else:
         print(json.dumps({"error": "usage: client.py --ensure-daemon | --run-file <path>"}))
         sys.exit(1)

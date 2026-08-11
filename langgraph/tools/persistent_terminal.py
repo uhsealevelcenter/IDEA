@@ -13,6 +13,7 @@ sandbox_service instead of in this process.
 import json
 import os
 import posixpath
+import re
 import shlex
 import time
 import uuid
@@ -24,7 +25,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from utils.output_sync import parse_file_metadata_output
-from config import (
+from idea_config import (
     SANDBOX_SERVICE_URL,
     SANDBOX_HTTP_CONNECT_TIMEOUT_SECONDS,
     SANDBOX_HTTP_READ_TIMEOUT_SECONDS,
@@ -33,6 +34,10 @@ from config import (
     INTERNAL_SERVICE_TOKEN as _INTERNAL_SERVICE_TOKEN,
     OUTPUT_HEAD_TAIL_LINES,
     MAX_OUTPUT_TOKENS,
+    IDEA_CODEX_API_KEY,
+    IDEA_CODEX_BASE_URL,
+    IDEA_CODEX_MAX_EVENTS,
+    IDEA_CODEX_MODEL,
     TEMP_OUTPUT_DIR as _TEMP_OUTPUT_DIR,
 )
 
@@ -128,6 +133,75 @@ _default_headers = (
 )
 
 _client = httpx.Client(base_url=SANDBOX_SERVICE_URL, timeout=_HTTP_TIMEOUT, headers=_default_headers)
+
+
+def run_codex(
+    task: str,
+    session_id: str,
+    *,
+    cwd: str = "/workspace",
+    access: str = "read-only",
+    thread_id: str = "",
+    run_id: str = "",
+) -> dict:
+    """Delegate one coding turn to Codex inside the user's sandbox."""
+    payload = {
+        "task": task,
+        "cwd": cwd,
+        "access": access,
+        "thread_id": thread_id,
+        "run_id": run_id,
+        "model": IDEA_CODEX_MODEL,
+        "base_url": IDEA_CODEX_BASE_URL,
+        "api_key": IDEA_CODEX_API_KEY,
+        "max_events": IDEA_CODEX_MAX_EVENTS,
+    }
+    try:
+        response = _client.post(f"/sandboxes/{session_id}/codex/runs", json=payload)
+        response.raise_for_status()
+        result = response.json()
+        return result if isinstance(result, dict) else {
+            "ok": False, "status": "failed", "error": "Invalid Codex response"
+        }
+    except httpx.HTTPStatusError as exc:
+        try:
+            detail = exc.response.json().get("detail", str(exc))
+        except Exception:
+            detail = str(exc)
+        return {"ok": False, "status": "failed", "error": detail, "events": []}
+    except httpx.HTTPError as exc:
+        return {
+            "ok": False,
+            "status": "failed",
+            "error": f"Failed to reach sandbox service: {exc}",
+            "events": [],
+        }
+
+
+def make_codex_tool():
+    """Return the model-facing schema; runtime injects identity and credentials."""
+    @tool
+    def delegate_to_codex(
+        task: str,
+        cwd: str = "/workspace",
+        access: str = "read-only",
+    ) -> str:
+        """
+        Delegate a substantial repository investigation or coding task to
+        Codex in the same private workspace. Codex can inspect files, edit
+        them when access is workspace-write, run commands, and verify its
+        work. Prefer read-only for investigation and workspace-write only
+        when the user requested changes. Do not use for trivial one-command
+        tasks. The thread is resumed automatically for each working directory.
+
+        Args:
+            task: Complete, bounded task and desired verification criteria.
+            cwd: Working directory under /workspace.
+            access: Either "read-only" or "workspace-write".
+        """
+        return "Codex delegation must be invoked through the IDEA graph runtime."
+
+    return delegate_to_codex
 
 
 def close_terminal(session_id: str) -> None:
@@ -450,7 +524,12 @@ def list_file_metadata(
     return parse_file_metadata_output(result.get("output", "") or "")
 
 
-def run_python(code: str, session_id: str) -> list[dict]:
+def run_python(
+    code: str,
+    session_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+) -> list[dict]:
     """
     Execute Python code in the session's persistent kernel (via
     sandbox_service's /run-python, backed by the in-VM OI kernel daemon -
@@ -465,12 +544,116 @@ def run_python(code: str, session_id: str) -> list[dict]:
     just summarizes this into text for the LLM-facing tool result.
     """
     try:
-        response = _client.post(f"/sandboxes/{session_id}/run-python", json={"code": code})
+        response = _client.post(
+            f"/sandboxes/{session_id}/run-python",
+            json={"code": code, "kernel_id": kernel_id, "run_id": run_id},
+        )
         response.raise_for_status()
         result = response.json()
     except httpx.HTTPError as e:
-        return [{"type": "console", "format": "output", "content": f"✗ Failed to reach sandbox service: {e}"}]
-    return result.get("chunks", [])
+        return [{"type": "console", "format": "error", "content": f"✗ Failed to reach sandbox service: {e}"}]
+    return _normalize_kernel_chunks(result.get("chunks", []))
+
+
+_PYTHON_EXCEPTION_LINE_RE = re.compile(
+    r"^(?:[A-Za-z_][\w.]*(?:Error|Exception)|KeyboardInterrupt|SystemExit):"
+)
+
+
+def _looks_like_legacy_kernel_error(content: str) -> bool:
+    """Recognize error chunks produced by pre-format-metadata kernel images."""
+    if "Traceback (most recent call last):" in content:
+        return True
+    if "Cell In[" not in content:
+        return False
+    return any(
+        _PYTHON_EXCEPTION_LINE_RE.match(line.strip())
+        for line in reversed(content.splitlines())
+        if line.strip()
+    )
+
+
+def _normalize_kernel_chunks(chunks: list[dict]) -> list[dict]:
+    """Preserve explicit error metadata and upgrade legacy traceback chunks."""
+    normalized = []
+    for raw_chunk in chunks:
+        chunk = dict(raw_chunk)
+        if (
+            chunk.get("type") == "console"
+            and chunk.get("format", "output") == "output"
+            and _looks_like_legacy_kernel_error(str(chunk.get("content") or ""))
+        ):
+            chunk["format"] = "error"
+        normalized.append(chunk)
+    return normalized
+
+
+_IDEA_NAMESPACE_MARKER = "__IDEA_KERNEL_NAMESPACE_V1__:"
+
+
+def inspect_python_namespace(
+    *,
+    session_id: str,
+    kernel_id: str,
+    names: list[str],
+    run_id: str = "",
+) -> list[dict]:
+    """Return a bounded structural summary of selected live kernel names.
+
+    Values and reprs are deliberately excluded: the model only needs enough
+    evidence to know that reusable objects still exist and what broad shape
+    they have. This is a best-effort internal kernel call, never model code.
+    """
+    selected = [name for name in names if str(name).isidentifier()][-100:]
+    if not selected:
+        return []
+    names_json = json.dumps(selected)
+    code = (
+        "print(" + repr(_IDEA_NAMESPACE_MARKER) + " + "
+        "__import__('json').dumps(["
+        "{'name': __idea_name, "
+        "'type': type(globals()[__idea_name]).__name__, "
+        "'shape': list(getattr(globals()[__idea_name], 'shape')) "
+        "if isinstance(getattr(globals()[__idea_name], 'shape', None), tuple) "
+        "else None, "
+        "'length': len(globals()[__idea_name]) "
+        "if isinstance(globals()[__idea_name], (str, bytes, list, tuple, dict, set)) "
+        "else None} "
+        "for __idea_name in " + names_json + " if __idea_name in globals()], "
+        "separators=(',', ':'), default=str))"
+    )
+    chunks = run_python(
+        code,
+        session_id=session_id,
+        kernel_id=kernel_id,
+        run_id=run_id,
+    )
+    for chunk in chunks:
+        if chunk.get("type") != "console":
+            continue
+        content = str(chunk.get("content") or "")
+        marker_at = content.find(_IDEA_NAMESPACE_MARKER)
+        if marker_at < 0:
+            continue
+        payload = content[marker_at + len(_IDEA_NAMESPACE_MARKER):].strip()
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(decoded, list):
+            return []
+        return [item for item in decoded if isinstance(item, dict)][:100]
+    return []
+
+
+def interrupt_run(session_id: str, run_id: str) -> bool:
+    """Best-effort, run-scoped interruption that preserves workspace files."""
+    try:
+        response = _client.post(f"/sandboxes/{session_id}/runs/{run_id}/interrupt")
+        response.raise_for_status()
+        return bool(response.json().get("interrupted"))
+    except httpx.HTTPError:
+        return False
 
 
 def grep_search(
@@ -631,8 +814,10 @@ def make_agent_tools(session_id: str):
         automatically. Prefer this over run_terminal_tool for Python data
         analysis/plotting, so you don't have to re-load data or re-import
         libraries every call. Plots created with matplotlib are
-        automatically captured and shown to the user - no need to save to
-        a file or call show_image_tool for them.
+        automatically captured, shown to the user, and supplied to model
+        vision on the next iteration - no need to save to a file or call
+        inspect_image_tool/show_image_tool for them. For follow-up changes,
+        reuse live variables instead of repeating unchanged setup.
 
         Args:
             code: Python code to execute
@@ -691,10 +876,12 @@ def make_agent_tools(session_id: str):
     def inspect_image_tool(filepath: str) -> str:
         """
         Load an image file into model vision so you can visually inspect and
-        describe it. Use this for images already in the sandbox, including
-        generated plots that you need to validate. This does not display the
-        image to the user; call show_image_tool separately when the user
-        should see it.
+        describe it. Use this for existing images in the sandbox and for a
+        saved image that has not already been supplied to model vision. This
+        does not display the image to the user. Call show_image_tool
+        separately for an existing image that the user should see; plots
+        produced by run_python_tool are already displayed and supplied to
+        model vision automatically.
 
         Args:
             filepath: Path to a PNG, JPEG, GIF, or WebP image.

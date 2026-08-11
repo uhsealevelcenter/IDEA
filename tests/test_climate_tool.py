@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
@@ -31,6 +32,53 @@ DJF 2024 27.3 0.8
         self.assertEqual(parsed["value"].iloc[0], 0.8)
         self.assertTrue(pd.isna(parsed["value"].iloc[1]))
 
+    def test_every_advertised_index_parser_supports_current_pandas(self):
+        twelve_values = " ".join(str(value / 10) for value in range(1, 13))
+        annual_text = f"1950 2025\n2024 {twelve_values}\n"
+        pdo_text = (
+            "PDO based on ERSSTv5\n"
+            "Year Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec\n"
+            f"2024 {twelve_values}\n"
+        )
+        mode_text = "Year Month SST Wind\n2024 1 0.2 -0.3\n2024 2 0.4 -0.1\n"
+        cpc_text = "SEAS YR TOTAL ANOM\nDJF 2024 27.1 0.7\nJFM 2024 27.2 0.5\n"
+        iod_items = {
+            "items": [
+                {"x": 2024.0, "y": 0.2},
+                {"x": 2024.0833333333, "y": 0.4},
+            ]
+        }
+
+        def response_for(url, timeout):
+            response = Mock()
+            response.raise_for_status.return_value = None
+            if "oni.ascii" in url.lower():
+                response.text = cpc_text
+            elif "pdo.dat" in url:
+                response.text = pdo_text
+            elif "MModes" in url:
+                response.text = mode_text
+            elif "chartable_values" in url:
+                response.text = ""
+                response.json.return_value = iod_items
+            else:
+                response.text = annual_text
+            return response
+
+        with patch.object(
+            climate_tool.requests, "get", side_effect=response_for
+        ):
+            for name in climate_tool._URLS:
+                with self.subTest(index=name):
+                    frame = climate_tool._get_climate_index_dataframe(name)
+                    self.assertEqual(frame.columns.tolist(), ["time", "value"])
+                    self.assertFalse(frame.empty)
+                    self.assertTrue(frame["time"].is_monotonic_increasing)
+                    self.assertFalse(frame["time"].duplicated().any())
+
+            iod = climate_tool._get_climate_index_dataframe("IOD")
+            self.assertTrue((iod["time"].dt.day == 15).all())
+
     def test_normalizes_names_and_rejects_unsafe_output_paths(self):
         self.assertEqual(
             climate_tool.normalize_climate_index_names(
@@ -46,6 +94,12 @@ DJF 2024 27.3 0.8
                 "/workspace/enso/indices.csv",
                 "/workspace/enso/indices.provenance.json",
             ),
+        )
+        self.assertEqual(
+            climate_tool.normalize_climate_index_names(
+                [name.swapcase() for name in climate_tool._URLS]
+            ),
+            list(climate_tool._URLS),
         )
 
         for path in (
@@ -112,6 +166,23 @@ DJF 2024 27.3 0.8
             metadata,
         )
         self.assertNotIn("0.4", json.dumps(metadata))
+
+    def test_builds_bundle_for_every_advertised_index(self):
+        frame = pd.DataFrame({
+            "time": pd.to_datetime(["2024-01-15"]),
+            "value": [0.1],
+        })
+
+        _, _, metadata = climate_tool.build_climate_indices_bundle(
+            list(climate_tool._URLS),
+            "/workspace/climate/all_indices.csv",
+            fetch_index=lambda _name: frame,
+        )
+
+        self.assertEqual(
+            [item["name"] for item in metadata["indices"]],
+            list(climate_tool._URLS),
+        )
 
     def test_tool_writes_bytes_and_returns_only_compact_metadata(self):
         writes = {}
