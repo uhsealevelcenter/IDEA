@@ -3,8 +3,10 @@
 ## Changes in `feature/langgraph-memory`
 
 This listing compares `feature/langgraph-memory` with its parent branch,
-`next-dev`, at merge base `e6dc507`. It covers the 22 commits currently unique
-to this branch.
+`next-dev`, at merge base `e6dc507`. It covers the 23 commits currently unique
+to this branch. See [`Recent-Changes-Details.md`](Recent-Changes-Details.md) for
+the developer-oriented, file- and function-level description of the resulting
+code.
 
 1. The agent loop is now a checkpointed LangGraph state graph with explicit model, tool, finalization, and cancellation stages instead of relying on an in-process linear loop for durable state.
 2. LangGraph checkpoints use a dedicated least-privilege PostgreSQL role and schema, with deployment setup scripts and optional AES encryption for persisted checkpoint data.
