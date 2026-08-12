@@ -100,19 +100,23 @@ class ConversationOrchestrator:
         
         # Include relevant conversation history (last N messages for context)
         # TODO: Smart context selection (not all history, just relevant parts)
-        max_history_messages = 10
-        recent_history = self.conversation_history[-max_history_messages:]
-        
-        if recent_history:
-            context_parts.append("\nRecent conversation context:")
-            for msg in recent_history:
-                role = msg['role'].upper()
-                content = msg['content']
+
+        history_messages = [
+            msg for msg in self.conversation_history
+            if msg.get("type") == "message" and isinstance(msg.get("content"), str)
+        ]
+
+        if history_messages:
+            context_parts.append("\nConversation history:")
+            for msg in history_messages:
+                role = msg["role"].upper()
+                content = msg["content"]
                 context_parts.append(f"{role}: {content}")
         
         # Current task
         context_parts.append(f"\nCurrent task:\n{user_message}")
-        
+
+
         return "\n".join(context_parts)
     
     def chat(
