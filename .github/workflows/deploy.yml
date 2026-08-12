@@ -110,6 +110,34 @@ jobs:
             echo "==> Running: ${DEPLOY_CMD}"
             bash -c "${DEPLOY_CMD}"
 
+            echo "==> Waiting for LangGraph to become healthy"
+            compose=(
+              docker compose
+              -f docker-compose.yml
+              -f docker-compose.prod.yml
+            )
+
+            langgraph_ready=false
+            for attempt in $(seq 1 12); do
+              if "${compose[@]}" exec -T langgraph \
+                   curl -fsS http://localhost:8010/health >/dev/null 2>&1; then
+                langgraph_ready=true
+                break
+              fi
+
+              echo "LangGraph is not ready yet (${attempt}/12)"
+              sleep 5
+            done
+
+            if [ "${langgraph_ready}" != "true" ]; then
+              echo "::error::LangGraph failed its internal health check."
+              "${compose[@]}" ps -a langgraph
+              "${compose[@]}" logs --tail=200 --timestamps langgraph
+              exit 1
+            fi
+
+            echo "LangGraph internal health check passed."
+
             # Remove the credential from the VM now that all pulls are done;
             # the token also expires when the run ends regardless.
             docker logout ghcr.io

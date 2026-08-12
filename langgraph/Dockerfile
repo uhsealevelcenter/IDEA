@@ -35,10 +35,14 @@ COPY idea_graph/ ./idea_graph/
 COPY multi_agent.py .
 COPY langgraph_service.py .
 COPY idea_config.py .
+COPY progress.py .
+
+# Fail the image build if a root module is omitted or the service import graph
+# is otherwise incomplete. This runs without contacting Redis/PostgreSQL.
+RUN python -c "import progress; import langgraph_service"
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV OPENAI_API_KEY=""
 
 # Expose port for the API service
 EXPOSE 8010
