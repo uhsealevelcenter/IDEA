@@ -450,7 +450,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(
             resolved,
-            "[figure.png](/idea-file-preview/file-123/figure.png)",
+            "[figure.png](/api/v1/files/file-123/content)",
         )
         self.assertEqual(referenced, {"file-123"})
 
@@ -467,7 +467,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(
             resolved,
-            "[figure.png](/idea-file-preview/file-123/figure.png)",
+            "[figure.png](/api/v1/files/file-123/content)",
         )
         self.assertEqual(referenced, {"file-123"})
 
@@ -485,7 +485,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(
             resolved,
             "Saved at "
-            "[data.csv](/idea-file-preview/file-456/data.csv)",
+            "[data.csv](/api/v1/files/file-456/content)",
         )
         self.assertEqual(referenced, {"file-456"})
 
@@ -559,7 +559,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(
             result,
             [
-                "[figure.png](/idea-file-preview/file-123/figure.png)"
+                "[figure.png](/api/v1/files/file-123/content)"
             ],
         )
 
@@ -594,7 +594,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(result, [
             "Here is the ONI.",
             "\n\n![generated image]"
-            "(/idea-file-preview/file-oni/oni.png)\n\n",
+            "(/api/v1/files/file-oni/content)\n\n",
         ])
         self.assertNotIn("data:image", "".join(result))
 
@@ -944,7 +944,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             result,
             [
                 "Created it. ",
-                "[figure.png](/idea-file-preview/file-123/figure.png)",
+                "[figure.png](/api/v1/files/file-123/content)",
             ],
         )
 
@@ -963,7 +963,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(
             resolved,
             "[random_scatter.png]"
-            "(http://localhost/idea-file-preview/file-123/random_scatter.png)",
+            "(http://localhost/api/v1/files/file-123/content)",
         )
         self.assertEqual(referenced, {"file-123"})
 
@@ -994,7 +994,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
     def test_file_link_escapes_markdown_display_name(self):
         self.assertEqual(
             idea_pipe._file_link("file-123", "/outputs/a[b].png"),
-            "[a\\[b\\].png](/idea-file-preview/file-123/a%5Bb%5D.png)",
+            "[a\\[b\\].png](/api/v1/files/file-123/content)",
         )
 
     def test_translates_file_chunk_to_openwebui_preview_link(self):
@@ -1012,7 +1012,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             chunks,
             [
                 "\n\n📎 [final.csv]"
-                "(/idea-file-preview/file-123/final.csv)\n\n"
+                "(/api/v1/files/file-123/content)\n\n"
             ],
         )
 
@@ -1045,6 +1045,31 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertIn("NameError: missing\n````", rendered)
         self.assertIn(idea_pipe.TOOL_OUTPUT_START, rendered)
         self.assertIn(idea_pipe.TOOL_OUTPUT_END, rendered)
+
+    def test_streamed_console_deltas_render_in_one_markdown_block(self):
+        rendered = "".join(
+            part
+            for event in (
+                {
+                    "type": "console", "format": "output",
+                    "content": "first\n", "start": True, "end": False,
+                },
+                {
+                    "type": "console", "format": "output",
+                    "content": "second\n", "start": False, "end": False,
+                },
+                {
+                    "type": "console", "format": "output",
+                    "content": "", "start": False, "end": True,
+                },
+            )
+            for part in idea_pipe.Pipe._translate_chunk(event)
+        )
+
+        self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
+        self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
+        self.assertEqual(rendered.count("````text"), 1)
+        self.assertIn("first\nsecond\n", rendered)
 
     def test_suppresses_only_matching_completed_python_replay(self):
         completed = set()
@@ -1087,7 +1112,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(
             rendered,
             "\n\n![generated image]"
-            "(http://localhost/idea-file-preview/file-oni/oni%20plot.png)\n\n",
+            "(http://localhost/api/v1/files/file-oni/content)\n\n",
         )
         self.assertEqual(referenced, {"file-oni"})
 

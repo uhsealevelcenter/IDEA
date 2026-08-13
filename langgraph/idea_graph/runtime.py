@@ -605,7 +605,7 @@ class TerminalGraphRuntime:
         if name == "run_python_tool":
             from tools.persistent_terminal import (
                 inspect_python_namespace,
-                run_python,
+                run_python_stream,
             )
 
             code = str(args.get("code") or "")
@@ -615,7 +615,7 @@ class TerminalGraphRuntime:
                 "content": code, "tool_call_id": tool_call_id,
                 "start": True, "end": True,
             })
-            chunks = run_python(
+            chunks = run_python_stream(
                 code,
                 session_id=self.agent.sandbox_id,
                 kernel_id=str(state.get("kernel_id") or "default"),
@@ -626,48 +626,59 @@ class TerminalGraphRuntime:
             image_count = 0
             generated_images: list[str] = []
             run_id = str(state.get("run_id") or "")
-            for chunk in chunks:
-                if chunk.get("type") == "console" and chunk.get("format") != "active_line":
-                    content = str(chunk.get("content") or "")
-                    if content:
-                        console.append(content)
-                        console_format = str(chunk.get("format") or "output")
-                        if console_format == "error":
-                            errors.append(content)
+            console_stream_open = False
+
+            def emit_console(content: str, console_format: str) -> None:
+                nonlocal console_stream_open
+                if not content:
+                    return
+                self.emit({
+                    "role": "computer", "type": "console", "format": console_format,
+                    "content": content, "tool_call_id": tool_call_id,
+                    "start": not console_stream_open, "end": False,
+                })
+                console_stream_open = True
+
+            try:
+                for chunk in chunks:
+                    if chunk.get("type") == "console" and chunk.get("format") != "active_line":
+                        content = str(chunk.get("content") or "")
+                        if content:
+                            console.append(content)
+                            console_format = str(chunk.get("format") or "output")
+                            if console_format == "error":
+                                errors.append(content)
+                            emit_console(content, console_format)
+                    elif chunk.get("type") == "image":
+                        image_count += 1
+                        try:
+                            image_path, image_format = self.persist_kernel_image(
+                                chunk,
+                                run_id=run_id,
+                                image_index=image_count,
+                            )
+                        except Exception as exc:
+                            warning = f"✗ Could not save Python image {image_count}: {exc}"
+                            console.append(warning)
+                            errors.append(warning)
+                            emit_console(warning, "error")
+                            continue
+                        self.displayed_image_paths.add(image_path)
+                        generated_images.append(image_path)
                         self.emit({
-                            "role": "computer", "type": "console", "format": console_format,
-                            "content": content, "start": True, "end": True,
-                        })
-                elif chunk.get("type") == "image":
-                    image_count += 1
-                    try:
-                        image_path, image_format = self.persist_kernel_image(
-                            chunk,
-                            run_id=run_id,
-                            image_index=image_count,
-                        )
-                    except Exception as exc:
-                        warning = f"✗ Could not save Python image {image_count}: {exc}"
-                        console.append(warning)
-                        errors.append(warning)
-                        self.emit({
-                            "role": "computer",
-                            "type": "console",
-                            "format": "error",
-                            "content": warning,
+                            "role": "assistant",
+                            "type": "image",
+                            "format": image_format,
+                            "filename": image_path,
                             "start": True,
                             "end": True,
                         })
-                        continue
-                    self.displayed_image_paths.add(image_path)
-                    generated_images.append(image_path)
+            finally:
+                if console_stream_open:
                     self.emit({
-                        "role": "assistant",
-                        "type": "image",
-                        "format": image_format,
-                        "filename": image_path,
-                        "start": True,
-                        "end": True,
+                        "role": "computer", "type": "console", "format": "output",
+                        "content": "", "tool_call_id": tool_call_id,
+                        "start": False, "end": True,
                     })
             content = "\n".join(console).strip()
             if image_count:

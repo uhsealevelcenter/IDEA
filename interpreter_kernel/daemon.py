@@ -139,7 +139,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in {"/run", "/interrupt"}:
+        if self.path not in {"/run", "/run-stream", "/interrupt"}:
             self._json(404, {"error": "not found"})
             return
 
@@ -171,8 +171,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(400, {"error": f"unsupported language: {language}"})
             return
 
-        chunks = []
         runner = _get_language(language, kernel_id)
+        if self.path == "/run-stream":
+            self._stream_run(runner, code, kernel_id)
+            return
+
+        chunks = []
         with _exec_locks[kernel_id]:
             try:
                 for chunk in runner.run(code):
@@ -182,6 +186,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 chunks.append({"type": "console", "format": "error", "content": f"Kernel error: {e}"})
 
         self._json(200, {"chunks": chunks})
+
+    def _stream_run(self, runner, code: str, kernel_id: str) -> None:
+        """Send each kernel chunk immediately as one NDJSON record."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        try:
+            with _exec_locks[kernel_id]:
+                try:
+                    for chunk in runner.run(code):
+                        if chunk.get("format") != "active_line":
+                            self._ndjson({"event": "chunk", "chunk": chunk})
+                except Exception as exc:
+                    self._ndjson({
+                        "event": "chunk",
+                        "chunk": {
+                            "type": "console",
+                            "format": "error",
+                            "content": f"Kernel error: {exc}",
+                        },
+                    })
+            self._ndjson({"event": "end"})
+        except (BrokenPipeError, ConnectionResetError):
+            # The caller owns run-scoped interruption. A disconnected stream
+            # must not crash the daemon or corrupt the persistent kernel.
+            pass
+
+    def _ndjson(self, payload: dict) -> None:
+        self.wfile.write(json.dumps(payload).encode("utf-8") + b"\n")
+        self.wfile.flush()
 
     def _json(self, status: int, payload: dict):
         data = json.dumps(payload).encode("utf-8")

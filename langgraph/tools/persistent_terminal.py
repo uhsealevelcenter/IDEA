@@ -555,6 +555,33 @@ def run_python(
     return _normalize_kernel_chunks(result.get("chunks", []))
 
 
+def run_python_stream(
+    code: str,
+    session_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+):
+    """Yield normalized kernel chunks from sandbox_service's NDJSON stream."""
+    try:
+        with _client.stream(
+            "POST",
+            f"/sandboxes/{session_id}/run-python/stream",
+            json={"code": code, "kernel_id": kernel_id, "run_id": run_id},
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                if isinstance(chunk, dict):
+                    yield _normalize_kernel_chunk(chunk)
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        yield {
+            "type": "console", "format": "error",
+            "content": f"✗ Failed to stream from sandbox service: {exc}",
+        }
+
+
 _PYTHON_EXCEPTION_LINE_RE = re.compile(
     r"^(?:[A-Za-z_][\w.]*(?:Error|Exception)|KeyboardInterrupt|SystemExit):"
 )
@@ -575,17 +602,18 @@ def _looks_like_legacy_kernel_error(content: str) -> bool:
 
 def _normalize_kernel_chunks(chunks: list[dict]) -> list[dict]:
     """Preserve explicit error metadata and upgrade legacy traceback chunks."""
-    normalized = []
-    for raw_chunk in chunks:
-        chunk = dict(raw_chunk)
-        if (
-            chunk.get("type") == "console"
-            and chunk.get("format", "output") == "output"
-            and _looks_like_legacy_kernel_error(str(chunk.get("content") or ""))
-        ):
-            chunk["format"] = "error"
-        normalized.append(chunk)
-    return normalized
+    return [_normalize_kernel_chunk(chunk) for chunk in chunks]
+
+
+def _normalize_kernel_chunk(raw_chunk: dict) -> dict:
+    chunk = dict(raw_chunk)
+    if (
+        chunk.get("type") == "console"
+        and chunk.get("format", "output") == "output"
+        and _looks_like_legacy_kernel_error(str(chunk.get("content") or ""))
+    ):
+        chunk["format"] = "error"
+    return chunk
 
 
 _IDEA_NAMESPACE_MARKER = "__IDEA_KERNEL_NAMESPACE_V1__:"
@@ -649,7 +677,13 @@ def inspect_python_namespace(
 def interrupt_run(session_id: str, run_id: str) -> bool:
     """Best-effort, run-scoped interruption that preserves workspace files."""
     try:
-        response = _client.post(f"/sandboxes/{session_id}/runs/{run_id}/interrupt")
+        # Do not inherit the normal 30-minute Python read timeout.  An
+        # interrupt has its own 30-second guest-side ceiling and must never
+        # strand a LangGraph stop worker indefinitely.
+        response = _client.post(
+            f"/sandboxes/{session_id}/runs/{run_id}/interrupt",
+            timeout=35.0,
+        )
         response.raise_for_status()
         return bool(response.json().get("interrupted"))
     except httpx.HTTPError:

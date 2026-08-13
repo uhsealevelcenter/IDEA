@@ -148,6 +148,11 @@ When rolling out a published image, two things matter:
    with a tested snapshot/restore migration and remove this destructive rollout
    from normal operations.
 
+   **Deferred migration TODO:** design and test that versioned workspace
+   migration before IDEA leaves developer-only testing. The streaming-kernel
+   rollout intentionally does not implement it; all current users may receive
+   a newly-created `idea-oi-kernel` workspace.
+
 ## Dependency modules (`modules/`)
 
 `config.env` selects the dependency module installed into the isolated

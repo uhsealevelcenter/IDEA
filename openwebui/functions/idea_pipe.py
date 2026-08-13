@@ -49,6 +49,12 @@ INLINE_PREVIEW_EXTENSIONS = {
     ".webp",
     ".xml",
 }
+# HTML is active content and continues through nginx's authenticated,
+# sandboxed preview route. IDEA Open WebUI v0.11.0-idea.0.7 rewrites that URL
+# to its equally sandboxed, share-scoped endpoint on shared-chat pages. Other
+# browser-readable artifacts use Open WebUI's canonical content URL, which
+# the shared-chat page also rewrites to share-scoped access.
+ACTIVE_CONTENT_PREVIEW_EXTENSIONS = {".htm", ".html"}
 ARTIFACT_TARGET_PREFIXES = (
     "/outputs/",
     "sandbox:/outputs/",
@@ -490,6 +496,11 @@ def _download_url(file_id: str, public_base_url: str = "") -> str:
     return f"{public_base_url.rstrip('/')}{path}" if public_base_url else path
 
 
+def _content_url(file_id: str, public_base_url: str = "") -> str:
+    path = f"/api/v1/files/{file_id}/content"
+    return f"{public_base_url.rstrip('/')}{path}" if public_base_url else path
+
+
 def _preview_url(
     file_id: str,
     filename: str,
@@ -505,8 +516,11 @@ def _file_url(
     filename: str,
     public_base_url: str = "",
 ) -> str:
-    if PurePosixPath(filename).suffix.lower() in INLINE_PREVIEW_EXTENSIONS:
+    extension = PurePosixPath(filename).suffix.lower()
+    if extension in ACTIVE_CONTENT_PREVIEW_EXTENSIONS:
         return _preview_url(file_id, filename, public_base_url)
+    if extension in INLINE_PREVIEW_EXTENSIONS:
+        return _content_url(file_id, public_base_url)
     return _download_url(file_id, public_base_url)
 
 
@@ -1043,7 +1057,15 @@ class Pipe:
                 f"{TOOL_OUTPUT_END}\n\n"
             )
         elif chunk_type == "console":
-            if fmt == "error":
+            is_stream = not (chunk.get("start") is None and chunk.get("end") is None)
+            if is_stream:
+                if chunk.get("start"):
+                    yield f"\n\n{TOOL_OUTPUT_START}\n````text\n"
+                if content:
+                    yield content
+                if chunk.get("end"):
+                    yield f"\n````\n{TOOL_OUTPUT_END}\n\n"
+            elif fmt == "error":
                 yield (
                     f"\n\n{TOOL_OUTPUT_START}\n"
                     "⚠️ **Python execution error**\n\n"

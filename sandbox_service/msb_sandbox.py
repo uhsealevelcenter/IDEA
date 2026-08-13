@@ -13,14 +13,17 @@ underlying aiohttp-based SDK session stays alive across calls.
 """
 
 import asyncio
+import contextlib
 import json
 import os
+import queue
+import signal
 import shlex
 import threading
 import time
 import urllib.parse
 import uuid
-from typing import Optional
+from typing import Callable, Optional
 
 # ioctl request number for KVM_GET_API_VERSION (arch-independent, see
 # linux/kvm.h) - used by _kvm_functional() below. Imported lazily inside
@@ -352,6 +355,144 @@ class MicrosandboxTerminal:
             stderr = getattr(output, "stderr_text", None) or ""
             content = text or stderr or "(no output from kernel client)"
             return {"chunks": [{"type": "console", "format": "error", "content": content}]}
+
+    def run_python_stream(
+        self,
+        code: str,
+        kernel_id: str = "default",
+        run_id: str = "",
+        cancelled: Optional[Callable[[], bool]] = None,
+    ):
+        """Yield persistent-kernel chunks as the guest produces them."""
+        tmp_path = f"/tmp/.oi_kernel_code_{uuid.uuid4().hex}.py"
+        events: queue.Queue = queue.Queue()
+        sentinel = object()
+        stderr_parts: list[bytes] = []
+        exit_code = 0
+
+        try:
+            self._exec(lambda: self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
+        except Exception as exc:
+            yield {
+                "type": "console", "format": "error",
+                "content": f"Kernel exec failed: {exc}",
+            }
+            return
+
+        command = (
+            f"python3 {OI_KERNEL_CLIENT_PATH} --run-stream-file {tmp_path} "
+            f"--kernel-id {shlex.quote(kernel_id)} --run-id {shlex.quote(run_id)}"
+        )
+
+        async def _produce() -> None:
+            cancellation_monitor = None
+            try:
+                handle = await self._sandbox.shell_stream(
+                    command,
+                    timeout=self._exec_timeout(code),
+                )
+
+                async def _monitor_cancellation() -> None:
+                    while True:
+                        if cancelled is not None and cancelled():
+                            # Signal the already-running guest bridge. Opening
+                            # another sandbox.shell() here can block behind a
+                            # cold VM/client startup and make Stop ineffective.
+                            await handle.signal(signal.SIGINT)
+                            return
+                        await asyncio.sleep(0.05)
+
+                if cancelled is not None:
+                    cancellation_monitor = asyncio.create_task(
+                        _monitor_cancellation()
+                    )
+                async for event in handle:
+                    event_type = str(getattr(event, "event_type", "")).lower()
+                    if "stdout" in event_type:
+                        events.put(("stdout", bytes(getattr(event, "data", b"") or b"")))
+                    elif "stderr" in event_type:
+                        events.put(("stderr", bytes(getattr(event, "data", b"") or b"")))
+                    elif "exit" in event_type:
+                        events.put(("exit", int(getattr(event, "code", 0) or 0)))
+            except Exception as exc:
+                events.put(("error", exc))
+            finally:
+                if cancellation_monitor is not None:
+                    cancellation_monitor.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await cancellation_monitor
+                events.put(("done", sentinel))
+
+        future = asyncio.run_coroutine_threadsafe(_produce(), self._loop)
+        stdout_buffer = b""
+        saw_error_chunk = False
+        completed = False
+        try:
+            while True:
+                try:
+                    kind, value = events.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if kind == "stdout":
+                    stdout_buffer += value
+                    while b"\n" in stdout_buffer:
+                        raw_line, stdout_buffer = stdout_buffer.split(b"\n", 1)
+                        chunk = self._decode_kernel_stream_line(raw_line)
+                        if chunk is not None:
+                            saw_error_chunk = saw_error_chunk or chunk.get("format") == "error"
+                            yield chunk
+                elif kind == "stderr":
+                    stderr_parts.append(value)
+                elif kind == "exit":
+                    exit_code = value
+                elif kind == "error":
+                    saw_error_chunk = True
+                    yield {
+                        "type": "console", "format": "error",
+                        "content": f"Kernel exec failed: {value}",
+                    }
+                elif kind == "done":
+                    completed = True
+                    break
+
+            if stdout_buffer.strip():
+                chunk = self._decode_kernel_stream_line(stdout_buffer)
+                if chunk is not None:
+                    saw_error_chunk = saw_error_chunk or chunk.get("format") == "error"
+                    yield chunk
+            if exit_code and stderr_parts and not saw_error_chunk:
+                yield {
+                    "type": "console", "format": "error",
+                    "content": b"".join(stderr_parts).decode("utf-8", errors="replace").strip(),
+                }
+        finally:
+            if not completed and not future.done():
+                self.interrupt_python(kernel_id)
+                future.cancel()
+            try:
+                self._exec(lambda: self._sandbox.shell(f"rm -f {tmp_path}"))
+            except Exception:
+                pass
+
+    @staticmethod
+    def _decode_kernel_stream_line(raw_line: bytes):
+        if not raw_line.strip():
+            return None
+        try:
+            envelope = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {
+                "type": "console", "format": "error",
+                "content": raw_line.decode("utf-8", errors="replace"),
+            }
+        if envelope.get("event") == "chunk" and isinstance(envelope.get("chunk"), dict):
+            return envelope["chunk"]
+        if envelope.get("event") == "error":
+            return {
+                "type": "console", "format": "error",
+                "content": str(envelope.get("error") or "Unknown kernel stream error"),
+            }
+        return None
 
     def interrupt_python(self, kernel_id: str) -> bool:
         """Send a Jupyter interrupt through the in-VM daemon."""
