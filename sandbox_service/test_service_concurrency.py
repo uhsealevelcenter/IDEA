@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, call, patch
 SERVICE_DIR = Path(__file__).resolve().parent
 registry_stub = types.ModuleType("terminal_registry")
 registry_stub.run_python = lambda *args, **kwargs: {"chunks": []}
+registry_stub.run_python_stream = lambda *args, **kwargs: iter(())
 registry_stub.interrupt_run = lambda *args, **kwargs: False
 registry_stub.stop_all_terminals = lambda: 0
 previous_registry = sys.modules.get("terminal_registry")

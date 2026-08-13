@@ -1,5 +1,8 @@
 import sys
 import io
+import asyncio
+import signal
+import threading
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -188,6 +191,101 @@ class MicrosandboxOpenTerminalTests(unittest.TestCase):
             terminal._ensure_open_terminal()
 
 
+class MicrosandboxPythonStreamingTests(unittest.TestCase):
+    def test_ndjson_stdout_is_yielded_one_chunk_at_a_time(self):
+        class Handle:
+            def __aiter__(self):
+                self.events = iter([
+                    SimpleNamespace(event_type="stdout", data=b'{"event":"chunk","chunk":{"type":"console","format":"output","content":"first\\n"}}\n'),
+                    SimpleNamespace(event_type="stdout", data=b'{"event":"chunk","chunk":{"type":"console","format":"output","content":"second\\n"}}\n'),
+                    SimpleNamespace(event_type="exited", code=0),
+                ])
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self.events)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        async def shell_stream(*args, **kwargs):
+            return Handle()
+
+        terminal = MicrosandboxTerminal.__new__(MicrosandboxTerminal)
+        terminal._sandbox = SimpleNamespace(shell_stream=shell_stream)
+        terminal._loop = asyncio.new_event_loop()
+        terminal._thread = threading.Thread(
+            target=terminal._loop.run_forever, daemon=True
+        )
+        terminal._thread.start()
+        terminal._exec = Mock(return_value=None)
+        terminal.interrupt_python = Mock(return_value=True)
+        try:
+            chunks = list(terminal.run_python_stream(
+                "print('first')", kernel_id="kernel-1", run_id="run-1"
+            ))
+        finally:
+            terminal._loop.call_soon_threadsafe(terminal._loop.stop)
+            terminal._thread.join(timeout=2)
+            terminal._loop.close()
+
+        self.assertEqual(
+            [chunk["content"] for chunk in chunks],
+            ["first\n", "second\n"],
+        )
+        terminal.interrupt_python.assert_not_called()
+
+    def test_cancellation_signals_existing_stream_process(self):
+        class Handle:
+            def __init__(self):
+                self.signal_calls = []
+                self.finished = asyncio.Event()
+                self.exited = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self.exited:
+                    raise StopAsyncIteration
+                await self.finished.wait()
+                self.exited = True
+                return SimpleNamespace(event_type="exited", code=0)
+
+            async def signal(self, sig):
+                self.signal_calls.append(sig)
+                self.finished.set()
+
+        handle = Handle()
+
+        async def shell_stream(*args, **kwargs):
+            return handle
+
+        terminal = MicrosandboxTerminal.__new__(MicrosandboxTerminal)
+        terminal._sandbox = SimpleNamespace(shell_stream=shell_stream)
+        terminal._loop = asyncio.new_event_loop()
+        terminal._thread = threading.Thread(
+            target=terminal._loop.run_forever, daemon=True
+        )
+        terminal._thread.start()
+        terminal._exec = Mock(return_value=None)
+        terminal.interrupt_python = Mock(return_value=True)
+        try:
+            chunks = list(terminal.run_python_stream(
+                "while True: pass",
+                kernel_id="kernel-1",
+                run_id="run-1",
+                cancelled=lambda: True,
+            ))
+        finally:
+            terminal._loop.call_soon_threadsafe(terminal._loop.stop)
+            terminal._thread.join(timeout=2)
+            terminal._loop.close()
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(handle.signal_calls, [signal.SIGINT])
+        terminal.interrupt_python.assert_not_called()
+
 class BinarySandboxClientTests(unittest.TestCase):
     def test_python_execution_routes_kernel_and_run_ids(self):
         response = Mock()
@@ -207,6 +305,41 @@ class BinarySandboxClientTests(unittest.TestCase):
             "/sandboxes/user-1/run-python",
             json={
                 "code": "value = 1",
+                "kernel_id": "kernel-1",
+                "run_id": "run-1",
+            },
+        )
+
+    def test_python_chunks_are_consumed_from_ndjson_stream(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.iter_lines.return_value = iter([
+            '{"type":"console","format":"output","content":"first\\n"}',
+            '{"type":"console","format":"output","content":"second\\n"}',
+        ])
+        context = Mock()
+        context.__enter__ = Mock(return_value=response)
+        context.__exit__ = Mock(return_value=None)
+
+        with patch.object(
+            persistent_terminal._client, "stream", return_value=context
+        ) as stream:
+            chunks = list(persistent_terminal.run_python_stream(
+                "print('first')",
+                session_id="user-1",
+                kernel_id="kernel-1",
+                run_id="run-1",
+            ))
+
+        self.assertEqual(
+            [chunk["content"] for chunk in chunks],
+            ["first\n", "second\n"],
+        )
+        stream.assert_called_once_with(
+            "POST",
+            "/sandboxes/user-1/run-python/stream",
+            json={
+                "code": "print('first')",
                 "kernel_id": "kernel-1",
                 "run_id": "run-1",
             },

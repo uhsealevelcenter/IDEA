@@ -194,7 +194,8 @@ class PersistentTerminal:
 _terminals: dict = {}
 _terminal_locks: dict = {}
 _registry_lock = threading.Lock()
-_active_python_runs: dict[str, tuple[str, str, object]] = {}
+_active_python_runs: dict[str, tuple] = {}
+_cancelled_python_runs: set[str] = set()
 _active_codex_runs: dict[str, tuple[str, object]] = {}
 
 
@@ -372,6 +373,57 @@ def run_python(
         }
 
 
+def run_python_stream(
+    code: str,
+    sandbox_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+):
+    """Yield Python chunks while retaining the per-sandbox execution lock."""
+    # Register before _get_terminal(): creating/resuming a microVM and warming
+    # its kernel can take tens of seconds. Stop must be remembered during that
+    # window instead of returning False and allowing Python to start afterward.
+    if run_id:
+        with _registry_lock:
+            _active_python_runs[run_id] = (sandbox_id, kernel_id, None, "stream")
+    try:
+        terminal = _get_terminal(sandbox_id)
+        with _get_lock(sandbox_id):
+            if not isinstance(terminal, MicrosandboxTerminal):
+                yield {
+                    "type": "console", "format": "error",
+                    "content": "✗ Streaming Python requires the microsandbox backend.",
+                }
+                return
+            if run_id:
+                with _registry_lock:
+                    _active_python_runs[run_id] = (
+                        sandbox_id, kernel_id, terminal, "stream"
+                    )
+                    cancelled = run_id in _cancelled_python_runs
+                if cancelled:
+                    return
+            yield from terminal.run_python_stream(
+                code,
+                kernel_id=kernel_id,
+                run_id=run_id,
+                cancelled=(
+                    lambda: _python_run_cancelled(run_id)
+                    if run_id else False
+                ),
+            )
+    finally:
+        if run_id:
+            with _registry_lock:
+                _active_python_runs.pop(run_id, None)
+                _cancelled_python_runs.discard(run_id)
+
+
+def _python_run_cancelled(run_id: str) -> bool:
+    with _registry_lock:
+        return run_id in _cancelled_python_runs
+
+
 def run_codex(request: dict, sandbox_id: str) -> dict:
     """Execute Codex inside the user's microVM; never fall back to the host."""
     terminal = _get_terminal(sandbox_id)
@@ -403,11 +455,24 @@ def interrupt_run(sandbox_id: str, run_id: str) -> bool:
     with _registry_lock:
         active_codex = _active_codex_runs.get(run_id)
         active = _active_python_runs.get(run_id)
+        # Check and record streaming cancellation in one critical section.
+        # Otherwise a run could finish between lookup and insertion, leaving
+        # a stale cancellation marker for an already-completed run ID.
+        if (
+            active
+            and active[0] == sandbox_id
+            and len(active) > 3
+            and active[3] == "stream"
+        ):
+            _cancelled_python_runs.add(run_id)
+            return True
     if active_codex and active_codex[0] == sandbox_id:
         return active_codex[1].interrupt_codex(run_id)
     if not active or active[0] != sandbox_id:
         return False
-    _, kernel_id, terminal = active
+    _, kernel_id, terminal = active[:3]
+    if terminal is None:
+        return False
     if not isinstance(terminal, MicrosandboxTerminal):
         return False
     return terminal.interrupt_python(kernel_id)

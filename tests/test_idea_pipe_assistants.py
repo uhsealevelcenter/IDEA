@@ -1046,6 +1046,31 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertIn(idea_pipe.TOOL_OUTPUT_START, rendered)
         self.assertIn(idea_pipe.TOOL_OUTPUT_END, rendered)
 
+    def test_streamed_console_deltas_render_in_one_markdown_block(self):
+        rendered = "".join(
+            part
+            for event in (
+                {
+                    "type": "console", "format": "output",
+                    "content": "first\n", "start": True, "end": False,
+                },
+                {
+                    "type": "console", "format": "output",
+                    "content": "second\n", "start": False, "end": False,
+                },
+                {
+                    "type": "console", "format": "output",
+                    "content": "", "start": False, "end": True,
+                },
+            )
+            for part in idea_pipe.Pipe._translate_chunk(event)
+        )
+
+        self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
+        self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
+        self.assertEqual(rendered.count("````text"), 1)
+        self.assertIn("first\nsecond\n", rendered)
+
     def test_suppresses_only_matching_completed_python_replay(self):
         completed = set()
         self.assertFalse(idea_pipe._is_streamed_python_replay(

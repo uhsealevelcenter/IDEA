@@ -635,6 +635,37 @@ cover capability discovery, upload-based analysis, climate-index plotting,
 literature collections, custom Assistants, and reproducible outputs; SEA and
 Mars use domain-specific starter tasks.
 
+## Incremental persistent-Python output
+
+Python output now streams across every process boundary instead of being
+collected until the Jupyter execution ends:
+
+- `interpreter_kernel/daemon.py` adds `/run-stream`, which writes one flushed
+  NDJSON envelope for each chunk yielded by `JupyterLanguage.run()` and a final
+  `end` record. The existing `/run` response remains available for compatibility.
+- `interpreter_kernel/client.py:run_stream()` forwards those records through
+  the in-VM process stdout immediately.
+- `sandbox_service/msb_sandbox.py:MicrosandboxTerminal.run_python_stream()`
+  consumes `Sandbox.shell_stream()` on the terminal's dedicated asyncio loop,
+  parses stdout incrementally, and yields normalized chunks to
+  `terminal_registry.run_python_stream()` while its per-sandbox execution lock
+  and active-run registration remain held.
+- `sandbox_service/main.py` exposes
+  `/sandboxes/{sandbox_id}/run-python/stream` as `application/x-ndjson` with
+  proxy buffering disabled. The legacy non-streaming endpoint is retained.
+- `langgraph/tools/persistent_terminal.py:run_python_stream()` consumes the
+  response with `httpx.Client.stream()`. `TerminalGraphRuntime.execute_tool()`
+  emits the first console event with `start=True`, subsequent deltas with the
+  same tool-call identity, and one empty `end=True` closure in `finally`.
+- `openwebui/functions/idea_pipe.py:Pipe._translate_chunk()` honors those
+  boundaries, so all print/error deltas from one Python execution appear in a
+  single live Markdown output block rather than separate completed blocks.
+
+Run-scoped interruption remains independent of the execution lock. If a
+stream consumer disconnects unexpectedly, the microsandbox bridge requests a
+kernel interrupt before cancelling its SDK producer, preserving the Stop fix
+while avoiding an orphaned execution.
+
 ## Scientific-tool compatibility
 
 `langgraph/utils/tools/climate_tool.py` was updated for pandas 3 compatibility:
@@ -709,8 +740,9 @@ end-to-end manual testing:
   suppression, Stop propagation, Python fences/errors, and next-turn history
   sanitization.
 - `tests/test_terminal_output_archiving.py`: full-output archives, streaming
-  atomic writes, lazy Open Terminal startup, kernel/run routing, legacy error
-  normalization, bounded interrupt requests, and run interruption.
+  atomic writes, lazy Open Terminal startup, kernel/run routing, incremental
+  microsandbox and HTTP NDJSON delivery, legacy error normalization, bounded
+  interrupt requests, and run interruption.
 - `sandbox_service/test_service_concurrency.py`: verifies that Python execution
   and run interruption are dispatched off the sandbox service event loop.
 - `tests/test_skill_loader.py`: full skill/bundle delivery with redacted logs
@@ -731,8 +763,10 @@ closed by this change set:
    survive client disconnects, but a LangGraph container failure can end a run.
 2. Codex's developer-stage `OPENAI_*` fallback bypasses LiteLLM budgeting and
    must be replaced before broader rollout.
-3. Existing microVMs require migration/recreation to adopt a new image; the
-   supplied bulk refresh is intentionally destructive.
+3. **TODO before non-developer rollout:** replace destructive microVM
+   recreation with a tested snapshot/restore or equivalent versioned migration.
+   During the current developer-only phase, existing VMs may be recreated to
+   adopt this new kernel image and all developers may start with empty state.
 4. Production still needs immutable multi-architecture guest-image publication,
    environment provisioning, recovery/concurrency/security smoke testing, and
    backup/restore procedures for all four storage owners.

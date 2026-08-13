@@ -1057,7 +1057,15 @@ class Pipe:
                 f"{TOOL_OUTPUT_END}\n\n"
             )
         elif chunk_type == "console":
-            if fmt == "error":
+            is_stream = not (chunk.get("start") is None and chunk.get("end") is None)
+            if is_stream:
+                if chunk.get("start"):
+                    yield f"\n\n{TOOL_OUTPUT_START}\n````text\n"
+                if content:
+                    yield content
+                if chunk.get("end"):
+                    yield f"\n````\n{TOOL_OUTPUT_END}\n\n"
+            elif fmt == "error":
                 yield (
                     f"\n\n{TOOL_OUTPUT_START}\n"
                     "⚠️ **Python execution error**\n\n"

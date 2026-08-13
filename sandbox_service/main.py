@@ -10,11 +10,12 @@ to terminal/sandbox execution.
 import asyncio
 import hmac
 import os
+import json
 import tempfile
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 import terminal_registry as registry
@@ -245,6 +246,25 @@ async def run_python(sandbox_id: str, request: RunPythonRequest):
         sandbox_id=sandbox_id,
         kernel_id=request.kernel_id,
         run_id=request.run_id,
+    )
+
+
+@app.post(
+    "/sandboxes/{sandbox_id}/run-python/stream",
+    dependencies=[Depends(require_internal_token)],
+)
+async def run_python_stream(sandbox_id: str, request: RunPythonRequest):
+    """Stream persistent-kernel chunks as newline-delimited JSON."""
+    chunks = registry.run_python_stream(
+        request.code,
+        sandbox_id=sandbox_id,
+        kernel_id=request.kernel_id,
+        run_id=request.run_id,
+    )
+    return StreamingResponse(
+        (json.dumps(chunk, separators=(",", ":")) + "\n" for chunk in chunks),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

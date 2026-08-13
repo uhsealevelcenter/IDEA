@@ -310,12 +310,12 @@ class LangGraphKernelImageTests(unittest.TestCase):
         return runtime
 
     @patch("tools.persistent_terminal.inspect_python_namespace")
-    @patch("tools.persistent_terminal.run_python")
+    @patch("tools.persistent_terminal.run_python_stream")
     def test_python_error_format_is_preserved_and_marks_tool_failed(
-        self, run_python, inspect_python_namespace
+        self, run_python_stream, inspect_python_namespace
     ):
         traceback = "Traceback (most recent call last):\nNameError: missing"
-        run_python.return_value = [{
+        run_python_stream.return_value = [{
             "type": "console",
             "format": "error",
             "content": traceback,
@@ -330,14 +330,25 @@ class LangGraphKernelImageTests(unittest.TestCase):
         self.assertEqual(outcome.status, "failed")
         self.assertEqual(outcome.error, traceback)
         inspect_python_namespace.assert_not_called()
+        emitted = [call.args[0] for call in runtime.event_callback.call_args_list]
         self.assertIn({
             "role": "computer",
             "type": "console",
             "format": "error",
             "content": traceback,
+            "tool_call_id": "",
             "start": True,
+            "end": False,
+        }, emitted)
+        self.assertIn({
+            "role": "computer",
+            "type": "console",
+            "format": "output",
+            "content": "",
+            "tool_call_id": "",
+            "start": False,
             "end": True,
-        }, [call.args[0] for call in runtime.event_callback.call_args_list])
+        }, emitted)
 
     def test_pending_generated_image_is_supplied_to_model_vision(self):
         runtime = self.make_runtime()
@@ -420,11 +431,11 @@ class LangGraphKernelImageTests(unittest.TestCase):
         return_value=[{"name": "df", "type": "DataFrame", "shape": [3, 2]}],
     )
     @patch("tools.persistent_terminal.write_file_stream")
-    @patch("tools.persistent_terminal.run_python")
+    @patch("tools.persistent_terminal.run_python_stream")
     def test_python_image_is_persisted_and_emitted_as_a_file_reference(
-        self, run_python, write_file_stream, inspect_python_namespace
+        self, run_python_stream, write_file_stream, inspect_python_namespace
     ):
-        run_python.return_value = [{
+        run_python_stream.return_value = [{
             "type": "image",
             "format": "base64.png",
             "content": base64.b64encode(PNG_BYTES).decode(),
@@ -471,11 +482,11 @@ class LangGraphKernelImageTests(unittest.TestCase):
         self.assertNotIn(PNG_BYTES.decode("latin1"), str(emitted))
 
     @patch("tools.persistent_terminal.write_file_stream")
-    @patch("tools.persistent_terminal.run_python")
+    @patch("tools.persistent_terminal.run_python_stream")
     def test_invalid_python_image_never_falls_back_to_inline_base64(
-        self, run_python, write_file_stream
+        self, run_python_stream, write_file_stream
     ):
-        run_python.return_value = [{
+        run_python_stream.return_value = [{
             "type": "image",
             "format": "base64.png",
             "content": "not-base64!",
