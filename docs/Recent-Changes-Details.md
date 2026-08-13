@@ -273,8 +273,24 @@ label so buffering cannot grow without bound.
 `langgraph/idea_graph/control.py` adds thread-safe `RunCancellation` state.
 `stop_chat_run()` persists a cancellation key (so queued jobs see it), signals
 an active graph control, marks the run `stopping`, emits status, and calls the
-sandbox interrupt route. `_run_chat_job()` also monitors the Redis cancel key
-so a Stop can cross process/request boundaries.
+sandbox interrupt route. The status transition is deliberately persisted
+before waiting for the guest interrupt. Because
+`tools.persistent_terminal.interrupt_run()` is a synchronous HTTP bridge,
+`stop_chat_run()` invokes it with `asyncio.to_thread()`; the interrupt client
+also has a dedicated 35-second timeout rather than inheriting the normal
+1,800-second Python execution timeout. This prevents a slow sandbox from
+blocking LangGraph health checks, event polling, or a subsequent prompt.
+`_run_chat_job()` also monitors the Redis cancel key so a Stop can cross
+process/request boundaries.
+
+The sandbox service applies the same boundary in `sandbox_service/main.py`.
+Both the long-lived `registry.run_python()` call and the synchronous
+`registry.interrupt_run()` bridge run through `asyncio.to_thread()`. Previously,
+`/run-python` occupied uvicorn's event-loop thread until Python completed, so
+the service could not process the concurrent `/runs/<run-id>/interrupt`
+request; LangGraph then blocked on that request and delayed all new chat runs.
+The interrupt endpoint can now reach `terminal_registry.interrupt_run()` while
+the original kernel request is active.
 
 The graph checks Stop before a model call, before tool execution, and after
 each tool. `TerminalGraphRuntime.call_model()` cancels an in-flight async model
@@ -393,11 +409,17 @@ are self-contained, and uploads concurrently under the current user's Open
 WebUI authorization.
 
 The Pipe's `_resolve_output_links()` replaces model-authored sandbox links
-with exact Open WebUI file URLs after finalization. Preview-safe extensions
-use `/idea-file-preview/...`; other types use the download endpoint. URL-
-encoded paths are normalized, Markdown labels are escaped, duplicate generic
-attachments are suppressed, and unresolved references are rendered as
-explicitly unavailable rather than left as misleading sandbox URLs.
+with exact Open WebUI file URLs after finalization. Passive preview-safe
+extensions use the canonical `/api/v1/files/.../content` route so shared-chat
+pages can rewrite them to their share-scoped authorization endpoint. Active
+HTML uses the authenticated, sandboxed `/idea-file-preview/...` route in the
+owner's chat. IDEA Open WebUI `v0.11.0-idea.0.7` rewrites that link on shared
+pages to an authorized share-scoped HTML response with the same sandbox
+restrictions, allowing the webpage to open in a new tab. Other types use the
+download endpoint. URL-encoded paths are normalized, Markdown labels are
+escaped, duplicate generic attachments are suppressed, and unresolved
+references are rendered as explicitly unavailable rather than left as
+misleading sandbox URLs.
 
 ## Attachments, PaperQA, skills, and prompts
 
@@ -668,8 +690,9 @@ end-to-end manual testing:
   bounded ledgers/context, repeated-call blocking, continuation, Stop,
   identities, encryption, usage, visual follow-ups, and Codex checkpoint data.
 - `tests/test_chat_run_events.py`: atomic event sequencing, incremental reads,
-  model defaults, run-only usage totals, root regeneration, legacy migration,
-  ID-less histories, and assistant-message checkpoint mappings.
+  model defaults, run-only usage totals, non-blocking sandbox interruption,
+  root regeneration, legacy migration, ID-less histories, and
+  assistant-message checkpoint mappings.
 - `tests/test_model_cancellation.py`: early tool/Python streaming, wait and
   capacity statuses, safe timeout retry, no retry after partial output, live
   model cancellation, and closure of partial Python streams.
@@ -687,7 +710,9 @@ end-to-end manual testing:
   sanitization.
 - `tests/test_terminal_output_archiving.py`: full-output archives, streaming
   atomic writes, lazy Open Terminal startup, kernel/run routing, legacy error
-  normalization, and run interruption.
+  normalization, bounded interrupt requests, and run interruption.
+- `sandbox_service/test_service_concurrency.py`: verifies that Python execution
+  and run interruption are dispatched off the sandbox service event loop.
 - `tests/test_skill_loader.py`: full skill/bundle delivery with redacted logs
   and updated system-prompt requirements.
 - `tests/test_climate_tool.py`: every advertised parser under current pandas,

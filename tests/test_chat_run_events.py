@@ -1,8 +1,9 @@
+import asyncio
 import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +95,54 @@ class ChatRunEventTests(unittest.TestCase):
         lrange.assert_called_once_with(
             "langgraph_run_events:run-1", 0, -1
         )
+
+    def test_stop_offloads_sandbox_interrupt_after_publishing_status(self):
+        async def exercise():
+            status_updates = []
+
+            async def offload(function, user_id, run_id):
+                self.assertIs(function, langgraph_service.interrupt_sandbox_run)
+                self.assertTrue(status_updates)
+                self.assertEqual(status_updates[-1][1]["status"], "stopping")
+                return True
+
+            with (
+                patch.object(
+                    langgraph_service,
+                    "_get_chat_run_status",
+                    return_value={
+                        "run_id": "run-1",
+                        "user_id": "user-1",
+                        "status": "running",
+                    },
+                ),
+                patch.object(langgraph_service.redis_client, "set"),
+                patch.object(
+                    langgraph_service,
+                    "_update_chat_run_status",
+                    side_effect=lambda run_id, **updates: status_updates.append(
+                        (run_id, updates)
+                    ),
+                ),
+                patch.object(langgraph_service, "_append_chat_run_event"),
+                patch.object(
+                    langgraph_service.asyncio,
+                    "to_thread",
+                    new_callable=AsyncMock,
+                    side_effect=offload,
+                ) as to_thread,
+            ):
+                result = await langgraph_service.stop_chat_run("run-1")
+
+            self.assertTrue(result["sandbox_interrupted"])
+            self.assertEqual(result["status"], "stopping")
+            to_thread.assert_awaited_once_with(
+                langgraph_service.interrupt_sandbox_run,
+                "user-1",
+                "run-1",
+            )
+
+        asyncio.run(exercise())
 
 
 class MessageCheckpointTests(unittest.TestCase):

@@ -179,10 +179,14 @@ WebUI's own Files storage at the end of that turn
 (`TerminalAgent._sync_outputs_to_openwebui` in
 `langgraph/agents/terminal_agent.py`) and shown as a filename-only link in
 the chat response - no extra tool call or user action needed. Open WebUI's
-Markdown renderer opens the link in a new tab. In local development, nginx's
-authenticated `/idea-file-preview/` route displays browser-safe formats
-(including PNG and HTML) inline; other formats retain the normal download
-behavior. Generated HTML is served with a sandbox Content Security Policy.
+Markdown renderer opens the link in a new tab. Browser-safe passive formats
+use Open WebUI's canonical `/api/v1/files/.../content` URL so the IDEA Open
+WebUI customization can authorize them from shared conversations. Generated
+HTML remains on nginx's authenticated `/idea-file-preview/` route and is
+served with a sandbox Content Security Policy. On shared pages, IDEA Open
+WebUI `v0.11.0-idea.0.7` rewrites that HTML link to an authorized share-scoped
+endpoint with the same sandbox restrictions, so viewers can open the webpage
+in a new tab. Other formats retain the normal download behavior.
 The model is free to reorganize/rename files under `/outputs` mid-turn
 (`run_terminal_tool`); unchanged files from earlier turns are not attached
 again. Successful path/signature-to-file-ID mappings are retained in a

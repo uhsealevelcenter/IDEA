@@ -1,6 +1,7 @@
 """
 LangGraph Microservice - FastAPI server exposing the ConversationOrchestrator
 """
+import asyncio
 import hashlib
 import hmac
 import json
@@ -712,9 +713,9 @@ async def stop_chat_run(run_id: str):
         control = chat_run_controls.get(run_id)
     if control:
         control.request("user_requested")
-    user_id = str(status.get("user_id") or "")
-    if user_id:
-        interrupt_sandbox_run(user_id, run_id)
+    # Publish the transition before contacting the sandbox.  The interrupt is
+    # normally fast, but callers polling this run should immediately observe
+    # that no more work will be scheduled even if the guest is slow to answer.
     _update_chat_run_status(
         run_id,
         status="stopping",
@@ -725,7 +726,28 @@ async def stop_chat_run(run_id: str):
         "type": "status", "phase": "stopping",
         "description": "Stopping at the next safe point…", "done": False,
     })
-    return {"run_id": run_id, "status": "stopping", "stop_requested": True}
+    user_id = str(status.get("user_id") or "")
+    sandbox_interrupted = None
+    if user_id:
+        # persistent_terminal is intentionally synchronous because graph jobs
+        # execute in worker threads.  Do not call it directly from FastAPI's
+        # event loop: a blocked sandbox would otherwise freeze every LangGraph
+        # endpoint, including a user's next prompt.
+        sandbox_interrupted = await asyncio.to_thread(
+            interrupt_sandbox_run,
+            user_id,
+            run_id,
+        )
+        print(
+            f"Sandbox interrupt for chat run {run_id}: "
+            f"interrupted={sandbox_interrupted}"
+        )
+    return {
+        "run_id": run_id,
+        "status": "stopping",
+        "stop_requested": True,
+        "sandbox_interrupted": sandbox_interrupted,
+    }
 
 
 @app.get("/chat-runs/{run_id}", dependencies=[Depends(require_internal_token)])

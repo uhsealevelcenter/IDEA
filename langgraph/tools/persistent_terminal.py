@@ -649,7 +649,13 @@ def inspect_python_namespace(
 def interrupt_run(session_id: str, run_id: str) -> bool:
     """Best-effort, run-scoped interruption that preserves workspace files."""
     try:
-        response = _client.post(f"/sandboxes/{session_id}/runs/{run_id}/interrupt")
+        # Do not inherit the normal 30-minute Python read timeout.  An
+        # interrupt has its own 30-second guest-side ceiling and must never
+        # strand a LangGraph stop worker indefinitely.
+        response = _client.post(
+            f"/sandboxes/{session_id}/runs/{run_id}/interrupt",
+            timeout=35.0,
+        )
         response.raise_for_status()
         return bool(response.json().get("interrupted"))
     except httpx.HTTPError:

@@ -256,7 +256,10 @@ class BinarySandboxClientTests(unittest.TestCase):
             interrupted = persistent_terminal.interrupt_run("user-1", "run-1")
 
         self.assertTrue(interrupted)
-        post.assert_called_once_with("/sandboxes/user-1/runs/run-1/interrupt")
+        post.assert_called_once_with(
+            "/sandboxes/user-1/runs/run-1/interrupt",
+            timeout=35.0,
+        )
 
     def test_streams_binary_request_with_expected_size(self):
         response = Mock()

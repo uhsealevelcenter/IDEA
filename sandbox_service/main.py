@@ -236,7 +236,11 @@ async def run_python(sandbox_id: str, request: RunPythonRequest):
     console chunk, not an HTTP error), so the langgraph caller doesn't
     need special-case exception handling for this endpoint.
     """
-    return registry.run_python(
+    # registry.run_python blocks until the in-VM kernel finishes.  Keep that
+    # wait off uvicorn's event loop so this service can accept the matching
+    # /interrupt request while Python is still running.
+    return await asyncio.to_thread(
+        registry.run_python,
         request.code,
         sandbox_id=sandbox_id,
         kernel_id=request.kernel_id,
@@ -265,7 +269,15 @@ async def run_codex(sandbox_id: str, request: CodexRunRequest):
 )
 async def interrupt_run(sandbox_id: str, run_id: str):
     """Interrupt this run's active Python kernel or Codex turn."""
-    return {"ok": True, "interrupted": registry.interrupt_run(sandbox_id, run_id)}
+    # The registry crosses the synchronous microsandbox SDK bridge.  Running
+    # it in a worker also prevents a slow guest interrupt from blocking health
+    # checks and unrelated sandbox requests.
+    interrupted = await asyncio.to_thread(
+        registry.interrupt_run,
+        sandbox_id,
+        run_id,
+    )
+    return {"ok": True, "interrupted": interrupted}
 
 
 @app.post("/sandboxes/{sandbox_id}/grep", dependencies=[Depends(require_internal_token)])

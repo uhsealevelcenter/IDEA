@@ -255,15 +255,17 @@ services:
   # `web`'s API routes (/api/, /idea-api/, /conversations/, /share/) are
   # untouched since other things may still depend on them.
   openwebui:
-    # Pinned to an IDEA customization Git commit and image digest (was
+    # Pinned to an IDEA customization release and image digest (was
     # previously floating :main - see the
     # architecture doc's "OpenWebUI upgrade compatibility" section for why
     # that's dangerous: upstream default-behavior changes, e.g. native
     # tool-calling becoming the v0.10.0 default, could otherwise reach this
     # deployment via a routine `docker compose pull`). Swap this exact
-    # commit tag deliberately (and re-verify
+    # release deliberately (and re-verify
     # openwebui/functions/idea_pipe.py still works) whenever moving forward.
-    image: ghcr.io/uhsealevelcenter/idea-open-webui:git-2574322bafe2fe0cd8958d29258eb6a782af2b1a@sha256:41ce4ed8a14bba38f901b2c227823129db1b34a66bdb9bfe5265e4fdc861890b
+    # v0.11.0-idea.0.7 (Git 22db104): includes Pipe Stop propagation and
+    # share-scoped access to attachments, generated files, and HTML previews.
+    image: ghcr.io/uhsealevelcenter/idea-open-webui:0.11.0-idea.0.7@sha256:d67bed44e27bf5e3429bfb8727135f9a28d7db9e845cfbed9a139a806c554c3c
     container_name: idea_openwebui
     restart: unless-stopped
     ports:
