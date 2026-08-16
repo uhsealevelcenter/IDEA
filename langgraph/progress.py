@@ -10,6 +10,10 @@ TOOL_STATUS_DESCRIPTIONS = {
         "Preparing a terminal command…",
         "Running a terminal command…",
     ),
+    "restart_terminal_tool": (
+        "Preparing to restart the terminal…",
+        "Restarting the terminal…",
+    ),
     "write_file_tool": (
         "Preparing a file…",
         "Writing a file…",

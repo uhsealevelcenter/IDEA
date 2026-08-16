@@ -204,6 +204,16 @@ def make_codex_tool():
     return delegate_to_codex
 
 
+# Failure signatures sandbox_service's PersistentTerminal.run() returns when
+# the shell it's talking to has died mid-session (crash/OOM/host hiccup) -
+# not recoverable by retrying the same command, only by restarting the
+# session's terminal (see restart_terminal_tool in make_agent_tools below).
+_DEAD_SHELL_SIGNATURES = (
+    "Shell desynchronized before command start.",
+    "Shell process exited unexpectedly.",
+)
+
+
 def close_terminal(session_id: str) -> None:
     """
     Ask sandbox_service to gracefully stop (state-preserving) this
@@ -261,6 +271,15 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
         f"✓ Command executed successfully in {time_str}."
         if success else f"✗ Command failed after {time_str}."
     )
+
+    if not success and output in _DEAD_SHELL_SIGNATURES:
+        return (
+            f"{status_line}\nOutput:\n{output}\n\n"
+            "The underlying shell process appears to have died. Call "
+            "restart_terminal_tool() to get a fresh shell, then retry this "
+            "command. Note: this resets cwd/env vars/background processes "
+            "for this session; files already written to disk are unaffected."
+        )
 
     if not output:
         return f"{status_line}\nOutput:\n(no output)"
@@ -760,6 +779,23 @@ def make_agent_tools(session_id: str):
     """
 
     @tool
+    def restart_terminal_tool() -> str:
+        """
+        Restart this session's terminal after run_terminal_tool reports that
+        the underlying shell process has died (e.g. "Shell desynchronized
+        before command start."). Gets a fresh shell so subsequent commands
+        work again. This resets cwd/env vars/background processes for this
+        session - files already written to /workspace are unaffected. Only
+        call this when a command actually failed with that specific error,
+        not as a general-purpose reset.
+
+        Returns:
+            Confirmation that a fresh terminal is ready.
+        """
+        close_terminal(session_id)
+        return "✓ Terminal restarted. cwd/env vars/background processes were reset; retry your command."
+
+    @tool
     def run_terminal_tool(command: str) -> str:
         """
         Execute a shell command in a persistent terminal session.
@@ -1018,6 +1054,7 @@ def make_agent_tools(session_id: str):
 
     return (
         run_terminal_tool,
+        restart_terminal_tool,
         write_file_tool,
         publish_artifact_tool,
         show_image_tool,

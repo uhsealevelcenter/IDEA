@@ -309,6 +309,7 @@ class TerminalAgent:
         # other users. See tools/persistent_terminal.make_agent_tools.
         (
             self.run_terminal_tool,
+            self.restart_terminal_tool,
             self.write_file_tool,
             self.publish_artifact_tool,
             self.show_image_tool,
@@ -355,6 +356,7 @@ class TerminalAgent:
             )
         self.all_tools = [
             self.run_terminal_tool,
+            self.restart_terminal_tool,
             self.write_file_tool,
             self.publish_artifact_tool,
             self.show_image_tool,
