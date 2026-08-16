@@ -161,9 +161,11 @@ class TerminalGraphRuntime:
         cacheable_system_message = getattr(
             self,
             "cacheable_system_message",
-            lambda content: SystemMessage(content=content),
+            lambda content, model: SystemMessage(content=content),
         )
-        result: list[BaseMessage] = [cacheable_system_message(self.system_prompt)]
+        result: list[BaseMessage] = [
+            cacheable_system_message(self.system_prompt, self.agent.model)
+        ]
         memory = execution_memory_block(state)
         if memory:
             result.append(SystemMessage(content=memory))

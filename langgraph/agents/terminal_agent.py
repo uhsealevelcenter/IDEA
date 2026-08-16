@@ -103,8 +103,18 @@ def _prompt_cache_key(model: str, session_id: str) -> str:
     return f"idea:{digest}"
 
 
-def _cacheable_system_message(content: str) -> SystemMessage:
-    """Mark the stable IDEA instructions as the explicit cache prefix."""
+def _supports_prompt_caching(model: str) -> bool:
+    """Only the GPT-5.6 family (terra/sol/luna) supports explicit prompt-cache
+    breakpoints/options. Other aliases (e.g. gpt-5.5) 400 on these OpenAI
+    request fields, so callers must gate on this before attaching them."""
+    return str(model or "").strip().lower().startswith("gpt-5.6")
+
+
+def _cacheable_system_message(content: str, model: str) -> SystemMessage:
+    """Mark the stable IDEA instructions as the explicit cache prefix, only
+    for models that support it (see _supports_prompt_caching)."""
+    if not _supports_prompt_caching(model):
+        return SystemMessage(content=content)
     return SystemMessage(content=[{
         "type": "text",
         "text": content,
@@ -388,15 +398,6 @@ class TerminalAgent:
             "base_url": LITELLM_PROXY_URL,
             "default_headers": {LITELLM_END_USER_HEADER: end_user_id},
             "timeout": IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
-            # GPT-5.6's implicit breakpoint includes the changing latest user
-            # or tool message. Route calls from this session together and use
-            # only the explicit stable-system-prompt breakpoint instead.
-            "model_kwargs": {
-                "prompt_cache_key": _prompt_cache_key(model, session_id),
-            },
-            "extra_body": {
-                "prompt_cache_options": {"mode": "explicit"},
-            },
             # LangGraph owns retries so it can report them to the UI and
             # decline to replay a response after partial output was streamed.
             # Preserve the SDK retry for the supported manual rollback path.
@@ -407,6 +408,16 @@ class TerminalAgent:
         }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
+        if _supports_prompt_caching(model):
+            # GPT-5.6's implicit breakpoint includes the changing latest user
+            # or tool message. Route calls from this session together and use
+            # only the explicit stable-system-prompt breakpoint instead.
+            llm_kwargs["model_kwargs"] = {
+                "prompt_cache_key": _prompt_cache_key(model, session_id),
+            }
+            llm_kwargs["extra_body"] = {
+                "prompt_cache_options": {"mode": "explicit"},
+            }
         self.llm = ChatOpenAI(**llm_kwargs).bind_tools(self.all_tools)
     
     def _encode_image_to_base64(self, filepath: str) -> tuple[str, str]:
@@ -1072,7 +1083,7 @@ class TerminalAgent:
         
         # Initialize conversation
         messages = [
-            _cacheable_system_message(system_prompt),
+            _cacheable_system_message(system_prompt, self.model),
             self._user_message_with_attached_images(
                 user_prompt,
                 synced_inputs,
