@@ -268,12 +268,8 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
     truncated_output = _truncate_output(output)
     was_truncated = truncated_output != output
 
-    parts = [status_line, "Output:", truncated_output]
+    parts = [status_line]
     if was_truncated:
-        parts.append(
-            f"\n(Output truncated to first/last {OUTPUT_HEAD_TAIL_LINES} lines, "
-            f"max {MAX_OUTPUT_TOKENS} tokens.)"
-        )
         ext = _guess_output_extension(output)
         output_filepath = (
             f"{_TEMP_OUTPUT_DIR}/output_{int(time.time())}_"
@@ -283,15 +279,23 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
             output_filepath, output, session_id=session_id
         )
         if write_result.startswith("✓"):
-            parts.append(f"\nFull output saved to: {output_filepath}")
+            # Keep this agent-facing recovery instruction ahead of the output
+            # excerpt so the hard observation-byte cap cannot discard it.
+            parts.append(f"Full output saved to: {output_filepath}")
             parts.append(
                 "Use read_output_range_tool(filepath, offset, n_limit) to read "
                 "specific character ranges of this file if you need more detail."
             )
         else:
             parts.append(
-                f"\n(Failed to save full output to a temp file: {write_result})"
+                f"(Failed to save full output to a temp file: {write_result})"
             )
+    parts.extend(["Output:", truncated_output])
+    if was_truncated:
+        parts.append(
+            f"\n(Output truncated to first/last {OUTPUT_HEAD_TAIL_LINES} lines, "
+            f"max {MAX_OUTPUT_TOKENS} tokens.)"
+        )
 
     return "\n".join(parts)
 

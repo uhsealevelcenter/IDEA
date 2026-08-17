@@ -23,6 +23,7 @@ from .control import RunCancellation
 from .memory import (
     bounded_excerpt,
     bounded_records,
+    bounded_text_bytes,
     compact_turn_messages,
     defined_names,
     execution_memory_block,
@@ -463,7 +464,13 @@ def build_idea_graph(
             "current_action": None,
             "completed_actions": completed_actions,
             "turn_messages": list(state.get("turn_messages") or []) + [
-                ToolMessage(content=outcome_content, tool_call_id=call_id)
+                ToolMessage(
+                    content=bounded_text_bytes(
+                        outcome_content,
+                        IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
+                    ),
+                    tool_call_id=call_id,
+                )
             ],
         }
         if python_record is not None:

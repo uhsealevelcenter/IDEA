@@ -147,6 +147,11 @@ class CodexRuntime(FakeRuntime):
         )
 
 
+class LargeObservationRuntime(FakeRuntime):
+    def execute_tool(self, tool_call, state):
+        return ToolOutcome(content="large-output:" + "x" * 20000)
+
+
 class LangGraphMemoryTests(unittest.TestCase):
     def test_codex_thread_and_usage_are_checkpointed(self):
         runtime = CodexRuntime()
@@ -209,7 +214,7 @@ class LangGraphMemoryTests(unittest.TestCase):
             300,
         )
 
-    def test_older_tool_observations_are_compacted_but_recent_are_preserved(self):
+    def test_every_tool_observation_is_bounded_including_newest(self):
         messages = [
             ToolMessage(content="old-" + "x" * 100, tool_call_id="old"),
             ToolMessage(content="new-" + "y" * 100, tool_call_id="new"),
@@ -218,11 +223,59 @@ class LangGraphMemoryTests(unittest.TestCase):
         compacted = compact_turn_messages(
             messages,
             observation_bytes=30,
-            keep_recent_tools=1,
         )
 
-        self.assertIn("compacted", compacted[0].content)
-        self.assertEqual(compacted[1].content, messages[1].content)
+        self.assertEqual(len(compacted), 2)
+        for message in compacted:
+            self.assertLessEqual(len(message.content.encode("utf-8")), 30)
+            self.assertIn("truncated", message.content)
+
+    def test_structured_tool_observation_is_serialized_and_bounded(self):
+        message = ToolMessage(
+            content=[{"type": "text", "text": "x" * 100}],
+            tool_call_id="structured",
+            name="example_tool",
+        )
+
+        compacted = compact_turn_messages([message], observation_bytes=40)
+
+        self.assertIsInstance(compacted[0].content, str)
+        self.assertLessEqual(len(compacted[0].content.encode("utf-8")), 40)
+        self.assertEqual(compacted[0].tool_call_id, "structured")
+        self.assertEqual(compacted[0].name, "example_tool")
+
+    def test_newest_observation_is_bounded_before_checkpoint_and_next_call(self):
+        runtime = LargeObservationRuntime()
+        graph = build_idea_graph(runtime, checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "thread-large-tool"}}
+
+        result = graph.invoke({
+            "conversation_messages": [
+                {"role": "user", "content": "print a large value"}
+            ],
+            "run_id": "run-large-tool",
+            "thread_id": "thread-large-tool",
+            "workspace_id": "workspace-1",
+            "kernel_id": "kernel-1",
+        }, config=config)
+
+        observations = [
+            message for message in result["turn_messages"]
+            if isinstance(message, ToolMessage)
+        ]
+        self.assertEqual(len(observations), 1)
+        self.assertLessEqual(
+            len(observations[0].content.encode("utf-8")),
+            6000,
+        )
+        model_observation = next(
+            message for message in runtime.model_inputs[1]
+            if isinstance(message, ToolMessage)
+        )
+        self.assertLessEqual(
+            len(model_observation.content.encode("utf-8")),
+            6000,
+        )
 
     def test_exact_python_source_is_checkpointed(self):
         runtime = FakeRuntime()
