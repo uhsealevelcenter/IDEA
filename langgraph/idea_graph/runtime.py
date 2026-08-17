@@ -763,15 +763,17 @@ class TerminalGraphRuntime:
             result = str(tool.invoke(args))
         except Exception as exc:
             result = f"✗ {name} failed: {exc}"
-        displayed_result = result
-        if name == "view_skill" and not result.startswith("✗"):
-            from utils.skill_loader import summarize_skill_result
-            displayed_result = summarize_skill_result(result)
-        self.emit({
-            "role": "computer", "type": "console", "format": "output",
-            "content": displayed_result, "start": True, "end": True,
-        })
         failed = result.startswith("✗")
+        # Successful tool observations are for the agent, not the chat
+        # transcript.  The native status events already tell the user what is
+        # running, while ``result`` below retains the complete observation
+        # (including any saved-output paging guidance) for the next model
+        # turn.  Keep failures visible because they are actionable UI output.
+        if failed:
+            self.emit({
+                "role": "computer", "type": "console", "format": "error",
+                "content": result, "start": True, "end": True,
+            })
         return ToolOutcome(
             content=result, status="failed" if failed else "completed",
             error=result if failed else None,

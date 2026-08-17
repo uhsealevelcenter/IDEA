@@ -102,6 +102,30 @@ LEGACY_CONSOLE_BLOCK_RE = re.compile(
 MAX_ASSISTANT_MODEL_CONTEXT_BYTES = int(
     os.getenv("IDEA_MAX_MODEL_HISTORY_MESSAGE_BYTES", "16000")
 )
+MAX_UI_GENERAL_CONSOLE_BYTES = int(
+    os.getenv("IDEA_MAX_UI_GENERAL_CONSOLE_BYTES", "4000")
+)
+
+
+def _bounded_general_console(content: object) -> str:
+    """Prepare legacy/general tool errors for clean, bounded UI display."""
+    text = str(content or "").strip()
+    encoded = text.encode("utf-8")
+    if len(encoded) <= MAX_UI_GENERAL_CONSOLE_BYTES:
+        return text
+    marker = "\n\n… [tool output truncated in chat] …\n\n"
+    marker_bytes = len(marker.encode("utf-8"))
+    available = max(MAX_UI_GENERAL_CONSOLE_BYTES - marker_bytes, 0)
+    head_bytes = available * 2 // 3
+    tail_bytes = available - head_bytes
+    head = encoded[:head_bytes].decode("utf-8", errors="ignore")
+    tail = encoded[-tail_bytes:].decode("utf-8", errors="ignore") if tail_bytes else ""
+    return head + marker + tail
+
+
+def _indented_markdown(text: str) -> str:
+    """Render arbitrary text without a closing Markdown delimiter."""
+    return "    " + text.replace("\n", "\n    ")
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -368,6 +392,7 @@ def _attached_resource_descriptors(
     files: list[dict] | None,
     metadata: dict | None,
     body_files: list[dict] | None = None,
+    messages: list[dict] | None = None,
 ) -> list[dict]:
     """Return safe file/collection IDs without trusting client paths.
 
@@ -384,10 +409,21 @@ def _attached_resource_descriptors(
     """
     candidates = list(files or [])
     candidates.extend(body_files or [])
-    user_message = (metadata or {}).get("user_message")
+    metadata = metadata or {}
+    metadata_files = metadata.get("files")
+    if isinstance(metadata_files, list):
+        candidates.extend(metadata_files)
+    user_message = metadata.get("user_message")
     if isinstance(user_message, dict):
         candidates.extend(user_message.get("files") or [])
-    model = (metadata or {}).get("model")
+    for message in reversed(messages or []):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        message_files = message.get("files")
+        if isinstance(message_files, list):
+            candidates.extend(message_files)
+        break
+    model = metadata.get("model")
     if isinstance(model, dict):
         model_info = model.get("info")
         model_meta = (
@@ -403,10 +439,16 @@ def _attached_resource_descriptors(
     for item in candidates:
         if not isinstance(item, dict):
             continue
+        nested_file = item.get("file")
+        if not isinstance(nested_file, dict):
+            nested_file = {}
+        nested_meta = nested_file.get("meta")
+        if not isinstance(nested_meta, dict):
+            nested_meta = {}
         item_type = item.get("type", "file")
         if item_type not in {"file", "image", "collection"}:
             continue
-        file_id = item.get("id") or item.get("url")
+        file_id = item.get("id") or nested_file.get("id") or item.get("url")
         if (
             not isinstance(file_id, str)
             or not file_id
@@ -419,13 +461,20 @@ def _attached_resource_descriptors(
             continue
 
         descriptor = {"id": file_id, "type": item_type}
-        name = item.get("name") or item.get("filename")
+        name = (
+            item.get("name")
+            or item.get("filename")
+            or nested_file.get("filename")
+            or nested_meta.get("name")
+        )
         if isinstance(name, str) and name:
             descriptor["name"] = name
-        content_type = item.get("content_type")
+        content_type = item.get("content_type") or nested_meta.get("content_type")
         if isinstance(content_type, str) and content_type:
             descriptor["content_type"] = content_type
         size = item.get("size")
+        if not isinstance(size, int):
+            size = nested_meta.get("size")
         if isinstance(size, int) and size >= 0:
             descriptor["size"] = size
 
@@ -757,6 +806,7 @@ class Pipe:
                 __files__,
                 __metadata__,
                 body.get("files"),
+                messages,
             ),
             # Used only by langgraph's final /outputs upload. It is never
             # added to model messages or persisted conversation history.
@@ -774,6 +824,9 @@ class Pipe:
         pending_files: list[dict] = []
         pending_images: list[str] = []
         completed_python_stream_ids: set[str] = set()
+        model_text_seen = False
+        model_boundary_pending = False
+        last_model_text_character = ""
         status_done = False
         stop_sent = False
         error_event_received = False
@@ -831,6 +884,27 @@ class Pipe:
             artifact_reference_confirmed = False
             return content
 
+        def format_model_text_chunk(content: object) -> str:
+            """Separate prose emitted by distinct graph model iterations."""
+            nonlocal model_text_seen
+            nonlocal model_boundary_pending
+            nonlocal last_model_text_character
+            text = str(content or "")
+            if not text:
+                return ""
+            if (
+                model_boundary_pending
+                and model_text_seen
+                and last_model_text_character
+                and not last_model_text_character.isspace()
+                and not text[0].isspace()
+            ):
+                text = "\n\n" + text
+            model_boundary_pending = False
+            model_text_seen = True
+            last_model_text_character = text[-1]
+            return text
+
         await emit_status({
             "action": "idea_agent",
             "phase": "starting",
@@ -865,6 +939,7 @@ class Pipe:
                         after = max(after, int(event.get("seq") or 0))
                         chunk = event.get("chunk")
                         if isinstance(chunk, str):
+                            chunk = format_model_text_chunk(chunk)
                             if artifact_reference_confirmed:
                                 message_buffer += chunk
                                 continue
@@ -892,6 +967,8 @@ class Pipe:
                                     pass
                             continue
                         if chunk.get("type") == "status":
+                            if chunk.get("phase") == "thinking" and model_text_seen:
+                                model_boundary_pending = True
                             await emit_status(chunk)
                             continue
                         if "error" in chunk:
@@ -908,7 +985,9 @@ class Pipe:
                                     "error": True,
                                 })
                         if chunk.get("type") == "message":
-                            content = chunk.get("content", "")
+                            content = format_model_text_chunk(
+                                chunk.get("content", "")
+                            )
                             if artifact_reference_confirmed:
                                 message_buffer += content
                                 continue
@@ -1057,6 +1136,17 @@ class Pipe:
                 f"{TOOL_OUTPUT_END}\n\n"
             )
         elif chunk_type == "console":
+            # Current graph events identify Python console streams with their
+            # tool-call id.  General tool results should normally remain
+            # agent-facing and reach the UI only for failures; render legacy
+            # or failure events without IDEA's internal Unicode delimiters or
+            # a fence that can be stranded by cancellation.
+            if not chunk.get("tool_call_id"):
+                bounded = _bounded_general_console(content)
+                if bounded:
+                    label = "Tool error" if fmt == "error" else "Tool output"
+                    yield f"\n\n⚠️ **{label}**\n\n{_indented_markdown(bounded)}\n\n"
+                return
             is_stream = not (chunk.get("start") is None and chunk.get("end") is None)
             if is_stream:
                 if chunk.get("start"):
