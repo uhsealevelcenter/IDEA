@@ -56,7 +56,7 @@ from the user-facing Pipe model:
 
 - `IDEA Agent` remains the only visible chat model and continues
   to use the centrally configured `IDEA_AGENT_MODEL` through LangGraph
-  (`gpt-5.6-terra` by default; set it to `gpt-5.6-sol` to roll back).
+  (`gpt-5.6-sol` by default; set it to `gpt-5.6-terra` to roll back).
 - `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
   Open WebUI, and marked hidden so it remains available to backend tasks
   without appearing in the chat model selector.
@@ -107,11 +107,11 @@ and reused across chats. Direct PDF attachments are additive only within the
 current chat. Guest/pending users never receive the PaperQA tool.
 
 PaperQA answer generation, evidence summaries, and agent planning all use
-`gpt-5.6-luna`; embeddings use `text-embedding-3-small`. Both routes go
+`gpt-5.6-terra`; embeddings use `text-embedding-3-small`. Both routes go
 through the internal LiteLLM proxy and shared virtual key. The PaperQA
 library and index live on the durable `idea_paperqa_data` volume. If an
 existing virtual key predates this integration, regenerate or update it to
-allow `gpt-5.6-luna` and `text-embedding-3-small` as documented in
+allow `gpt-5.6-terra` and `text-embedding-3-small` as documented in
 `example.env`.
 
 ## Unified IDEA and Open WebUI Skills
@@ -295,7 +295,7 @@ the canonical template.
   defaults to 4.
 
 - **`PQA_LLM_MODEL`** / **`PQA_EMBEDDING_MODEL`** - PaperQA model aliases;
-  default to `gpt-5.6-luna` and `text-embedding-3-small`.
+  default to `gpt-5.6-terra` and `text-embedding-3-small`.
 
 - **`PQA_SYNC_TIMEOUT_SECONDS`** / **`PQA_MAX_PDF_BYTES`** - authenticated
   collection/direct-PDF synchronization deadline and per-PDF size limit;

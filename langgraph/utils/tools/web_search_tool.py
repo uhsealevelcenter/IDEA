@@ -10,9 +10,9 @@ from typing import Any
 
 from langchain_core.tools import tool
 from litellm import responses
-from idea_config import IDEA_AGENT_MODEL
+from idea_config import IDEA_TOOL_MODEL
 
-WEB_SEARCH_MODEL = f"openai/{IDEA_AGENT_MODEL}"
+WEB_SEARCH_MODEL = f"openai/{IDEA_TOOL_MODEL}"
 
 
 def _extract_web_query_response(web_query_response: Any) -> dict:

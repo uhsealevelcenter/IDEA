@@ -1,7 +1,6 @@
 # LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
 # `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
-# endpoint that langgraph/ already talks to directly (see
-# langgraph/agents/terminal_agent.py). IDEA_AGENT_MODEL selects Terra or Sol;
+# endpoint. IDEA_AGENT_MODEL selects Sol or Terra for primary chat;
 # gpt-5.6-luna is available to Open WebUI for background task generation.
 
 model_list:

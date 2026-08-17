@@ -304,9 +304,10 @@ retained.
 
 `langgraph/idea_config.py` replaces the previous `langgraph/config.py` as the
 central configuration module. `IDEA_AGENT_MODEL` now selects the main model,
-defaults to `gpt-5.6-terra`, and is used by the graph service, the legacy
-orchestrator, and helper tools (`station_tool.py` and `web_search_tool.py`).
-`gpt-5.6-sol` remains configured as a one-variable rollback.
+defaults to `gpt-5.6-sol`, and is used by the graph service and legacy
+orchestrator. `IDEA_TOOL_MODEL` independently keeps helper tools
+(`station_tool.py` and `web_search_tool.py`) on `gpt-5.6-terra`, which is also
+the primary-model rollback.
 
 `litellm/litellm_config.yaml` adds the Terra alias while retaining Sol and the
 hidden Luna task model. LiteLLM disables same-deployment retries and defines

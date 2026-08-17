@@ -42,7 +42,7 @@ try:
 except ImportError:
     PDF_PARSER = None  # Will use default parser
 
-DEFAULT_LLM = os.getenv("PQA_LLM_MODEL", "gpt-5.6-luna")
+DEFAULT_LLM = os.getenv("PQA_LLM_MODEL", "gpt-5.6-terra")
 DEFAULT_EMBEDDING = os.getenv(
     "PQA_EMBEDDING_MODEL", "text-embedding-3-small"
 )
@@ -96,7 +96,7 @@ def create_pqa_settings(
     Parameters:
         paper_directory: Path to the directory containing papers
         index_directory: Path to the directory for storing indexes
-        llm: The LLM model to use (default: gpt-5.6-luna)
+        llm: The LLM model to use (default: gpt-5.6-terra)
         summary_llm: The LLM for summaries (default: same as llm)
         embedding: The embedding model to use (default: text-embedding-3-small)
         verbosity: Logging verbosity level (default: 1)

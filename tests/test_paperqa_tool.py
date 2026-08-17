@@ -146,9 +146,9 @@ class PaperQAToolTests(unittest.TestCase):
                 end_user_id="scientist@example.org",
             )
 
-        self.assertEqual(settings.llm, "gpt-5.6-luna")
-        self.assertEqual(settings.summary_llm, "gpt-5.6-luna")
-        self.assertEqual(settings.agent.agent_llm, "gpt-5.6-luna")
+        self.assertEqual(settings.llm, "gpt-5.6-terra")
+        self.assertEqual(settings.summary_llm, "gpt-5.6-terra")
+        self.assertEqual(settings.agent.agent_llm, "gpt-5.6-terra")
         self.assertEqual(
             settings.embedding,
             "text-embedding-3-small",

@@ -22,7 +22,7 @@ class ChatRunEventTests(unittest.TestCase):
         )
 
         self.assertIsNone(request.model)
-        self.assertEqual(langgraph_service.IDEA_AGENT_MODEL, "gpt-5.6-terra")
+        self.assertEqual(langgraph_service.IDEA_AGENT_MODEL, "gpt-5.6-sol")
 
     def test_summarizes_only_current_run_model_usage(self):
         summary = langgraph_service._summarize_model_usage([
