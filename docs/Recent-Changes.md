@@ -15,6 +15,12 @@
 4. The primary conversation model now defaults to `gpt-5.6-sol`. Auxiliary
    station/web inference, Codex, and PaperQA remain explicitly on
    `gpt-5.6-terra`; Open WebUI task generation remains on `gpt-5.6-luna`.
+5. Persistent Python execution now detects dead and OOM-killed kernels and
+   supplies a fresh kernel on the next call. Stop is supervised outside the
+   held execution lock: it first preserves healthy kernel state with a normal
+   interrupt, then replaces only an unresponsive kernel, and finally
+   stop/resumes the same filesystem-preserving microVM if its control plane is
+   also wedged. A configurable hard execution deadline uses the same path.
 
 ## Changes in `feature/langgraph-memory`
 
@@ -68,9 +74,10 @@ major changes.
 
 1. Finish production hardening for guest and pending users, LiteLLM prompt/completion retention, sandbox-image pinning, backups, and non-destructive sandbox upgrades.
 2. Finish provisioning the mapped `next-dev` GitHub Environment and complete production-like smoke, persistence, recovery, concurrency, attachment, PaperQA, Codex, and security testing before promotion.
-3. Implement confirmed, escalating Stop and kernel/OOM recovery, including
-   safe handling of Python worker pools without leaving the persistent kernel
-   locked or requiring a whole `idea_sandbox` restart.
+3. Rebuild and publish the guest image, then validate escalating Stop and
+   kernel/OOM recovery against real blocked-worker and OOM incidents. Design
+   explicit thread/process-pool support so pooled work can be stopped without
+   unnecessarily replacing a healthy persistent kernel.
 4. Decide Microsandbox capacity and admission policy: configurable CPU/RAM
    tiers (1 GiB is insufficient for observed workloads but local hosts may be
    constrained), a waiting/onboarding experience and possibly smaller

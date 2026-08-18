@@ -80,10 +80,11 @@ and capacity admission affect the same sandbox lifecycle:
    with an execution/path reference that the model can page. The per-message
    ceiling prevents one print from overflowing context, but it is not a total
    prompt budget.
-2. Replace cooperative-only Stop with observable escalation: interrupt,
-   confirm within a short grace period, replace only the affected kernel, then
-   recycle only that user's microVM if recovery fails. Add dead-kernel/OOM
-   detection and an execution deadline outside user Python.
+2. Rebuild the guest image and validate the implemented Stop escalation:
+   interrupt, confirm within a short grace period, replace only the affected
+   kernel, then stop/resume only that user's filesystem-preserving microVM if
+   recovery fails. Validate dead-kernel/OOM classification and the independent
+   execution deadline under real resource pressure.
 3. Support Python thread/process pools only after Stop can terminate pooled
    work without waiting indefinitely in an executor context manager, killing
    healthy persistent state unnecessarily, or retaining the sandbox execution
