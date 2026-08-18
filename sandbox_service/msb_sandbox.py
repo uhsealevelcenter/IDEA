@@ -526,6 +526,21 @@ class MicrosandboxTerminal:
         except Exception:
             return False
 
+    def python_kernel_status(self, kernel_id: str) -> Optional[dict]:
+        """Return bounded guest-reported kernel state without taking its lock."""
+        try:
+            output = self._run(
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --kernel-status "
+                    f"--kernel-id {shlex.quote(kernel_id)}"
+                ),
+                timeout=10.0,
+            )
+            payload = json.loads((output.stdout_text or "").strip())
+            return payload if isinstance(payload, dict) else None
+        except Exception:
+            return None
+
     def signal_python_run(self, run_id: str, sig: signal.Signals) -> bool:
         """Signal an existing guest bridge without opening another shell."""
         if not run_id or not hasattr(self, "_stream_handles_lock"):

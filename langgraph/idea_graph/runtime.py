@@ -628,6 +628,7 @@ class TerminalGraphRuntime:
             image_count = 0
             generated_images: list[str] = []
             run_id = str(state.get("run_id") or "")
+            cancellation = state.get("_run_cancellation")
             console_stream_open = False
 
             def emit_console(content: str, console_format: str) -> None:
@@ -690,8 +691,12 @@ class TerminalGraphRuntime:
             if image_count:
                 content = (content + f"\n[{image_count} image(s) generated and shown to the user]").strip()
             failed = bool(errors) or content.startswith(("✗", "Kernel error", "Kernel exec failed"))
+            cancelled = bool(
+                cancellation is not None
+                and getattr(cancellation, "requested", False)
+            )
             namespace = []
-            if not failed:
+            if not failed and not cancelled:
                 namespace = inspect_python_namespace(
                     session_id=self.agent.sandbox_id,
                     kernel_id=str(state.get("kernel_id") or "default"),
@@ -700,11 +705,21 @@ class TerminalGraphRuntime:
                 )
             return ToolOutcome(
                 content=content or "(no output)",
-                status="failed" if failed else "completed",
+                status=(
+                    "failed" if failed else
+                    "interrupted" if cancelled else
+                    "completed"
+                ),
                 artifacts=generated_images,
                 vision_images=generated_images,
                 kernel_namespace=namespace,
-                error=("\n".join(errors).strip() or content) if failed else None,
+                error=(
+                    ("\n".join(errors).strip() or content)
+                    if failed else
+                    str(getattr(cancellation, "reason", None) or "user_requested")
+                    if cancelled else
+                    None
+                ),
                 metadata={
                     "kernel_lost": kernel_lost,
                     "kernel_failure_types": list(dict.fromkeys(kernel_failure_types)),

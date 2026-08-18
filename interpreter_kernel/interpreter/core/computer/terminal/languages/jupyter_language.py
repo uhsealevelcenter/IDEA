@@ -77,6 +77,11 @@ class JupyterLanguage(BaseLanguage):
             os.environ.get("INTERPRETER_STALE_DRAIN_TIMEOUT", 0.2)
         )
         self._drain_lock = threading.Lock()
+        # Transport/output capture may end independently of the submitted
+        # IPython cell.  Track the cell's authoritative lifecycle separately
+        # so callers never mistake a closed stream for an idle kernel.
+        self._execution_idle = threading.Event()
+        self._execution_idle.set()
         self._execution_oom_kill_count = _oom_kill_count()
 
         # DISABLED because sometimes this bypasses sending it up to us for some reason!
@@ -125,12 +130,17 @@ import matplotlib.pyplot as plt
                 kernel.wait(timeout=1)
             except Exception:
                 pass
+        self._execution_idle.set()
 
     def is_alive(self):
         try:
             return bool(self.km.is_alive())
         except Exception:
             return False
+
+    def is_execution_idle(self):
+        """Return whether IPython confirmed that the current cell is idle."""
+        return self._execution_idle.is_set()
 
     def run(self, code):
         self._ensure_previous_listener_stopped()
@@ -297,6 +307,7 @@ import matplotlib.pyplot as plt
                     # Set finish_flag and return when the kernel becomes idle
                     if DEBUG_MODE:
                         print("from thread: kernel is idle")
+                    self._execution_idle.set()
                     self.finish_flag = True
                     return
                 for chunk in self._iopub_msg_to_chunks(msg):
@@ -311,6 +322,7 @@ import matplotlib.pyplot as plt
                 "thread is on:", self.listener_thread.is_alive(), self.listener_thread
             )
 
+        self._execution_idle.clear()
         self.kc.execute(code)
 
     def detect_active_line(self, line):
@@ -358,6 +370,7 @@ import matplotlib.pyplot as plt
                     pass
 
                 if not self.is_alive():
+                    self._execution_idle.set()
                     current_oom_kills = _oom_kill_count()
                     was_oom = (
                         current_oom_kills is not None
@@ -388,27 +401,22 @@ import matplotlib.pyplot as plt
                         print("we're done")
                     break
 
-                if self._drain_deadline and time.time() > self._drain_deadline:
-                    self.finish_flag = True
-                    if DEBUG_MODE:
-                        print("drain timeout reached")
-                    break
+                # Do not close an active stream merely because the interrupt
+                # drain window elapsed. User code can catch KeyboardInterrupt
+                # and continue; the outer recovery supervisor needs this run
+                # to remain active so it can replace the still-busy kernel.
         finally:
             self._capture_output_active = False
             self._drain_deadline = None
 
     def stop(self):
         self._request_interrupt()
-        if self._drain_deadline is None:
-            self._drain_deadline = time.time() + self._drain_timeout
 
     def interrupt_and_drain(self, timeout=None):
         if timeout is None:
             timeout = self._drain_timeout
         self._request_interrupt()
         if self._capture_output_active:
-            if self._drain_deadline is None:
-                self._drain_deadline = time.time() + timeout
             return []
         deadline = time.time() + timeout
         drained = []

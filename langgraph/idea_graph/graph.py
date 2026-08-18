@@ -432,7 +432,13 @@ def build_idea_graph(
                 outcome_status = "interrupted"
                 outcome_error = cancellation.reason
             else:
-                outcome = runtime.execute_tool(call, state)
+                # Runtime-only control object; do not persist it in graph
+                # state. Long-running tools can observe cancellation during
+                # their own cleanup instead of beginning another kernel call.
+                outcome = runtime.execute_tool(
+                    call,
+                    {**state, "_run_cancellation": cancellation},
+                )
                 outcome_content = outcome.content
                 outcome_status = outcome.status
                 outcome_error = outcome.error

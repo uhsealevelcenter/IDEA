@@ -146,9 +146,11 @@ def _kernel_status(kernel_id: str) -> dict:
         "kernel_id": kernel_id,
         "exists": runner is not None,
         "alive": bool(runner and runner.is_alive()),
-        "executing": bool(
-            _exec_locks.get(kernel_id) and _exec_locks[kernel_id].locked()
-        ),
+        # The request/stream lock is only a transport serialization detail.
+        # The Jupyter runner's idle event is set exclusively by an IPython
+        # idle message (or kernel termination), so it remains authoritative
+        # even if an HTTP client disconnects while a cell is still running.
+        "executing": bool(runner and not runner.is_execution_idle()),
     }
 
 

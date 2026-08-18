@@ -444,14 +444,39 @@ def _recover_python_run(run_id: str, reason: str) -> None:
             reason=reason,
         )
 
-    if completion.wait(PYTHON_INTERRUPT_GRACE_SECONDS):
+    transport_completed = completion.wait(PYTHON_INTERRUPT_GRACE_SECONDS)
+    if transport_completed and active and len(active) > 2 and isinstance(
+        active[2], MicrosandboxTerminal
+    ):
+        kernel_status = active[2].python_kernel_status(str(active[1]))
+        if (
+            kernel_status is not None
+            and kernel_status.get("alive") is True
+            and kernel_status.get("executing") is False
+        ):
+            _set_python_recovery_state(
+                run_id, "terminated", reason=reason, kernel_preserved=True,
+                kernel_status=kernel_status,
+            )
+            return
+        # A closed client/HTTP stream is not proof that the submitted cell
+        # stopped. Missing, dead, or still-executing status must fail safe to
+        # kernel replacement while retaining the microVM filesystem.
+        _set_python_recovery_state(
+            run_id, "interrupt_unconfirmed", reason=reason,
+            kernel_status=kernel_status,
+        )
+    elif transport_completed:
         _set_python_recovery_state(
             run_id, "terminated", reason=reason, kernel_preserved=True
         )
         return
 
     with _registry_lock:
-        active = _active_python_runs.get(run_id)
+        # The transport may already have unwound and removed its registry
+        # entry even though the guest kernel is still executing. Retain the
+        # original terminal reference for precisely that escalation case.
+        active = _active_python_runs.get(run_id) or active
     if not active or len(active) < 3 or not isinstance(
         active[2], MicrosandboxTerminal
     ):
