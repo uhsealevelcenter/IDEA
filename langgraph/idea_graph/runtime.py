@@ -117,7 +117,11 @@ class TerminalGraphRuntime:
             OUTPUTS_DIR,
             SYSTEM_PROMPT_PATH,
             TerminalAgent,
+            VISION_MAX_IMAGE_BYTES,
+            VISION_MAX_IMAGES_PER_TURN,
+            _attached_files_context,
             _cacheable_system_message,
+            _is_model_image_candidate,
             compose_system_prompt,
         )
 
@@ -143,6 +147,10 @@ class TerminalGraphRuntime:
             self.agent.builtin_skill_loader.render_manifest(),
         )
         self.cacheable_system_message = _cacheable_system_message
+        self.attached_files_context = _attached_files_context
+        self.is_model_image_candidate = _is_model_image_candidate
+        self.vision_max_image_bytes = VISION_MAX_IMAGE_BYTES
+        self.vision_max_images_per_turn = VISION_MAX_IMAGES_PER_TURN
 
     def emit(self, chunk: dict[str, Any] | str) -> None:
         if self.event_callback:
@@ -151,11 +159,96 @@ class TerminalGraphRuntime:
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
         from tools.persistent_terminal import list_file_metadata
 
-        synced = self.agent._sync_inputs_from_openwebui() if self.agent.attached_files else []
+        if self.agent.attached_files:
+            self.emit({
+                "type": "status",
+                "phase": "syncing_inputs",
+                "description": "Preparing attached files…",
+                "done": False,
+            })
+            synced = self.agent._sync_inputs_from_openwebui()
+            self.emit({
+                "type": "status",
+                "phase": "syncing_inputs",
+                "description": "Attached files are ready",
+                "done": False,
+            })
+        else:
+            synced = []
         self.outputs_before = list_file_metadata(
             self.outputs_dir, session_id=self.agent.sandbox_id
         )
-        return {"synced_inputs": synced}
+
+        turn_messages: list[BaseMessage] = []
+        attached_context = self.attached_files_context(synced)
+        if attached_context:
+            turn_messages.append(HumanMessage(content=attached_context))
+
+        # Open WebUI normally includes uploaded image pixels directly in the
+        # latest user message. Fall back to the synchronized sandbox copy only
+        # when that multimodal content is absent, avoiding duplicate pixels and
+        # token usage while keeping image attachments reliable across payload
+        # variants.
+        latest_user_content: Any = None
+        for message in reversed(state.get("conversation_messages") or []):
+            if message.get("role") == "user":
+                latest_user_content = message.get("content")
+                break
+        has_inline_image = bool(
+            isinstance(latest_user_content, list)
+            and any(
+                isinstance(part, dict)
+                and part.get("type") in {
+                    "image", "image_url", "input_image"
+                }
+                for part in latest_user_content
+            )
+        )
+
+        vision_images: list[str] = []
+        warnings: list[str] = []
+        if not has_inline_image:
+            for item in synced:
+                if not self.is_model_image_candidate(item):
+                    continue
+                path = str(item.get("sandbox_path") or "")
+                if len(vision_images) >= self.vision_max_images_per_turn:
+                    warnings.append(
+                        f"{path!r} was not included in model vision because "
+                        f"the per-turn limit is "
+                        f"{self.vision_max_images_per_turn} images."
+                    )
+                    continue
+                size = item.get("size")
+                if (
+                    isinstance(size, int)
+                    and size > self.vision_max_image_bytes
+                ):
+                    warnings.append(
+                        f"{path!r} was not included in model vision because "
+                        f"it exceeds the {self.vision_max_image_bytes}-byte "
+                        "image limit."
+                    )
+                    continue
+                try:
+                    # Validate magic bytes before placing the path in graph
+                    # state. model_messages() will read it again only when the
+                    # first model request is assembled.
+                    self.agent._model_image_part(path)
+                except Exception as exc:
+                    warnings.append(
+                        f"{path!r} could not be included in model vision: "
+                        f"{exc}."
+                    )
+                    continue
+                vision_images.append(path)
+
+        return {
+            "synced_inputs": synced,
+            "turn_messages": turn_messages,
+            "vision_images": vision_images,
+            "warnings": warnings,
+        }
 
     def model_messages(self, state: dict[str, Any]) -> list[BaseMessage]:
         cacheable_system_message = getattr(

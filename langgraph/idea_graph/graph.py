@@ -207,7 +207,11 @@ def build_idea_graph(
             "type": "status", "phase": "starting",
             "description": "Preparing conversation memory…", "done": False,
         })
-        runtime.prepare(state)
+        prepared = runtime.prepare(state) or {}
+        prepared_turn_messages = list(prepared.get("turn_messages") or [])
+        prepared_warnings = [
+            str(item) for item in (prepared.get("warnings") or [])
+        ]
         objective = ""
         for message in reversed(state.get("conversation_messages") or []):
             if message.get("role") == "user":
@@ -234,7 +238,11 @@ def build_idea_graph(
                 "description": objective[:1000],
                 "status": "pending",
             }]
-        initial_vision: list[str] = []
+        initial_vision = [
+            str(path)
+            for path in (prepared.get("vision_images") or [])
+            if path
+        ]
         if _requests_visual_context(objective):
             active_id = str(state.get("active_artifact_id") or "")
             active = next(
@@ -252,18 +260,20 @@ def build_idea_graph(
             "objective": objective,
             "plan": plan,
             "continuation": None,
-            "turn_messages": [],
+            "turn_messages": prepared_turn_messages,
             "pending_tool_calls": [],
             "current_action": None,
             "completed_actions": bounded_actions(state),
             "python_executions": bounded_python(state),
-            "warnings": list(state.get("warnings") or [])[-20:],
+            "warnings": [
+                *(state.get("warnings") or []), *prepared_warnings
+            ][-20:],
             "stop_requested": cancellation.requested,
             "stop_reason": cancellation.reason,
             "final_status": "stopping" if cancellation.requested else "running",
             "final_response": None,
             "iteration": 0,
-            "vision_images": initial_vision,
+            "vision_images": list(dict.fromkeys(initial_vision))[-16:],
             "vision_consumed_count": 0,
             "codex_threads": dict(state.get("codex_threads") or {}),
             "codex_usage": list(state.get("codex_usage") or [])[-100:],

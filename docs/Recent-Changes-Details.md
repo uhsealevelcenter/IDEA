@@ -432,6 +432,17 @@ with the current Open WebUI credential and copies immutable files to the
 private sandbox in bounded streamed chunks. Existing copies are still
 re-authorized each turn.
 
+The graph preparation boundary now retains the synchronization result in the
+first model call. Non-image uploads are named by their exact private sandbox
+paths in a model-visible turn message. Uploaded images use Open WebUI's inline
+multimodal content when present and otherwise fall back to the validated
+sandbox copy, avoiding both invisible attachments and duplicate image pixels.
+This correction is confined to the Pipe/LangGraph integration: it does not
+require an Open WebUI customization-image or microsandbox-image change. If a
+future Open WebUI release changes its attachment payload again, its supported
+Pipe attachment contract should be documented and covered by the nested and
+top-level descriptor tests before updating the pinned image.
+
 PaperQA is now prepared lazily. `TerminalAgent._ensure_paperqa_library()` does
 not initialize a library during ordinary graph preparation; it runs only when
 the PaperQA tool is invoked. This avoids unnecessary collection/PDF work and
