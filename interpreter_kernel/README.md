@@ -131,12 +131,18 @@ specifically require this one (or one built on top of it).
 
 Publication is deliberately separate from local testing. After the local test
 above passes, manually run the **Microsandbox image** GitHub Actions workflow,
-enter an immutable version, and explicitly set `publish=true`. The workflow
-repeats the amd64 smoke test before its protected publish job creates amd64 and
-arm64 images with SBOM/provenance attestations. It publishes only
+enter an immutable version, explicitly set `publish=true`, and select either
+amd64-only or the amd64+arm64 architecture set. The workflow repeats the amd64
+smoke test before its protected, cache-enabled publish job creates the selected
+image manifest with SBOM/provenance attestations. It publishes only
 `research-<version>` and `sha-<commit>` tags; it does not silently move a
 `latest` or `slim` tag. Configure required reviewers on the
 `microsandbox-image-publish` GitHub Environment before production use.
+
+`numcodecs==0.15.1`, retained for the Zarr 2 environment, has no CPython 3.12
+Linux ARM64 wheel. The Dockerfile disables its x86-only SSE2/AVX2 source paths
+when `TARGETARCH=arm64`; otherwise QEMU can expose host CPU flags that cause
+the ARM compiler to receive invalid `-msse2`/`-mavx2` options.
 
 When rolling out a published image, two things matter:
 

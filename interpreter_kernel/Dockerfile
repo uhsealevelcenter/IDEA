@@ -21,6 +21,7 @@ RUN --mount=type=cache,target=/root/.npm \
 
 FROM ${OPEN_TERMINAL_IMAGE} AS python-builder
 USER root
+ARG TARGETARCH
 
 # Compilers and geospatial headers exist only in this stage. Most selected
 # projects publish wheels, but this preserves support for TADC and packages
@@ -40,9 +41,18 @@ RUN python3 -m ensurepip --upgrade \
 
 COPY config.env /tmp/config.env
 COPY modules/ /tmp/modules/
+# numcodecs 0.15.1 has no CPython 3.12 Linux ARM64 wheel. Its source build
+# can see the QEMU host's x86 flags and incorrectly add SSE2/AVX2 sources and
+# compiler options. Disable those paths only for ARM64; CFLAGS must also be
+# present so setup.py does not emit unsupported -mno-* flags.
 RUN --mount=type=cache,target=/root/.cache/pip \
     . /tmp/config.env \
     && test -f "/tmp/modules/${ACTIVE_MODULE}/requirements.lock" \
+    && if [ "${TARGETARCH}" = "arm64" ]; then \
+        export CFLAGS="-O2" \
+            DISABLE_NUMCODECS_SSE2=1 \
+            DISABLE_NUMCODECS_AVX2=1; \
+    fi \
     && /opt/idea-venv/bin/python -m pip install --upgrade \
         pip==26.1.2 setuptools==84.0.0 wheel==0.47.0 \
     && /opt/idea-venv/bin/python -m pip install -r "/tmp/modules/${ACTIVE_MODULE}/requirements.lock" \
