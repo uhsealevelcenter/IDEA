@@ -112,20 +112,64 @@ _LANGUAGE_CLASSES = {
 }
 
 
+def _new_language(name: str):
+    lang_class = _LANGUAGE_CLASSES[name]
+    if lang_class.__init__.__code__.co_argcount > 1:
+        return lang_class(_StubComputer())
+    return lang_class()
+
+
 def _get_language(name: str, kernel_id: str = "default"):
     key = (name, kernel_id)
     with _languages_lock:
+        existing = _languages.get(key)
+        if (
+            name == "python"
+            and existing is not None
+            and not existing.is_alive()
+        ):
+            # An OOM-killed/dead child must never poison later executions.
+            # Retire the stale runner; the replacement below starts a fresh
+            # ipykernel while preserving the microVM filesystem.
+            existing.terminate()
+            _languages.pop(key, None)
         if key not in _languages:
-            lang_class = _LANGUAGE_CLASSES[name]
-            # Mirrors terminal.py's own dynamic check: only Jupyter-backed
-            # Python needs a `computer` reference; Shell's __init__ takes
-            # none.
-            if lang_class.__init__.__code__.co_argcount > 1:
-                _languages[key] = lang_class(_StubComputer())
-            else:
-                _languages[key] = lang_class()
+            _languages[key] = _new_language(name)
             _exec_locks.setdefault(kernel_id, threading.Lock())
         return _languages[key]
+
+
+def _kernel_status(kernel_id: str) -> dict:
+    with _languages_lock:
+        runner = _languages.get(("python", kernel_id))
+    return {
+        "kernel_id": kernel_id,
+        "exists": runner is not None,
+        "alive": bool(runner and runner.is_alive()),
+        "executing": bool(
+            _exec_locks.get(kernel_id) and _exec_locks[kernel_id].locked()
+        ),
+    }
+
+
+def _restart_kernel(kernel_id: str) -> dict:
+    """Force-retire one kernel without touching the user's filesystem."""
+    with _languages_lock:
+        runner = _languages.pop(("python", kernel_id), None)
+        # A handler for the retired runner may be wedged while holding the
+        # old lock.  The replacement runner is a distinct process/object, so
+        # give it a distinct lock as well instead of poisoning future calls.
+        _exec_locks[kernel_id] = threading.Lock()
+    if runner is not None:
+        runner.finish_flag = True
+        runner.terminate()
+    return {
+        "kernel_id": kernel_id,
+        "restarted": True,
+        # Creation is lazy so a stuck handler can unwind and release its
+        # execution lock before the replacement accepts work.
+        "replacement": "pending",
+    }
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -139,7 +183,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in {"/run", "/run-stream", "/interrupt"}:
+        if self.path not in {
+            "/run", "/run-stream", "/interrupt", "/kernel-status",
+            "/restart-kernel",
+        }:
             self._json(404, {"error": "not found"})
             return
 
@@ -162,6 +209,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             runner.interrupt_and_drain()
             self._json(200, {"interrupted": True})
+            return
+        if self.path == "/kernel-status":
+            self._json(200, _kernel_status(kernel_id))
+            return
+        if self.path == "/restart-kernel":
+            self._json(200, _restart_kernel(kernel_id))
             return
 
         language = body.get("language", "python")

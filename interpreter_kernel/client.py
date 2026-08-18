@@ -93,6 +93,24 @@ def _interrupt_daemon(kernel_id: str) -> bool:
         conn.close()
 
 
+def _kernel_control(path: str, kernel_id: str, timeout: float = 8.0) -> dict:
+    """Call a daemon control endpoint without ever waiting indefinitely."""
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=timeout)
+    try:
+        encoded = json.dumps({"kernel_id": kernel_id}).encode("utf-8")
+        conn.request(
+            "POST", path, body=encoded,
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        payload = json.loads(response.read())
+        if response.status != 200:
+            raise RuntimeError(f"kernel control returned HTTP {response.status}")
+        return payload
+    finally:
+        conn.close()
+
+
 def run(code_path: str, kernel_id: str = "default", run_id: str = "") -> dict:
     with open(code_path, "r", encoding="utf-8") as f:
         code = f.read()
@@ -175,7 +193,17 @@ if __name__ == "__main__":
             sys.argv[sys.argv.index("--kernel-id") + 1]
             if "--kernel-id" in sys.argv else "default"
         )
-        print(json.dumps(_post("/interrupt", {"kernel_id": kernel_id})))
+        print(json.dumps(_kernel_control("/interrupt", kernel_id)))
+    elif "--kernel-status" in sys.argv or "--restart-kernel" in sys.argv:
+        kernel_id = (
+            sys.argv[sys.argv.index("--kernel-id") + 1]
+            if "--kernel-id" in sys.argv else "default"
+        )
+        endpoint = (
+            "/restart-kernel"
+            if "--restart-kernel" in sys.argv else "/kernel-status"
+        )
+        print(json.dumps(_kernel_control(endpoint, kernel_id)))
     else:
-        print(json.dumps({"error": "usage: client.py --ensure-daemon | --run-file <path> | --run-stream-file <path>"}))
+        print(json.dumps({"error": "usage: client.py --ensure-daemon | --run-file <path> | --run-stream-file <path> | --interrupt | --kernel-status | --restart-kernel"}))
         sys.exit(1)

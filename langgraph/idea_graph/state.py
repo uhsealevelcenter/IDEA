@@ -35,6 +35,8 @@ class PythonExecutionRecord(TypedDict, total=False):
     defined_names: list[str]
     namespace: list[dict[str, Any]]
     output_artifacts: list[str]
+    kernel_lost: bool
+    kernel_failure_types: list[str]
 
 
 class ActionRecord(TypedDict, total=False):

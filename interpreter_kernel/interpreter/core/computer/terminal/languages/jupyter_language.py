@@ -21,6 +21,18 @@ from ..base_language import BaseLanguage
 
 DEBUG_MODE = False
 
+
+def _oom_kill_count():
+    """Return the cgroup-v2 OOM-kill counter when available."""
+    try:
+        with open("/sys/fs/cgroup/memory.events", encoding="utf-8") as events:
+            values = dict(
+                line.split(None, 1) for line in events if line.strip()
+            )
+        return int(values.get("oom_kill", 0))
+    except (OSError, TypeError, ValueError):
+        return None
+
 # When running from an executable, ipykernel calls itself infinitely
 # This is a workaround to detect it and launch it manually
 if "ipykernel_launcher" in sys.argv:
@@ -65,6 +77,7 @@ class JupyterLanguage(BaseLanguage):
             os.environ.get("INTERPRETER_STALE_DRAIN_TIMEOUT", 0.2)
         )
         self._drain_lock = threading.Lock()
+        self._execution_oom_kill_count = _oom_kill_count()
 
         # DISABLED because sometimes this bypasses sending it up to us for some reason!
         # Give it our same matplotlib backend
@@ -97,8 +110,27 @@ import matplotlib.pyplot as plt
         # self.run(code)
 
     def terminate(self):
-        self.kc.stop_channels()
-        self.km.shutdown_kernel()
+        self.finish_flag = True
+        try:
+            self.kc.stop_channels()
+        except Exception:
+            pass
+        try:
+            self.km.shutdown_kernel(now=True)
+        except Exception:
+            pass
+        kernel = getattr(self.km, "kernel", None)
+        if kernel is not None:
+            try:
+                kernel.wait(timeout=1)
+            except Exception:
+                pass
+
+    def is_alive(self):
+        try:
+            return bool(self.km.is_alive())
+        except Exception:
+            return False
 
     def run(self, code):
         self._ensure_previous_listener_stopped()
@@ -135,6 +167,7 @@ import matplotlib.pyplot as plt
         self._drain_deadline = None
         self._interrupt_notice_emitted = False
         self._pending_interrupt_notice = False
+        self._execution_oom_kill_count = _oom_kill_count()
         try:
             try:
                 preprocessed_code = self.preprocess_code(code)
@@ -323,6 +356,32 @@ import matplotlib.pyplot as plt
                     continue
                 except queue.Empty:
                     pass
+
+                if not self.is_alive():
+                    current_oom_kills = _oom_kill_count()
+                    was_oom = (
+                        current_oom_kills is not None
+                        and self._execution_oom_kill_count is not None
+                        and current_oom_kills > self._execution_oom_kill_count
+                    )
+                    failure = "kernel_oom" if was_oom else "kernel_died"
+                    yield {
+                        "type": "console",
+                        "format": "error",
+                        "content": (
+                            "Python kernel was terminated after exceeding its "
+                            "memory limit. A fresh kernel will be used for the "
+                            "next Python operation; workspace files were preserved."
+                            if was_oom else
+                            "Python kernel exited unexpectedly. A fresh kernel "
+                            "will be used for the next Python operation; workspace "
+                            "files were preserved."
+                        ),
+                        "error_type": failure,
+                        "kernel_lost": True,
+                    }
+                    self.finish_flag = True
+                    break
 
                 if self.finish_flag:
                     if DEBUG_MODE:

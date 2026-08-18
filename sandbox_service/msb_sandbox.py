@@ -176,6 +176,8 @@ class MicrosandboxTerminal:
         self._sandbox = None
         self._open_terminal_key: Optional[str] = None
         self._cwd: Optional[str] = None
+        self._stream_handles: dict[str, object] = {}
+        self._stream_handles_lock = threading.Lock()
 
         # Dedicated event loop + thread so the SDK's connection(s) persist
         # across calls instead of being torn down/recreated each time
@@ -211,7 +213,13 @@ class MicrosandboxTerminal:
             return await coro_factory()
 
         future = asyncio.run_coroutine_threadsafe(_runner(), self._loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except Exception:
+            # A timed-out SDK operation must not remain queued on the shared
+            # loop and unexpectedly mutate a replacement sandbox later.
+            future.cancel()
+            raise
 
     def _exec(self, coro_factory, timeout: Optional[float] = None):
         """
@@ -391,6 +399,12 @@ class MicrosandboxTerminal:
                     command,
                     timeout=self._exec_timeout(code),
                 )
+                if run_id:
+                    if not hasattr(self, "_stream_handles_lock"):
+                        self._stream_handles_lock = threading.Lock()
+                        self._stream_handles = {}
+                    with self._stream_handles_lock:
+                        self._stream_handles[run_id] = handle
 
                 async def _monitor_cancellation() -> None:
                     while True:
@@ -417,6 +431,9 @@ class MicrosandboxTerminal:
             except Exception as exc:
                 events.put(("error", exc))
             finally:
+                if run_id and hasattr(self, "_stream_handles_lock"):
+                    with self._stream_handles_lock:
+                        self._stream_handles.pop(run_id, None)
                 if cancellation_monitor is not None:
                     cancellation_monitor.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
@@ -506,6 +523,56 @@ class MicrosandboxTerminal:
             )
             payload = json.loads((output.stdout_text or "").strip())
             return bool(payload.get("interrupted"))
+        except Exception:
+            return False
+
+    def signal_python_run(self, run_id: str, sig: signal.Signals) -> bool:
+        """Signal an existing guest bridge without opening another shell."""
+        if not run_id or not hasattr(self, "_stream_handles_lock"):
+            return False
+        with self._stream_handles_lock:
+            handle = self._stream_handles.get(run_id)
+        if handle is None:
+            return False
+        try:
+            self._run(lambda: handle.signal(sig), timeout=3.0)
+            return True
+        except Exception:
+            return False
+
+    def restart_python_kernel(self, kernel_id: str) -> bool:
+        """Replace one ipykernel while preserving the microVM filesystem."""
+        try:
+            # Recovery owns reconnect/escalation. Do not let _exec() retry a
+            # timed-out control request and double this bounded grace period.
+            output = self._run(
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --restart-kernel "
+                    f"--kernel-id {shlex.quote(kernel_id)}"
+                ),
+                timeout=10.0,
+            )
+            payload = json.loads((output.stdout_text or "").strip())
+            return bool(payload.get("restarted"))
+        except Exception:
+            return False
+
+    def recover_sandbox(self, run_id: str = "") -> bool:
+        """Stop/resume this named microVM without deleting its filesystem."""
+        self.signal_python_run(run_id, signal.SIGKILL)
+
+        async def _recover():
+            from microsandbox import Sandbox
+
+            if self._sandbox is not None:
+                await self._sandbox.stop()
+            self._sandbox = await Sandbox.start(self.session_id, detached=True)
+
+        try:
+            self._run(_recover, timeout=30.0)
+            self._open_terminal_key = None
+            self._cwd = None
+            return True
         except Exception:
             return False
 

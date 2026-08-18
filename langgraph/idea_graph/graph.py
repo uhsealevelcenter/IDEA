@@ -480,6 +480,11 @@ def build_idea_graph(
                 "console_excerpt": bounded_excerpt(outcome_content, result_excerpt_bytes),
                 "namespace": outcome_namespace,
                 "output_artifacts": outcome_artifacts,
+                **({"kernel_lost": True} if outcome_metadata.get("kernel_lost") else {}),
+                **(
+                    {"kernel_failure_types": outcome_metadata["kernel_failure_types"]}
+                    if outcome_metadata.get("kernel_failure_types") else {}
+                ),
                 **({"error_summary": bounded_excerpt(outcome_error, 2000)} if outcome_error else {}),
             })
             update["python_executions"] = bounded_python(

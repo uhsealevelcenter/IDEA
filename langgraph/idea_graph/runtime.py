@@ -623,6 +623,8 @@ class TerminalGraphRuntime:
             )
             console: list[str] = []
             errors: list[str] = []
+            kernel_failure_types: list[str] = []
+            kernel_lost = False
             image_count = 0
             generated_images: list[str] = []
             run_id = str(state.get("run_id") or "")
@@ -641,6 +643,10 @@ class TerminalGraphRuntime:
 
             try:
                 for chunk in chunks:
+                    if chunk.get("kernel_lost"):
+                        kernel_lost = True
+                    if chunk.get("error_type"):
+                        kernel_failure_types.append(str(chunk["error_type"]))
                     if chunk.get("type") == "console" and chunk.get("format") != "active_line":
                         content = str(chunk.get("content") or "")
                         if content:
@@ -699,6 +705,10 @@ class TerminalGraphRuntime:
                 vision_images=generated_images,
                 kernel_namespace=namespace,
                 error=("\n".join(errors).strip() or content) if failed else None,
+                metadata={
+                    "kernel_lost": kernel_lost,
+                    "kernel_failure_types": list(dict.fromkeys(kernel_failure_types)),
+                },
             )
 
         tool = self.agent.tools_by_name.get(name)

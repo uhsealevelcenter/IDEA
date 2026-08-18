@@ -300,6 +300,17 @@ async def interrupt_run(sandbox_id: str, run_id: str):
     return {"ok": True, "interrupted": interrupted}
 
 
+@app.get(
+    "/sandboxes/{sandbox_id}/runs/{run_id}",
+    dependencies=[Depends(require_internal_token)],
+)
+async def get_run_status(sandbox_id: str, run_id: str):
+    """Report confirmed cancellation/recovery progress for one Python run."""
+    status = registry.get_python_run_status(run_id, sandbox_id=sandbox_id)
+    status["sandbox_id"] = sandbox_id
+    return status
+
+
 @app.post("/sandboxes/{sandbox_id}/grep", dependencies=[Depends(require_internal_token)])
 async def grep_search(sandbox_id: str, request: GrepSearchRequest):
     """Search file contents in sandbox_id's VM - see terminal_registry.grep_search / interpreter_kernel/."""
