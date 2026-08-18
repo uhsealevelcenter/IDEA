@@ -117,7 +117,11 @@ class TerminalGraphRuntime:
             OUTPUTS_DIR,
             SYSTEM_PROMPT_PATH,
             TerminalAgent,
+            VISION_MAX_IMAGE_BYTES,
+            VISION_MAX_IMAGES_PER_TURN,
+            _attached_files_context,
             _cacheable_system_message,
+            _is_model_image_candidate,
             compose_system_prompt,
         )
 
@@ -143,6 +147,10 @@ class TerminalGraphRuntime:
             self.agent.builtin_skill_loader.render_manifest(),
         )
         self.cacheable_system_message = _cacheable_system_message
+        self.attached_files_context = _attached_files_context
+        self.is_model_image_candidate = _is_model_image_candidate
+        self.vision_max_image_bytes = VISION_MAX_IMAGE_BYTES
+        self.vision_max_images_per_turn = VISION_MAX_IMAGES_PER_TURN
 
     def emit(self, chunk: dict[str, Any] | str) -> None:
         if self.event_callback:
@@ -151,11 +159,102 @@ class TerminalGraphRuntime:
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
         from tools.persistent_terminal import list_file_metadata
 
-        synced = self.agent._sync_inputs_from_openwebui() if self.agent.attached_files else []
+        has_direct_attachments = any(
+            isinstance(item, dict)
+            and item.get("type", "file") in {"file", "image"}
+            and bool(item.get("id"))
+            for item in (self.agent.attached_files or [])
+        )
+        if has_direct_attachments:
+            self.emit({
+                "type": "status",
+                "phase": "syncing_inputs",
+                "description": "Preparing attached files…",
+                "done": False,
+            })
+            synced = self.agent._sync_inputs_from_openwebui()
+            self.emit({
+                "type": "status",
+                "phase": "syncing_inputs",
+                "description": "Attached files are ready",
+                "done": False,
+            })
+        else:
+            synced = []
         self.outputs_before = list_file_metadata(
             self.outputs_dir, session_id=self.agent.sandbox_id
         )
-        return {"synced_inputs": synced}
+
+        turn_messages: list[BaseMessage] = []
+        attached_context = self.attached_files_context(synced)
+        if attached_context:
+            turn_messages.append(HumanMessage(content=attached_context))
+
+        # Open WebUI normally includes uploaded image pixels directly in the
+        # latest user message. Fall back to the synchronized sandbox copy only
+        # when that multimodal content is absent, avoiding duplicate pixels and
+        # token usage while keeping image attachments reliable across payload
+        # variants.
+        latest_user_content: Any = None
+        for message in reversed(state.get("conversation_messages") or []):
+            if message.get("role") == "user":
+                latest_user_content = message.get("content")
+                break
+        has_inline_image = bool(
+            isinstance(latest_user_content, list)
+            and any(
+                isinstance(part, dict)
+                and part.get("type") in {
+                    "image", "image_url", "input_image"
+                }
+                for part in latest_user_content
+            )
+        )
+
+        vision_images: list[str] = []
+        warnings: list[str] = []
+        if not has_inline_image:
+            for item in synced:
+                if not self.is_model_image_candidate(item):
+                    continue
+                path = str(item.get("sandbox_path") or "")
+                if len(vision_images) >= self.vision_max_images_per_turn:
+                    warnings.append(
+                        f"{path!r} was not included in model vision because "
+                        f"the per-turn limit is "
+                        f"{self.vision_max_images_per_turn} images."
+                    )
+                    continue
+                size = item.get("size")
+                if (
+                    isinstance(size, int)
+                    and size > self.vision_max_image_bytes
+                ):
+                    warnings.append(
+                        f"{path!r} was not included in model vision because "
+                        f"it exceeds the {self.vision_max_image_bytes}-byte "
+                        "image limit."
+                    )
+                    continue
+                try:
+                    # Validate magic bytes before placing the path in graph
+                    # state. model_messages() will read it again only when the
+                    # first model request is assembled.
+                    self.agent._model_image_part(path)
+                except Exception as exc:
+                    warnings.append(
+                        f"{path!r} could not be included in model vision: "
+                        f"{exc}."
+                    )
+                    continue
+                vision_images.append(path)
+
+        return {
+            "synced_inputs": synced,
+            "turn_messages": turn_messages,
+            "vision_images": vision_images,
+            "warnings": warnings,
+        }
 
     def model_messages(self, state: dict[str, Any]) -> list[BaseMessage]:
         cacheable_system_message = getattr(
@@ -623,9 +722,12 @@ class TerminalGraphRuntime:
             )
             console: list[str] = []
             errors: list[str] = []
+            kernel_failure_types: list[str] = []
+            kernel_lost = False
             image_count = 0
             generated_images: list[str] = []
             run_id = str(state.get("run_id") or "")
+            cancellation = state.get("_run_cancellation")
             console_stream_open = False
 
             def emit_console(content: str, console_format: str) -> None:
@@ -641,6 +743,10 @@ class TerminalGraphRuntime:
 
             try:
                 for chunk in chunks:
+                    if chunk.get("kernel_lost"):
+                        kernel_lost = True
+                    if chunk.get("error_type"):
+                        kernel_failure_types.append(str(chunk["error_type"]))
                     if chunk.get("type") == "console" and chunk.get("format") != "active_line":
                         content = str(chunk.get("content") or "")
                         if content:
@@ -684,8 +790,12 @@ class TerminalGraphRuntime:
             if image_count:
                 content = (content + f"\n[{image_count} image(s) generated and shown to the user]").strip()
             failed = bool(errors) or content.startswith(("✗", "Kernel error", "Kernel exec failed"))
+            cancelled = bool(
+                cancellation is not None
+                and getattr(cancellation, "requested", False)
+            )
             namespace = []
-            if not failed:
+            if not failed and not cancelled:
                 namespace = inspect_python_namespace(
                     session_id=self.agent.sandbox_id,
                     kernel_id=str(state.get("kernel_id") or "default"),
@@ -694,11 +804,25 @@ class TerminalGraphRuntime:
                 )
             return ToolOutcome(
                 content=content or "(no output)",
-                status="failed" if failed else "completed",
+                status=(
+                    "failed" if failed else
+                    "interrupted" if cancelled else
+                    "completed"
+                ),
                 artifacts=generated_images,
                 vision_images=generated_images,
                 kernel_namespace=namespace,
-                error=("\n".join(errors).strip() or content) if failed else None,
+                error=(
+                    ("\n".join(errors).strip() or content)
+                    if failed else
+                    str(getattr(cancellation, "reason", None) or "user_requested")
+                    if cancelled else
+                    None
+                ),
+                metadata={
+                    "kernel_lost": kernel_lost,
+                    "kernel_failure_types": list(dict.fromkeys(kernel_failure_types)),
+                },
             )
 
         tool = self.agent.tools_by_name.get(name)
@@ -763,15 +887,17 @@ class TerminalGraphRuntime:
             result = str(tool.invoke(args))
         except Exception as exc:
             result = f"✗ {name} failed: {exc}"
-        displayed_result = result
-        if name == "view_skill" and not result.startswith("✗"):
-            from utils.skill_loader import summarize_skill_result
-            displayed_result = summarize_skill_result(result)
-        self.emit({
-            "role": "computer", "type": "console", "format": "output",
-            "content": displayed_result, "start": True, "end": True,
-        })
         failed = result.startswith("✗")
+        # Successful tool observations are for the agent, not the chat
+        # transcript.  The native status events already tell the user what is
+        # running, while ``result`` below retains the complete observation
+        # (including any saved-output paging guidance) for the next model
+        # turn.  Keep failures visible because they are actionable UI output.
+        if failed:
+            self.emit({
+                "role": "computer", "type": "console", "format": "error",
+                "content": result, "start": True, "end": True,
+            })
         return ToolOutcome(
             content=result, status="failed" if failed else "completed",
             error=result if failed else None,

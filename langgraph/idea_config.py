@@ -18,12 +18,15 @@ SANDBOX_SERVICE_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox:8020").rs
 # Agent orchestration and durable memory. ``manual`` remains available as a
 # rollback path while production checkpoints are introduced.
 IDEA_AGENT_RUNTIME = os.getenv("IDEA_AGENT_RUNTIME", "manual").strip().lower()
-# One switch controls the primary IDEA agent and its lightweight model-backed
-# helper tools. Keep both Terra and Sol aliases configured in LiteLLM so a
-# rollback only requires changing this environment variable and restarting
-# the LangGraph service.
+# The primary conversational IDEA model. Model-backed helper tools have their
+# own stable setting below so changing the primary does not silently change
+# auxiliary inference.
 IDEA_AGENT_MODEL = (
     os.getenv("IDEA_AGENT_MODEL", "gpt-5.6-terra").strip()
+    or "gpt-5.6-terra"
+)
+IDEA_TOOL_MODEL = (
+    os.getenv("IDEA_TOOL_MODEL", "gpt-5.6-terra").strip()
     or "gpt-5.6-terra"
 )
 
@@ -40,7 +43,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # TODO(low priority): route Codex through a microVM-reachable LiteLLM endpoint
 # and use a separate, revocable, model-restricted, low-budget virtual key.
 IDEA_CODEX_ENABLED = _env_bool("IDEA_CODEX_ENABLED", True)
-IDEA_CODEX_MODEL = os.getenv("IDEA_CODEX_MODEL", IDEA_AGENT_MODEL).strip() or IDEA_AGENT_MODEL
+IDEA_CODEX_MODEL = (
+    os.getenv("IDEA_CODEX_MODEL", "gpt-5.6-terra").strip()
+    or "gpt-5.6-terra"
+)
 IDEA_CODEX_BASE_URL = (
     os.getenv("IDEA_CODEX_BASE_URL", "").strip()
     or os.getenv("OPENAI_BASE_URL", "").strip()

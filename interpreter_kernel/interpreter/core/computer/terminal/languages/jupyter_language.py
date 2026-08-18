@@ -21,6 +21,18 @@ from ..base_language import BaseLanguage
 
 DEBUG_MODE = False
 
+
+def _oom_kill_count():
+    """Return the cgroup-v2 OOM-kill counter when available."""
+    try:
+        with open("/sys/fs/cgroup/memory.events", encoding="utf-8") as events:
+            values = dict(
+                line.split(None, 1) for line in events if line.strip()
+            )
+        return int(values.get("oom_kill", 0))
+    except (OSError, TypeError, ValueError):
+        return None
+
 # When running from an executable, ipykernel calls itself infinitely
 # This is a workaround to detect it and launch it manually
 if "ipykernel_launcher" in sys.argv:
@@ -65,6 +77,12 @@ class JupyterLanguage(BaseLanguage):
             os.environ.get("INTERPRETER_STALE_DRAIN_TIMEOUT", 0.2)
         )
         self._drain_lock = threading.Lock()
+        # Transport/output capture may end independently of the submitted
+        # IPython cell.  Track the cell's authoritative lifecycle separately
+        # so callers never mistake a closed stream for an idle kernel.
+        self._execution_idle = threading.Event()
+        self._execution_idle.set()
+        self._execution_oom_kill_count = _oom_kill_count()
 
         # DISABLED because sometimes this bypasses sending it up to us for some reason!
         # Give it our same matplotlib backend
@@ -97,8 +115,32 @@ import matplotlib.pyplot as plt
         # self.run(code)
 
     def terminate(self):
-        self.kc.stop_channels()
-        self.km.shutdown_kernel()
+        self.finish_flag = True
+        try:
+            self.kc.stop_channels()
+        except Exception:
+            pass
+        try:
+            self.km.shutdown_kernel(now=True)
+        except Exception:
+            pass
+        kernel = getattr(self.km, "kernel", None)
+        if kernel is not None:
+            try:
+                kernel.wait(timeout=1)
+            except Exception:
+                pass
+        self._execution_idle.set()
+
+    def is_alive(self):
+        try:
+            return bool(self.km.is_alive())
+        except Exception:
+            return False
+
+    def is_execution_idle(self):
+        """Return whether IPython confirmed that the current cell is idle."""
+        return self._execution_idle.is_set()
 
     def run(self, code):
         self._ensure_previous_listener_stopped()
@@ -135,6 +177,7 @@ import matplotlib.pyplot as plt
         self._drain_deadline = None
         self._interrupt_notice_emitted = False
         self._pending_interrupt_notice = False
+        self._execution_oom_kill_count = _oom_kill_count()
         try:
             try:
                 preprocessed_code = self.preprocess_code(code)
@@ -264,6 +307,7 @@ import matplotlib.pyplot as plt
                     # Set finish_flag and return when the kernel becomes idle
                     if DEBUG_MODE:
                         print("from thread: kernel is idle")
+                    self._execution_idle.set()
                     self.finish_flag = True
                     return
                 for chunk in self._iopub_msg_to_chunks(msg):
@@ -278,6 +322,7 @@ import matplotlib.pyplot as plt
                 "thread is on:", self.listener_thread.is_alive(), self.listener_thread
             )
 
+        self._execution_idle.clear()
         self.kc.execute(code)
 
     def detect_active_line(self, line):
@@ -324,32 +369,54 @@ import matplotlib.pyplot as plt
                 except queue.Empty:
                     pass
 
+                if not self.is_alive():
+                    self._execution_idle.set()
+                    current_oom_kills = _oom_kill_count()
+                    was_oom = (
+                        current_oom_kills is not None
+                        and self._execution_oom_kill_count is not None
+                        and current_oom_kills > self._execution_oom_kill_count
+                    )
+                    failure = "kernel_oom" if was_oom else "kernel_died"
+                    yield {
+                        "type": "console",
+                        "format": "error",
+                        "content": (
+                            "Python kernel was terminated after exceeding its "
+                            "memory limit. A fresh kernel will be used for the "
+                            "next Python operation; workspace files were preserved."
+                            if was_oom else
+                            "Python kernel exited unexpectedly. A fresh kernel "
+                            "will be used for the next Python operation; workspace "
+                            "files were preserved."
+                        ),
+                        "error_type": failure,
+                        "kernel_lost": True,
+                    }
+                    self.finish_flag = True
+                    break
+
                 if self.finish_flag:
                     if DEBUG_MODE:
                         print("we're done")
                     break
 
-                if self._drain_deadline and time.time() > self._drain_deadline:
-                    self.finish_flag = True
-                    if DEBUG_MODE:
-                        print("drain timeout reached")
-                    break
+                # Do not close an active stream merely because the interrupt
+                # drain window elapsed. User code can catch KeyboardInterrupt
+                # and continue; the outer recovery supervisor needs this run
+                # to remain active so it can replace the still-busy kernel.
         finally:
             self._capture_output_active = False
             self._drain_deadline = None
 
     def stop(self):
         self._request_interrupt()
-        if self._drain_deadline is None:
-            self._drain_deadline = time.time() + self._drain_timeout
 
     def interrupt_and_drain(self, timeout=None):
         if timeout is None:
             timeout = self._drain_timeout
         self._request_interrupt()
         if self._capture_output_active:
-            if self._drain_deadline is None:
-                self._drain_deadline = time.time() + timeout
             return []
         deadline = time.time() + timeout
         drained = []

@@ -261,6 +261,37 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_collects_nested_attachment_from_latest_user_message(self):
+        descriptors = idea_pipe._attached_resource_descriptors(
+            None,
+            {},
+            None,
+            [{
+                "role": "user",
+                "content": "Inspect this dataset.",
+                "files": [{
+                    "type": "file",
+                    "file": {
+                        "id": "file-nested-123",
+                        "filename": "observations.nc",
+                        "meta": {
+                            "name": "observations.nc",
+                            "content_type": "application/x-netcdf",
+                            "size": 42,
+                        },
+                    },
+                }],
+            }],
+        )
+
+        self.assertEqual(descriptors, [{
+            "id": "file-nested-123",
+            "type": "file",
+            "name": "observations.nc",
+            "content_type": "application/x-netcdf",
+            "size": 42,
+        }])
+
     def test_builds_public_origin_from_forwarded_request_headers(self):
         request = SimpleNamespace(
             headers={

@@ -12,6 +12,14 @@ on:
         description: "Immutable release version, for example 2026.08.10-1"
         required: false
         type: string
+      platforms:
+        description: "Target architecture set"
+        required: true
+        default: "linux/amd64,linux/arm64"
+        type: choice
+        options:
+          - "linux/amd64"
+          - "linux/amd64,linux/arm64"
 
 concurrency:
   group: microsandbox-image-${{ github.ref }}
@@ -67,17 +75,20 @@ jobs:
           echo "image=${image}" >> "${GITHUB_OUTPUT}"
           echo "version_tag=${image}:research-${RELEASE_VERSION}" >> "${GITHUB_OUTPUT}"
           echo "sha_tag=${image}:sha-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-      - name: Build and publish the multi-architecture release
-        run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --provenance=true \
-            --sbom=true \
-            --tag "${{ steps.image.outputs.version_tag }}" \
-            --tag "${{ steps.image.outputs.sha_tag }}" \
-            --push \
-            --file interpreter_kernel/Dockerfile \
-            interpreter_kernel
+      - name: Build and publish the selected architectures
+        uses: docker/build-push-action@v6
+        with:
+          context: interpreter_kernel
+          file: interpreter_kernel/Dockerfile
+          platforms: ${{ inputs.platforms }}
+          provenance: true
+          sbom: true
+          push: true
+          tags: |
+            ${{ steps.image.outputs.version_tag }}
+            ${{ steps.image.outputs.sha_tag }}
+          cache-from: type=gha,scope=microsandbox-image
+          cache-to: type=gha,mode=max,scope=microsandbox-image
       - name: Record the published digest
         run: |
           docker buildx imagetools inspect \

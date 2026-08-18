@@ -304,9 +304,10 @@ retained.
 
 `langgraph/idea_config.py` replaces the previous `langgraph/config.py` as the
 central configuration module. `IDEA_AGENT_MODEL` now selects the main model,
-defaults to `gpt-5.6-terra`, and is used by the graph service, the legacy
-orchestrator, and helper tools (`station_tool.py` and `web_search_tool.py`).
-`gpt-5.6-sol` remains configured as a one-variable rollback.
+defaults to `gpt-5.6-terra`, and is used by the graph service and legacy
+orchestrator. `IDEA_TOOL_MODEL` independently keeps helper tools
+(`station_tool.py` and `web_search_tool.py`) on `gpt-5.6-terra` if the primary
+model is changed.
 
 `litellm/litellm_config.yaml` adds the Terra alias while retaining Sol and the
 hidden Luna task model. LiteLLM disables same-deployment retries and defines
@@ -413,7 +414,7 @@ with exact Open WebUI file URLs after finalization. Passive preview-safe
 extensions use the canonical `/api/v1/files/.../content` route so shared-chat
 pages can rewrite them to their share-scoped authorization endpoint. Active
 HTML uses the authenticated, sandboxed `/idea-file-preview/...` route in the
-owner's chat. IDEA Open WebUI `v0.11.0-idea.0.7` rewrites that link on shared
+owner's chat. The current IDEA Open WebUI `v0.11.0-idea.0.8` image rewrites that link on shared
 pages to an authorized share-scoped HTML response with the same sandbox
 restrictions, allowing the webpage to open in a new tab. Other types use the
 download endpoint. URL-encoded paths are normalized, Markdown labels are
@@ -430,6 +431,20 @@ characters, invalid types, and duplicates. LangGraph re-authorizes each ID
 with the current Open WebUI credential and copies immutable files to the
 private sandbox in bounded streamed chunks. Existing copies are still
 re-authorized each turn.
+
+The graph preparation boundary now retains the synchronization result in the
+first model call. Non-image uploads are named by their exact private sandbox
+paths in a model-visible turn message. Uploaded images use Open WebUI's inline
+multimodal content when present and otherwise fall back to the validated
+sandbox copy, avoiding both invisible attachments and duplicate image pixels.
+This correction is confined to the Pipe/LangGraph integration: it does not
+require an Open WebUI customization-image or microsandbox-image change. If a
+future Open WebUI release changes its attachment payload again, its supported
+Pipe attachment contract should be documented and covered by the nested and
+top-level descriptor tests before updating the pinned image.
+Collection-only Assistant Knowledge resources remain available to lazy
+PaperQA setup but do not run input synchronization or emit a misleading
+"Preparing attached files…" status.
 
 PaperQA is now prepared lazily. `TerminalAgent._ensure_paperqa_library()` does
 not initialize a library during ordinary graph preparation; it runs only when
@@ -448,9 +463,10 @@ authorization, and size-limit checks remain enforced.
 execution memory. It tells the model to prefer one persistent Python analysis
 call where practical, avoid redisplaying plots that Python already emitted,
 use the dedicated display/inspection distinction, recognize Codex delegation,
-and use Open WebUI-safe math delimiters (`\(...\)` and `\[...\]`, not dollar
-signs). `langgraph/utils/skills/review-code/SKILL.md` was updated to fit the
-current delegated-review workflow.
+and use the Open WebUI deployment's supported MathJax delimiters (`$...$` and
+`$$...$$`, not `\(...\)` or `\[...\]`).
+`langgraph/utils/skills/review-code/SKILL.md` was updated to fit the current
+delegated-review workflow.
 
 ## Codex delegation
 

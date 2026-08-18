@@ -9,11 +9,11 @@ from typing import Any, Optional
 
 from langchain_core.tools import tool
 from litellm import responses
-from idea_config import IDEA_AGENT_MODEL
+from idea_config import IDEA_TOOL_MODEL
 
 from ..data.station_list_appendix import STATION_LIST_APPENDIX
 
-STATION_LOOKUP_MODEL = f"openai/{IDEA_AGENT_MODEL}"
+STATION_LOOKUP_MODEL = f"openai/{IDEA_TOOL_MODEL}"
 
 
 def _extract_text_from_station_response(response: Any) -> Optional[str]:

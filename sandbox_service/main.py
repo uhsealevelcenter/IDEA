@@ -131,15 +131,23 @@ async def health_check():
 
 @app.post("/sandboxes/{sandbox_id}/exec", response_model=ExecResponse, dependencies=[Depends(require_internal_token)])
 async def exec_command(sandbox_id: str, request: ExecRequest):
-    success, output, elapsed_time = registry.run_command(request.command, sandbox_id=sandbox_id)
+    success, output, elapsed_time = await asyncio.to_thread(
+        registry.run_command,
+        request.command,
+        sandbox_id=sandbox_id,
+    )
     return {"success": success, "output": output, "elapsed_time": elapsed_time}
 
 
 @app.post("/sandboxes/{sandbox_id}/files", dependencies=[Depends(require_internal_token)])
 async def write_file(sandbox_id: str, request: WriteFileRequest):
     try:
-        registry.write_file(
-            request.filepath, request.content, sandbox_id=sandbox_id, append=request.append
+        await asyncio.to_thread(
+            registry.write_file,
+            request.filepath,
+            request.content,
+            sandbox_id=sandbox_id,
+            append=request.append,
         )
         return {"ok": True}
     except PermissionError:
@@ -300,11 +308,26 @@ async def interrupt_run(sandbox_id: str, run_id: str):
     return {"ok": True, "interrupted": interrupted}
 
 
+@app.get(
+    "/sandboxes/{sandbox_id}/runs/{run_id}",
+    dependencies=[Depends(require_internal_token)],
+)
+async def get_run_status(sandbox_id: str, run_id: str):
+    """Report confirmed cancellation/recovery progress for one Python run."""
+    status = registry.get_python_run_status(run_id, sandbox_id=sandbox_id)
+    status["sandbox_id"] = sandbox_id
+    return status
+
+
 @app.post("/sandboxes/{sandbox_id}/grep", dependencies=[Depends(require_internal_token)])
 async def grep_search(sandbox_id: str, request: GrepSearchRequest):
     """Search file contents in sandbox_id's VM - see terminal_registry.grep_search / interpreter_kernel/."""
     try:
-        return registry.grep_search(sandbox_id, **request.model_dump(exclude_none=True))
+        return await asyncio.to_thread(
+            registry.grep_search,
+            sandbox_id,
+            **request.model_dump(exclude_none=True),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -313,7 +336,11 @@ async def grep_search(sandbox_id: str, request: GrepSearchRequest):
 async def glob_search(sandbox_id: str, request: GlobSearchRequest):
     """Search files by name in sandbox_id's VM - see terminal_registry.glob_search / interpreter_kernel/."""
     try:
-        return registry.glob_search(sandbox_id, **request.model_dump(exclude_none=True))
+        return await asyncio.to_thread(
+            registry.glob_search,
+            sandbox_id,
+            **request.model_dump(exclude_none=True),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -321,7 +348,11 @@ async def glob_search(sandbox_id: str, request: GlobSearchRequest):
 @app.get("/sandboxes/{sandbox_id}/files/content", dependencies=[Depends(require_internal_token)])
 async def read_file_content(sandbox_id: str, filepath: str):
     try:
-        data = registry.read_file_bytes(filepath, sandbox_id=sandbox_id)
+        data = await asyncio.to_thread(
+            registry.read_file_bytes,
+            filepath,
+            sandbox_id=sandbox_id,
+        )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {filepath}")
     except Exception as e:
@@ -331,20 +362,25 @@ async def read_file_content(sandbox_id: str, filepath: str):
 
 @app.get("/sandboxes/{sandbox_id}/files/exists", dependencies=[Depends(require_internal_token)])
 async def check_file_exists(sandbox_id: str, filepath: str):
-    return {"exists": registry.file_exists(filepath, sandbox_id=sandbox_id)}
+    exists = await asyncio.to_thread(
+        registry.file_exists,
+        filepath,
+        sandbox_id=sandbox_id,
+    )
+    return {"exists": exists}
 
 
 @app.post("/sandboxes/{sandbox_id}/stop", dependencies=[Depends(require_internal_token)])
 async def stop_sandbox(sandbox_id: str):
     """Gracefully stop (state-preserving) this sandbox - resumable later."""
-    stopped = registry.stop_terminal(sandbox_id)
+    stopped = await asyncio.to_thread(registry.stop_terminal, sandbox_id)
     return {"ok": True, "stopped": stopped}
 
 
 @app.post("/sandboxes/{sandbox_id}/destroy", dependencies=[Depends(require_internal_token)])
 async def destroy_sandbox(sandbox_id: str):
     """Permanently delete this sandbox - NOT resumable."""
-    destroyed = registry.destroy_terminal(sandbox_id)
+    destroyed = await asyncio.to_thread(registry.destroy_terminal, sandbox_id)
     return {"ok": True, "destroyed": destroyed}
 
 

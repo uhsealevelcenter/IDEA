@@ -74,6 +74,24 @@ the microsandbox SDK's own `shell()`/`fs.write()`/`fs.read()` directly,
 not through Open Terminal, since that already works and Open Terminal's
 `/execute` doesn't offer anything more for plain shell commands.
 
+## Python interruption and recovery
+
+`sandbox_service` supervises each streamed Python run without acquiring the
+execution lock held by that run. A user Stop first signals the existing guest
+stream bridge with `SIGINT`. If it does not release within
+`SANDBOX_PYTHON_INTERRUPT_GRACE_SECONDS`, IDEA retires only that ipykernel and
+kills the stale bridge. If that still cannot release the host-side stream, it
+stop/resumes the same named microVM; this clears Python variables but preserves
+the sandbox filesystem. Runs exceeding
+`SANDBOX_PYTHON_EXECUTION_TIMEOUT_SECONDS` enter the same recovery path.
+
+The guest also checks ipykernel liveness while capturing output and compares
+the cgroup-v2 OOM counter. A dead child closes the stream with a structured
+`kernel_died` or `kernel_oom` error, and the daemon lazily creates a clean
+kernel for the next execution. These changes live in this guest image, so
+editing the source or restarting Compose is insufficient: rebuild/publish the
+image and recreate test sandboxes before validation.
+
 ## Building
 
 This directory is a self-contained build context. Build and validate it on a
@@ -113,12 +131,18 @@ specifically require this one (or one built on top of it).
 
 Publication is deliberately separate from local testing. After the local test
 above passes, manually run the **Microsandbox image** GitHub Actions workflow,
-enter an immutable version, and explicitly set `publish=true`. The workflow
-repeats the amd64 smoke test before its protected publish job creates amd64 and
-arm64 images with SBOM/provenance attestations. It publishes only
+enter an immutable version, explicitly set `publish=true`, and select either
+amd64-only or the amd64+arm64 architecture set. The workflow repeats the amd64
+smoke test before its protected, cache-enabled publish job creates the selected
+image manifest with SBOM/provenance attestations. It publishes only
 `research-<version>` and `sha-<commit>` tags; it does not silently move a
 `latest` or `slim` tag. Configure required reviewers on the
 `microsandbox-image-publish` GitHub Environment before production use.
+
+`numcodecs==0.15.1`, retained for the Zarr 2 environment, has no CPython 3.12
+Linux ARM64 wheel. The Dockerfile disables its x86-only SSE2/AVX2 source paths
+when `TARGETARCH=arm64`; otherwise QEMU can expose host CPU flags that cause
+the ARM compiler to receive invalid `-msse2`/`-mavx2` options.
 
 When rolling out a published image, two things matter:
 

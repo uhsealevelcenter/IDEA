@@ -10,6 +10,27 @@ Fix three production reliability failures observed on 14–15 August 2026:
 
 The work should preserve persistent Python variables and user files when possible, while guaranteeing that a failed execution cannot make IDEA unusable indefinitely.
 
+## Implementation status (2026-08-17)
+
+The three immediate failure paths now have code-level fixes on
+`debug/ui-langgraph-general`:
+
+- every model-facing tool observation is hard-bounded, including recent ones;
+- the guest detects a dead/OOM-killed ipykernel, closes its stream with a
+  classified `kernel_oom`/`kernel_died` error, and lazily supplies a fresh
+  kernel on the next execution;
+- Python Stop is supervised outside the sandbox execution lock: `SIGINT` is
+  allowed a short grace period, then only the affected kernel is replaced,
+  and the same filesystem-preserving microVM is stop/resumed only if the
+  kernel/bridge still cannot release the run;
+- an independent configurable execution deadline invokes the same recovery
+  path, and recovery state is available from the sandbox run-status endpoint.
+
+The guest-image changes still require a rebuilt image and real-microVM
+validation, especially the ThreadPoolExecutor and OOM scenarios below. Safe
+general support for thread/process pools remains a separate TODO; the current
+system instruction should continue discouraging them.
+
 ## Production incidents and evidence
 
 ### Incident 1: Stop could not terminate threaded Python
@@ -204,13 +225,13 @@ For every case, assert:
 - Assemble a prompt near the configured model limit and verify preflight compaction.
 - Retain tests for older-observation compaction, but remove the assumption that recent observations are unlimited.
 
-## Suggested implementation order
+## Implemented order and remaining validation
 
-1. Fix unbounded model-facing tool observations and add prompt preflight. This is localized and prevents immediate context-window failures.
-2. Add kernel-process death detection and bridge cleanup.
-3. Implement confirmed, escalating Stop with a short grace period.
-4. Add per-run hard deadlines and independent watchdogs.
-5. Add service/microVM health telemetry and operational recovery hooks.
+1. Done: hard-bound model-facing tool observations. Whole-prompt preflight remains a follow-up.
+2. Done in code: kernel-process death/OOM detection and bridge cleanup.
+3. Done in code: supervised, escalating Stop with a short grace period.
+4. Done in code: per-run hard deadline and independent watchdog.
+5. Partial: run recovery status is exposed; production monitoring and alerts remain.
 
 ## Operational notes
 
@@ -227,4 +248,3 @@ For every case, assert:
 - Open WebUI conversation compaction and LangGraph live-turn compaction have explicit, separate tests and documented responsibilities.
 - Sandbox `/health` remains responsive during long or broken user executions.
 - Existing persistence, streaming output, execution ledger, checkpointing, and per-user isolation tests continue to pass.
-

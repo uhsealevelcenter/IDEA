@@ -23,6 +23,7 @@ from .control import RunCancellation
 from .memory import (
     bounded_excerpt,
     bounded_records,
+    bounded_text_bytes,
     compact_turn_messages,
     defined_names,
     execution_memory_block,
@@ -206,7 +207,11 @@ def build_idea_graph(
             "type": "status", "phase": "starting",
             "description": "Preparing conversation memory…", "done": False,
         })
-        runtime.prepare(state)
+        prepared = runtime.prepare(state) or {}
+        prepared_turn_messages = list(prepared.get("turn_messages") or [])
+        prepared_warnings = [
+            str(item) for item in (prepared.get("warnings") or [])
+        ]
         objective = ""
         for message in reversed(state.get("conversation_messages") or []):
             if message.get("role") == "user":
@@ -233,7 +238,11 @@ def build_idea_graph(
                 "description": objective[:1000],
                 "status": "pending",
             }]
-        initial_vision: list[str] = []
+        initial_vision = [
+            str(path)
+            for path in (prepared.get("vision_images") or [])
+            if path
+        ]
         if _requests_visual_context(objective):
             active_id = str(state.get("active_artifact_id") or "")
             active = next(
@@ -251,18 +260,20 @@ def build_idea_graph(
             "objective": objective,
             "plan": plan,
             "continuation": None,
-            "turn_messages": [],
+            "turn_messages": prepared_turn_messages,
             "pending_tool_calls": [],
             "current_action": None,
             "completed_actions": bounded_actions(state),
             "python_executions": bounded_python(state),
-            "warnings": list(state.get("warnings") or [])[-20:],
+            "warnings": [
+                *(state.get("warnings") or []), *prepared_warnings
+            ][-20:],
             "stop_requested": cancellation.requested,
             "stop_reason": cancellation.reason,
             "final_status": "stopping" if cancellation.requested else "running",
             "final_response": None,
             "iteration": 0,
-            "vision_images": initial_vision,
+            "vision_images": list(dict.fromkeys(initial_vision))[-16:],
             "vision_consumed_count": 0,
             "codex_threads": dict(state.get("codex_threads") or {}),
             "codex_usage": list(state.get("codex_usage") or [])[-100:],
@@ -431,7 +442,13 @@ def build_idea_graph(
                 outcome_status = "interrupted"
                 outcome_error = cancellation.reason
             else:
-                outcome = runtime.execute_tool(call, state)
+                # Runtime-only control object; do not persist it in graph
+                # state. Long-running tools can observe cancellation during
+                # their own cleanup instead of beginning another kernel call.
+                outcome = runtime.execute_tool(
+                    call,
+                    {**state, "_run_cancellation": cancellation},
+                )
                 outcome_content = outcome.content
                 outcome_status = outcome.status
                 outcome_error = outcome.error
@@ -463,7 +480,13 @@ def build_idea_graph(
             "current_action": None,
             "completed_actions": completed_actions,
             "turn_messages": list(state.get("turn_messages") or []) + [
-                ToolMessage(content=outcome_content, tool_call_id=call_id)
+                ToolMessage(
+                    content=bounded_text_bytes(
+                        outcome_content,
+                        IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
+                    ),
+                    tool_call_id=call_id,
+                )
             ],
         }
         if python_record is not None:
@@ -473,6 +496,11 @@ def build_idea_graph(
                 "console_excerpt": bounded_excerpt(outcome_content, result_excerpt_bytes),
                 "namespace": outcome_namespace,
                 "output_artifacts": outcome_artifacts,
+                **({"kernel_lost": True} if outcome_metadata.get("kernel_lost") else {}),
+                **(
+                    {"kernel_failure_types": outcome_metadata["kernel_failure_types"]}
+                    if outcome_metadata.get("kernel_failure_types") else {}
+                ),
                 **({"error_summary": bounded_excerpt(outcome_error, 2000)} if outcome_error else {}),
             })
             update["python_executions"] = bounded_python(

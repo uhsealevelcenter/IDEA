@@ -95,8 +95,8 @@ class DeployAssistantsTests(unittest.TestCase):
     def test_official_prompts_match_pinned_repository_versions(self):
         expected = {
             "prompts/welcome.md": (
-                2372,
-                "24516eeb01a8c0f300545b1564c29c88b7facdcd18b94fe8902716d9b183b51d",
+                2395,
+                "0b5725b47210476e7d1caa8aca9cc9d067da5601c7b2a486c8ff753015afb2fe",
                 False,
             ),
             "prompts/sea.md": (

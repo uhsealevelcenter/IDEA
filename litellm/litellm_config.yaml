@@ -1,7 +1,6 @@
 # LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
 # `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
-# endpoint that langgraph/ already talks to directly (see
-# langgraph/agents/terminal_agent.py). IDEA_AGENT_MODEL selects Terra or Sol;
+# endpoint. IDEA_AGENT_MODEL selects Sol or Terra for primary chat;
 # gpt-5.6-luna is available to Open WebUI for background task generation.
 
 model_list:
@@ -87,7 +86,10 @@ general_settings:
 litellm_settings:
   set_verbose: false # Disable debug logging in production.
   json_logs: true # Structured (JSON) logs.
-  request_timeout: 60 # Keep provider stalls bounded; the client uses the same ceiling.
+  # Bound one provider attempt inside the proxy. LangGraph has a separate,
+  # longer 180-second outer request ceiling so it can classify/report proxy
+  # timeouts and safely retry only before any streamed output.
+  request_timeout: 60
   # The router fallback below should run immediately when the primary is
   # throttled. Retrying the same deployment first caused a silent ~30-second
   # wait in the UI before another 429 response.

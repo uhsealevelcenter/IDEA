@@ -1,5 +1,34 @@
 # Recent Changes
 
+## Work started in `debug/ui-langgraph-general`
+
+1. Open WebUI is updated to the `v0.11.0-idea.0.8` customization release.
+   Compose pins its published multi-platform OCI index digest.
+2. Every model-visible tool observation now has a hard configurable byte
+   ceiling, including the newest observation. The bound is applied before
+   checkpoint persistence and again while assembling model input; the manual
+   rollback loop has the same protection.
+3. IDEA's system instructions now call for concise plans and milestone updates
+   during complex work, without narrating every command. They also discourage
+   Python worker pools until Stop can terminate them safely without locking or
+   killing the persistent kernel.
+4. The primary conversation model defaults to `gpt-5.6-terra` after a brief
+   evaluation of `gpt-5.6-sol` exposed unacceptable response latency.
+   Auxiliary station/web inference, Codex, and PaperQA also remain explicitly
+   on Terra; Open WebUI task generation remains on `gpt-5.6-luna`.
+5. Persistent Python execution now detects dead and OOM-killed kernels and
+   supplies a fresh kernel on the next call. Stop is supervised outside the
+   held execution lock: it first preserves healthy kernel state with a normal
+   interrupt, then replaces only an unresponsive kernel, and finally
+   stop/resumes the same filesystem-preserving microVM if its control plane is
+   also wedged. A configurable hard execution deadline uses the same path.
+6. Direct file attachments are normalized across current Open WebUI payload
+   shapes, re-authorized and copied into the private sandbox, and named by
+   exact path in the first model call. Image files fall back to validated
+   sandbox pixels only when Open WebUI did not already supply inline pixels.
+   Assistant Knowledge collections remain lazy PaperQA resources and no
+   longer produce a false "Preparing attached files…" status.
+
 ## Changes in `feature/langgraph-memory`
 
 This listing compares `feature/langgraph-memory` with its parent branch,
@@ -24,7 +53,7 @@ code.
 14. Open WebUI's separate native Code Execution and Code Interpreter runtimes are disabled for IDEA to prevent confusion with the persistent sandbox kernel, and the documentation now clarifies supported math-delimiter formatting.
 15. Deployment-managed Assistants now receive curated suggested prompts, including domain-specific SEA and Mars prompts and narrowly scoped Welcome-prompt reconciliation for selected existing Assistants.
 16. Climate-index parsing is compatible with pandas 3 while preserving the existing climate-data workflow and test coverage.
-17. The primary agent model is centrally selected through `IDEA_AGENT_MODEL`, defaults to `gpt-5.6-terra`, and retains `gpt-5.6-sol` as a one-variable rollback through the same LiteLLM endpoint and credentials.
+17. The primary agent model is centrally selected through `IDEA_AGENT_MODEL`; `debug/ui-langgraph-general` briefly evaluated `gpt-5.6-sol` before restoring the `gpt-5.6-terra` default, while keeping auxiliary models separate.
 18. Python kernel failures retain structured error metadata through the kernel, sandbox, and LangGraph layers, are marked as failed tool executions, and render in Open WebUI as labeled traceback blocks without marking the entire assistant response as failed.
 19. IDEA can now delegate substantial repository investigation, implementation, debugging, and review to Codex inside the user's existing microsandbox workspace. LangGraph remains the conversation orchestrator, checkpoints resumable Codex threads, applies read-only or workspace-write policy, and propagates Stop requests to active Codex turns.
 20. The microsandbox guest image now includes the pinned Codex runtime and a reviewed research software environment that restores the broadly useful legacy IDEA analysis stack while adding commonly needed CIndRA, document, OCR, browser, geospatial, and ocean-data packages. Local and microVM smoke tests, dependency auditing, immutable multi-architecture publication, and an explicitly destructive developer-only refresh workflow are documented.
@@ -38,7 +67,7 @@ major changes.
 1. IDEA now uses the newest pinned UHSLC Open WebUI customization, incorporating the interface and integration changes needed by the IDEA deployment.
 2. Official Welcome, SEA, and Mars Assistants now preserve the legacy prompts and branding while being deployed and managed through Open WebUI.
 3. The user-facing base model is named **IDEA Agent**, replacing **IDEA Terminal Agent**, while stable internal function and model identifiers retain their existing machine-readable names for compatibility.
-4. The main agent model is selected by `IDEA_AGENT_MODEL` (`gpt-5.6-terra` by default, with `gpt-5.6-sol` retained as a one-variable rollback), while a hidden `gpt-5.6-luna` task model handles Open WebUI titles and other auxiliary work through LiteLLM.
+4. The main agent model is selected by `IDEA_AGENT_MODEL` (`gpt-5.6-terra` by default, with `gpt-5.6-sol` retained as a one-variable alternative), while a hidden `gpt-5.6-luna` task model handles Open WebUI titles and other auxiliary work through LiteLLM.
 5. Deployment configuration now reconciles Open WebUI context compaction, token limits, title generation, Assistant permissions, and shared Workspace feature policies.
 6. Data uploaded through Open WebUI is authorized and copied without format changes into each user's persistent private sandbox, with exact file paths supplied to the agent for analysis.
 7. Generated artifacts are synchronized back to Open WebUI with reusable links, and browser-safe HTML and image previews are supported.
@@ -52,8 +81,20 @@ major changes.
 
 1. Finish production hardening for guest and pending users, LiteLLM prompt/completion retention, sandbox-image pinning, backups, and non-destructive sandbox upgrades.
 2. Finish provisioning the mapped `next-dev` GitHub Environment and complete production-like smoke, persistence, recovery, concurrency, attachment, PaperQA, Codex, and security testing before promotion.
+3. Rebuild and publish the guest image, then validate escalating Stop and
+   kernel/OOM recovery against real blocked-worker and OOM incidents. Design
+   explicit thread/process-pool support so pooled work can be stopped without
+   unnecessarily replacing a healthy persistent kernel.
+4. Decide Microsandbox capacity and admission policy: configurable CPU/RAM
+   tiers (1 GiB is insufficient for observed workloads but local hosts may be
+   constrained), a waiting/onboarding experience and possibly smaller
+   sandboxes when capacity is busy, and a production “No Sandbox available”
+   fallback.
 
 ## Minor TODOs
 
 1. Add cron-based scheduling for routine scientific-data updates inside the user VM environment.
 2. Route Codex through a guest-reachable LiteLLM endpoint with its own model-restricted, low-budget virtual key instead of the temporary developer-stage `OPENAI_*` credential fallback.
+3. Archive oversized Python observations with a model-visible paging reference
+   and add a final whole-prompt size preflight in addition to the per-tool hard
+   limit.

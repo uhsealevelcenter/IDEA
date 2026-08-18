@@ -59,10 +59,12 @@ from idea_config import (
     IDEA_CODEX_ENABLED,
     IDEA_MODEL_MAX_RETRIES,
     IDEA_MODEL_REQUEST_TIMEOUT_SECONDS,
+    IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
     LITELLM_END_USER_HEADER,
     LITELLM_PROXY_URL,
     LITELLM_VIRTUAL_KEY,
 )
+from idea_graph.memory import bounded_text_bytes
 from progress import (
     progress_chunk,
     tool_call_chunk_names,
@@ -1527,7 +1529,10 @@ class TerminalAgent:
                         sensitive_tool_call_ids.add(tool_call_id)
                     
                     messages.append(ToolMessage(
-                        content=result,
+                        content=bounded_text_bytes(
+                            str(result),
+                            IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES,
+                        ),
                         tool_call_id=tool_call_id
                     ))
                 if pending_model_images:

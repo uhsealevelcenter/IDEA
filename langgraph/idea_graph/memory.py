@@ -177,30 +177,18 @@ def compact_turn_messages(
     messages: list[Any],
     *,
     observation_bytes: int,
-    keep_recent_tools: int = 2,
 ) -> list[Any]:
-    """Bound older tool observations while keeping the newest evidence intact."""
-    tool_positions = [
-        index for index, message in enumerate(messages)
-        if isinstance(message, ToolMessage)
-    ]
-    recent_count = max(keep_recent_tools, 0)
-    keep = set(tool_positions[-recent_count:]) if recent_count else set()
+    """Apply a hard byte ceiling to every model-visible tool observation."""
     compacted: list[Any] = []
-    for index, message in enumerate(messages):
-        if not isinstance(message, ToolMessage) or index in keep:
+    for message in messages:
+        if not isinstance(message, ToolMessage):
             compacted.append(message)
             continue
-        content = str(message.content or "")
+        content = (
+            message.content
+            if isinstance(message.content, str)
+            else json.dumps(message.content, default=str, ensure_ascii=False)
+        )
         bounded = bounded_text_bytes(content, observation_bytes)
-        if bounded != content:
-            bounded += (
-                "\n[Older tool observation compacted. Use the execution ledger "
-                "or archived output path for details.]"
-            )
-        compacted.append(ToolMessage(
-            content=bounded,
-            tool_call_id=message.tool_call_id,
-            name=getattr(message, "name", None),
-        ))
+        compacted.append(message.model_copy(update={"content": bounded}))
     return compacted

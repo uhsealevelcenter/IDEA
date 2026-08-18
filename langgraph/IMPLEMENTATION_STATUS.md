@@ -1,6 +1,6 @@
 # LangGraph implementation status
 
-Last reviewed: 2026-08-10 on `feature/langgraph-memory`.
+Last reviewed: 2026-08-17 on `debug/ui-langgraph-general`.
 
 ## Current status
 
@@ -17,12 +17,13 @@ endpoint, but it is not the normal IDEA request path.
 | Branch handling | Complete | Redis maps visible assistant message IDs to checkpoint IDs so edits and regenerations resume the correct branch. |
 | Identity isolation | Complete | Conversation thread, per-user workspace, configurable kernel scope, and per-response run IDs are derived independently with an HMAC secret. |
 | Chat-run events | Complete | Status and bounded, sequence-numbered events are persisted in Redis and can be polled after browser disconnects. |
-| Cancellation | Complete | Stop requests reach queued/model/tool execution and signal Python or Codex work in the sandbox while preserving completed checkpoint state. |
+| Cancellation | Code complete; microVM validation pending | Stop reaches queued/model/tool execution. Python Stop now confirms release and escalates from interrupt, to affected-kernel replacement, to filesystem-preserving sandbox stop/resume; Codex cancellation is unchanged. |
 | Sandbox execution | Complete for Linux/KVM | A singleton authenticated sandbox service owns per-user microsandbox VMs, persistent files, kernel processes, and execution locks. |
 | Python and images | Complete | Source streams before execution; kernel state is persistent by configured scope; plots are persisted, displayed, and supplied to model vision. |
 | Attachments and artifacts | Complete | Inputs are re-authorized and copied into the private workspace; `/outputs` artifacts are uploaded under the current user's Open WebUI credential. |
 | Skills and PaperQA | Complete | Built-in and Workspace skills are supported; authorized non-guests can query Assistant knowledge and direct PDF attachments. |
-| Model routing | Complete | `IDEA_AGENT_MODEL` defaults to `gpt-5.6-terra`; regular model traffic uses LiteLLM with end-user attribution and telemetry. |
+| Model routing | Complete | `IDEA_AGENT_MODEL`, `IDEA_TOOL_MODEL`, Codex, and PaperQA default to Terra, while Open WebUI tasks stay on Luna. Primary chat uses LiteLLM with end-user attribution and telemetry. |
+| Tool-observation limit | Complete | Every live `ToolMessage`, including the newest, is capped before checkpointing and again before model inference. A whole-prompt preflight and full Python-output archive reference remain follow-ups. |
 | Codex delegation | Developer rollout complete | Codex runs inside the same VM, supports read-only/workspace-write, resumes threads, and participates in Stop. It currently reuses external `OPENAI_*` credentials when dedicated values are blank. |
 | Guest image | AMD64 candidate published and tested | The research image includes the legacy analysis stack, current CIndRA-oriented additions, Codex, GuardDog, and local/microVM smoke tests. Multi-architecture production publication remains a GitHub workflow task. |
 
@@ -60,6 +61,27 @@ runtime rollback path is retired.
    active runs must survive LangGraph process/container failure.
 8. Establish backup/restore procedures and production monitoring for Open
    WebUI data, checkpoints, Redis coordination, and user workspaces.
+9. Rebuild the guest image and validate escalating Python cancellation and
+   dead-kernel/OOM recovery in real microVMs. Separately design safe
+   thread/process-pool stoppage without unnecessarily replacing the persistent
+   kernel.
+10. Decide Microsandbox CPU/RAM tiers and capacity admission: local versus
+    production defaults, waiting/onboarding behavior, smaller busy-capacity
+    sandboxes, and a production “No Sandbox available” fallback.
+
+## LLM routing boundary
+
+Not all inference currently passes through LiteLLM:
+
+- Primary IDEA chat, PaperQA, and Open WebUI's hidden task model use the
+  internal LiteLLM proxy.
+- `station_tool.py` and `web_search_tool.py` currently call the configured
+  OpenAI-compatible provider endpoint directly with `OPENAI_*` credentials.
+- Codex delegation also uses a direct `OPENAI_*` fallback until the planned
+  guest-reachable, restricted LiteLLM Responses endpoint is deployed.
+
+Therefore LiteLLM spend controls and end-user attribution do not yet cover
+every model-backed helper or Codex call.
 
 ## Validation references
 

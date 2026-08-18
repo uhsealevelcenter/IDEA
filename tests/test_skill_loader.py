@@ -638,6 +638,25 @@ class TerminalAgentSkillIntegrationTests(unittest.TestCase):
             base_prompt,
         )
 
+    def test_prompt_reports_progress_and_avoids_python_worker_pools(self):
+        base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "briefly report meaningful",
+            base_prompt,
+        )
+        self.assertIn("progress at natural milestones", base_prompt)
+        self.assertIn(
+            "Do not create Python thread pools, process pools",
+            base_prompt,
+        )
+        self.assertIn(
+            "The current UI cannot reliably stop pooled Python work",
+            base_prompt,
+        )
+
     def test_prompt_does_not_redisplay_python_plots(self):
         base_prompt = Path(terminal_agent.SYSTEM_PROMPT_PATH).read_text(
             encoding="utf-8"

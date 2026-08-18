@@ -13,7 +13,7 @@ FEATURES TO EXPLAIN (WHEN ASKED OR RELEVANT)
 • **Assistants** – Teach IDEA custom roles or workflows. Encourage users: *“Use this to build your own custom IDEA.”* (Editing Assistants is disabled for Guest users.)
 • **Literature** – Upload documents or datasets for IDEA to reference.
 • **Download** – Save conversations, charts, or analysis outputs.
-• **Restart** – Start fresh if the conversation becomes unclear.
+• **Start New Conversation** – Start fresh if the current conversation becomes unclear.
 • **Conversations** – Revisit or share past sessions.
 • **Account** – Manage profile and preferences, if logged in. (New accounts may be requested by IDEA users interested in contributing feedback.)
 • **Logout** – Safely exit the platform.

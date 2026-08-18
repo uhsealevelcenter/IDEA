@@ -3,7 +3,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "langgraph"))
@@ -22,7 +22,8 @@ from idea_graph.memory import (  # noqa: E402
     execution_memory_block,
     safe_arguments,
 )
-from idea_graph.runtime import ToolOutcome  # noqa: E402
+from idea_graph.runtime import TerminalGraphRuntime, ToolOutcome  # noqa: E402
+from tools import persistent_terminal  # noqa: E402
 
 
 class FakeRuntime:
@@ -147,7 +148,167 @@ class CodexRuntime(FakeRuntime):
         )
 
 
+class LargeObservationRuntime(FakeRuntime):
+    def execute_tool(self, tool_call, state):
+        return ToolOutcome(content="large-output:" + "x" * 20000)
+
+
+class AttachedInputRuntime(FakeRuntime):
+    def prepare(self, state):
+        from langchain_core.messages import HumanMessage
+
+        return {
+            "turn_messages": [HumanMessage(content=(
+                "Files attached by the user are available at these exact "
+                "private sandbox paths:\n"
+                "- `/workspace/uploads/file-123/observations.nc`"
+            ))],
+        }
+
+    def call_model(self, messages, *, cancellation=None):
+        self.model_inputs.append(messages)
+        self.model_calls += 1
+        return AIMessage(content="I can inspect the attached dataset.")
+
+
 class LangGraphMemoryTests(unittest.TestCase):
+    def make_attachment_runtime(self, synced_files):
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = Mock()
+        runtime.agent.attached_files = [{"id": "file-1"}]
+        runtime.agent.sandbox_id = "user-1"
+        runtime.agent._sync_inputs_from_openwebui.return_value = synced_files
+        runtime.outputs_dir = "/outputs"
+        runtime.event_callback = None
+        runtime.attached_files_context = lambda items: (
+            "Files attached by the user are available at these exact "
+            "private sandbox paths:\n"
+            + "\n".join(f"- `{item['sandbox_path']}`" for item in items)
+        ) if items else ""
+        runtime.is_model_image_candidate = lambda item: str(
+            item.get("content_type") or ""
+        ).startswith("image/")
+        runtime.vision_max_image_bytes = 1024
+        runtime.vision_max_images_per_turn = 8
+        return runtime
+
+    def test_runtime_prepare_returns_model_visible_non_image_context(self):
+        path = "/workspace/uploads/file-1/data.csv"
+        runtime = self.make_attachment_runtime([{
+            "name": "data.csv",
+            "content_type": "text/csv",
+            "size": 12,
+            "sandbox_path": path,
+        }])
+        runtime.event_callback = Mock()
+
+        with patch.object(
+            persistent_terminal,
+            "list_file_metadata",
+            return_value={},
+        ):
+            prepared = runtime.prepare({
+                "conversation_messages": [{
+                    "role": "user", "content": "Analyze it."
+                }],
+            })
+
+        self.assertEqual(len(prepared["turn_messages"]), 1)
+        self.assertIn(path, prepared["turn_messages"][0].content)
+        self.assertEqual(prepared["vision_images"], [])
+        runtime.agent._model_image_part.assert_not_called()
+        self.assertEqual(
+            [
+                call.args[0]["phase"]
+                for call in runtime.event_callback.call_args_list
+            ],
+            ["syncing_inputs", "syncing_inputs"],
+        )
+
+    def test_runtime_prepare_skips_sync_status_for_collection_only(self):
+        runtime = self.make_attachment_runtime([])
+        runtime.agent.attached_files = [{
+            "id": "knowledge-1",
+            "type": "collection",
+        }]
+        runtime.event_callback = Mock()
+
+        with patch.object(
+            persistent_terminal,
+            "list_file_metadata",
+            return_value={},
+        ):
+            prepared = runtime.prepare({
+                "conversation_messages": [{
+                    "role": "user", "content": "Answer my question."
+                }],
+            })
+
+        self.assertEqual(prepared["synced_inputs"], [])
+        runtime.agent._sync_inputs_from_openwebui.assert_not_called()
+        runtime.event_callback.assert_not_called()
+
+    def test_runtime_prepare_avoids_duplicate_inline_image(self):
+        path = "/workspace/uploads/file-1/map.png"
+        runtime = self.make_attachment_runtime([{
+            "name": "map.png",
+            "content_type": "image/png",
+            "size": 20,
+            "sandbox_path": path,
+        }])
+        runtime.agent._model_image_part.return_value = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,eA=="},
+        }
+
+        with patch.object(
+            persistent_terminal,
+            "list_file_metadata",
+            return_value={},
+        ):
+            fallback = runtime.prepare({
+                "conversation_messages": [{
+                    "role": "user", "content": "Describe it."
+                }],
+            })
+            inline = runtime.prepare({
+                "conversation_messages": [{
+                    "role": "user",
+                    "content": [{
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,eA=="},
+                    }],
+                }],
+            })
+
+        self.assertEqual(fallback["vision_images"], [path])
+        self.assertEqual(inline["vision_images"], [])
+        runtime.agent._model_image_part.assert_called_once_with(path)
+
+    def test_prepared_attachment_context_reaches_first_model_call(self):
+        runtime = AttachedInputRuntime()
+        graph = build_idea_graph(runtime, checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "thread-attachment"}}
+
+        result = graph.invoke({
+            "conversation_messages": [
+                {"role": "user", "content": "Inspect the attachment."}
+            ],
+            "run_id": "run-attachment",
+            "thread_id": "thread-attachment",
+            "workspace_id": "workspace-1",
+            "kernel_id": "kernel-1",
+        }, config=config)
+
+        first_model_text = "\n".join(
+            str(message.content) for message in runtime.model_inputs[0]
+        )
+        self.assertIn(
+            "/workspace/uploads/file-123/observations.nc",
+            first_model_text,
+        )
+        self.assertTrue(result["turn_messages"])
+
     def test_codex_thread_and_usage_are_checkpointed(self):
         runtime = CodexRuntime()
         graph = build_idea_graph(runtime, checkpointer=InMemorySaver())
@@ -209,7 +370,7 @@ class LangGraphMemoryTests(unittest.TestCase):
             300,
         )
 
-    def test_older_tool_observations_are_compacted_but_recent_are_preserved(self):
+    def test_every_tool_observation_is_bounded_including_newest(self):
         messages = [
             ToolMessage(content="old-" + "x" * 100, tool_call_id="old"),
             ToolMessage(content="new-" + "y" * 100, tool_call_id="new"),
@@ -218,11 +379,59 @@ class LangGraphMemoryTests(unittest.TestCase):
         compacted = compact_turn_messages(
             messages,
             observation_bytes=30,
-            keep_recent_tools=1,
         )
 
-        self.assertIn("compacted", compacted[0].content)
-        self.assertEqual(compacted[1].content, messages[1].content)
+        self.assertEqual(len(compacted), 2)
+        for message in compacted:
+            self.assertLessEqual(len(message.content.encode("utf-8")), 30)
+            self.assertIn("truncated", message.content)
+
+    def test_structured_tool_observation_is_serialized_and_bounded(self):
+        message = ToolMessage(
+            content=[{"type": "text", "text": "x" * 100}],
+            tool_call_id="structured",
+            name="example_tool",
+        )
+
+        compacted = compact_turn_messages([message], observation_bytes=40)
+
+        self.assertIsInstance(compacted[0].content, str)
+        self.assertLessEqual(len(compacted[0].content.encode("utf-8")), 40)
+        self.assertEqual(compacted[0].tool_call_id, "structured")
+        self.assertEqual(compacted[0].name, "example_tool")
+
+    def test_newest_observation_is_bounded_before_checkpoint_and_next_call(self):
+        runtime = LargeObservationRuntime()
+        graph = build_idea_graph(runtime, checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "thread-large-tool"}}
+
+        result = graph.invoke({
+            "conversation_messages": [
+                {"role": "user", "content": "print a large value"}
+            ],
+            "run_id": "run-large-tool",
+            "thread_id": "thread-large-tool",
+            "workspace_id": "workspace-1",
+            "kernel_id": "kernel-1",
+        }, config=config)
+
+        observations = [
+            message for message in result["turn_messages"]
+            if isinstance(message, ToolMessage)
+        ]
+        self.assertEqual(len(observations), 1)
+        self.assertLessEqual(
+            len(observations[0].content.encode("utf-8")),
+            6000,
+        )
+        model_observation = next(
+            message for message in runtime.model_inputs[1]
+            if isinstance(message, ToolMessage)
+        )
+        self.assertLessEqual(
+            len(model_observation.content.encode("utf-8")),
+            6000,
+        )
 
     def test_exact_python_source_is_checkpointed(self):
         runtime = FakeRuntime()

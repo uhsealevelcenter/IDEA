@@ -52,9 +52,10 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - IDEA_AGENT_RUNTIME=${IDEA_AGENT_RUNTIME:-langgraph}
-      # Primary model switch. Change only this value to gpt-5.6-sol to roll
-      # back; both aliases stay configured in LiteLLM.
+      # Primary conversational model. Auxiliary model-backed tools remain on
+      # their separately configured model.
       - IDEA_AGENT_MODEL=${IDEA_AGENT_MODEL:-gpt-5.6-terra}
+      - IDEA_TOOL_MODEL=${IDEA_TOOL_MODEL:-gpt-5.6-terra}
       - IDEA_MODEL_REQUEST_TIMEOUT_SECONDS=${IDEA_MODEL_REQUEST_TIMEOUT_SECONDS:-180}
       - IDEA_MODEL_MAX_RETRIES=${IDEA_MODEL_MAX_RETRIES:-1}
       # Optional Codex delegation. IDEA_CODEX_API_KEY is intentionally not
@@ -98,7 +99,7 @@ services:
       - OUTPUT_SYNC_MAX_WORKERS=${OUTPUT_SYNC_MAX_WORKERS:-4}
       # PaperQA uses the authenticated LiteLLM proxy and keeps its
       # synchronized PDFs/indexes on a durable, LangGraph-only volume.
-      - PQA_LLM_MODEL=${PQA_LLM_MODEL:-gpt-5.6-luna}
+      - PQA_LLM_MODEL=${PQA_LLM_MODEL:-gpt-5.6-terra}
       - PQA_EMBEDDING_MODEL=${PQA_EMBEDDING_MODEL:-text-embedding-3-small}
       - PQA_LITELLM_BASE_URL=${PQA_LITELLM_BASE_URL:-http://litellm:8080/v1}
       - PQA_SYNC_TIMEOUT_SECONDS=${PQA_SYNC_TIMEOUT_SECONDS:-300}
@@ -191,6 +192,13 @@ services:
       # lifetime cap. See sandbox_service/msb_sandbox.py.
       - SANDBOX_IDLE_TIMEOUT_SECONDS=${SANDBOX_IDLE_TIMEOUT_SECONDS:-1800}
       - SANDBOX_MAX_DURATION_SECONDS=${SANDBOX_MAX_DURATION_SECONDS:-}
+      # Python Stop/recovery policy. A cooperative interrupt preserves kernel
+      # variables; escalation replaces only the kernel, then stop/resumes the
+      # same filesystem-preserving VM if its control plane is also wedged.
+      - SANDBOX_PYTHON_INTERRUPT_GRACE_SECONDS=${SANDBOX_PYTHON_INTERRUPT_GRACE_SECONDS:-7}
+      - SANDBOX_PYTHON_KERNEL_RECOVERY_GRACE_SECONDS=${SANDBOX_PYTHON_KERNEL_RECOVERY_GRACE_SECONDS:-5}
+      - SANDBOX_PYTHON_EXECUTION_TIMEOUT_SECONDS=${SANDBOX_PYTHON_EXECUTION_TIMEOUT_SECONDS:-1800}
+      - SANDBOX_PYTHON_RUN_STATUS_TTL_SECONDS=${SANDBOX_PYTHON_RUN_STATUS_TTL_SECONDS:-3600}
       # Must match langgraph's limit. The sandbox service enforces it again
       # while receiving binary Open WebUI attachments.
       - INPUT_SYNC_MAX_FILE_BYTES=${INPUT_SYNC_MAX_FILE_BYTES:-1073741824}
@@ -213,8 +221,9 @@ services:
 
   # LiteLLM proxy - fronts the same Azure AI Foundry OpenAI-compatible
   # endpoint langgraph/ already talks to directly. It exposes both
-  # gpt-5.6-terra and gpt-5.6-sol to the IDEA agent, with IDEA_AGENT_MODEL
-  # selecting the active route, and gpt-5.6-luna for background tasks
+  # gpt-5.6-sol and gpt-5.6-terra to IDEA chat/helper traffic, with
+  # IDEA_AGENT_MODEL and IDEA_TOOL_MODEL selecting their routes, and
+  # gpt-5.6-luna for background tasks
   # (see litellm/litellm_config.yaml). Uses a dedicated Postgres
   # role+schema on the existing `db` service rather than its own database
   # container - see litellm/init_litellm_db.sql / setup_litellm_db.sh,
@@ -255,7 +264,7 @@ services:
   # `web`'s API routes (/api/, /idea-api/, /conversations/, /share/) are
   # untouched since other things may still depend on them.
   openwebui:
-    # Pinned to an IDEA customization release and image digest (was
+    # Pinned to an IDEA customization release and image digest. This was
     # previously floating :main - see the
     # architecture doc's "OpenWebUI upgrade compatibility" section for why
     # that's dangerous: upstream default-behavior changes, e.g. native
@@ -263,9 +272,9 @@ services:
     # deployment via a routine `docker compose pull`). Swap this exact
     # release deliberately (and re-verify
     # openwebui/functions/idea_pipe.py still works) whenever moving forward.
-    # v0.11.0-idea.0.7 (Git 22db104): includes Pipe Stop propagation and
-    # share-scoped access to attachments, generated files, and HTML previews.
-    image: ghcr.io/uhsealevelcenter/idea-open-webui:0.11.0-idea.0.7@sha256:d67bed44e27bf5e3429bfb8727135f9a28d7db9e845cfbed9a139a806c554c3c
+    # v0.11.0-idea.0.8 (Git f308fa516): improves shared-conversation and PDF
+    # branding/export behavior and isolates unbalanced tool-output fences.
+    image: ghcr.io/uhsealevelcenter/idea-open-webui:0.11.0-idea.0.8@sha256:93b8bfeff1aedd7f9c529ebe4001715b3764a9e79df10740b932605f322f8472
     container_name: idea_openwebui
     restart: unless-stopped
     ports:

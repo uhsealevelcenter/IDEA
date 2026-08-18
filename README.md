@@ -262,10 +262,10 @@ What this means in practice for local dev:
 .
 ├── docker-compose.yml             # Base service definitions (db, redis, langgraph, sandbox, litellm, openwebui)
 ├── docker-compose.override.yml    # Local dev overrides (nginx, dev ports, live-reload mounts) - auto-merged
-├── docker-compose.prod.yml        # Explicit production overlay (currently empty; see "Deploying to Production")
+├── docker-compose.prod.yml        # Explicit production nginx overlay; KVM configuration stays in the base file
 ├── example.env                    # Template for the .env file (copy and fill in)
 ├── nginx.conf                     # Dev reverse proxy in front of Open WebUI
-├── langgraph/                     # LangGraph agent service (ConversationOrchestrator / TerminalAgent)
+├── langgraph/                     # Checkpointed LangGraph runtime and TerminalAgent tools
 ├── sandbox_service/               # Per-user microsandbox microVM execution service
 ├── interpreter_kernel/            # OCI image booted per microVM: Open Terminal + persistent Python kernel
 ├── litellm/                       # LiteLLM proxy config, Dockerfile, and DB setup script
