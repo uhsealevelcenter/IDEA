@@ -200,6 +200,7 @@ class LangGraphMemoryTests(unittest.TestCase):
             "size": 12,
             "sandbox_path": path,
         }])
+        runtime.event_callback = Mock()
 
         with patch.object(
             persistent_terminal,
@@ -216,6 +217,36 @@ class LangGraphMemoryTests(unittest.TestCase):
         self.assertIn(path, prepared["turn_messages"][0].content)
         self.assertEqual(prepared["vision_images"], [])
         runtime.agent._model_image_part.assert_not_called()
+        self.assertEqual(
+            [
+                call.args[0]["phase"]
+                for call in runtime.event_callback.call_args_list
+            ],
+            ["syncing_inputs", "syncing_inputs"],
+        )
+
+    def test_runtime_prepare_skips_sync_status_for_collection_only(self):
+        runtime = self.make_attachment_runtime([])
+        runtime.agent.attached_files = [{
+            "id": "knowledge-1",
+            "type": "collection",
+        }]
+        runtime.event_callback = Mock()
+
+        with patch.object(
+            persistent_terminal,
+            "list_file_metadata",
+            return_value={},
+        ):
+            prepared = runtime.prepare({
+                "conversation_messages": [{
+                    "role": "user", "content": "Answer my question."
+                }],
+            })
+
+        self.assertEqual(prepared["synced_inputs"], [])
+        runtime.agent._sync_inputs_from_openwebui.assert_not_called()
+        runtime.event_callback.assert_not_called()
 
     def test_runtime_prepare_avoids_duplicate_inline_image(self):
         path = "/workspace/uploads/file-1/map.png"

@@ -159,7 +159,13 @@ class TerminalGraphRuntime:
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
         from tools.persistent_terminal import list_file_metadata
 
-        if self.agent.attached_files:
+        has_direct_attachments = any(
+            isinstance(item, dict)
+            and item.get("type", "file") in {"file", "image"}
+            and bool(item.get("id"))
+            for item in (self.agent.attached_files or [])
+        )
+        if has_direct_attachments:
             self.emit({
                 "type": "status",
                 "phase": "syncing_inputs",
