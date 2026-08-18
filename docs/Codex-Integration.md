@@ -13,12 +13,13 @@ as Python execution.
 
 ## Model and endpoint policy
 
-`IDEA_CODEX_MODEL` defaults to `IDEA_AGENT_MODEL`, so both can use the same
-model alias, but it remains independently configurable. During the current
-developer-only rollout, blank `IDEA_CODEX_BASE_URL` and `IDEA_CODEX_API_KEY`
-values fall back to `OPENAI_BASE_URL` and `OPENAI_API_KEY`. This lets Codex use
-the same external OpenAI-compatible endpoint and provider credential as IDEA;
-it deliberately bypasses LiteLLM budgeting and per-user attribution.
+`IDEA_CODEX_MODEL` is independently configurable and defaults to
+`gpt-5.6-terra`; changing `IDEA_AGENT_MODEL` does not silently reroute Codex.
+During the current developer-only rollout, blank `IDEA_CODEX_BASE_URL` and
+`IDEA_CODEX_API_KEY` values fall back to `OPENAI_BASE_URL` and
+`OPENAI_API_KEY`. This lets Codex use the same external OpenAI-compatible
+endpoint and provider credential as IDEA; it deliberately bypasses LiteLLM
+budgeting and per-user attribution.
 
 TODO (low priority before non-developer rollout): expose a private,
 TLS-protected LiteLLM Responses API address that microVM guests can reach, and

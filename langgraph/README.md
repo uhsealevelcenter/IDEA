@@ -67,8 +67,8 @@ checkpointed thread by working directory. See
 ## Model routing
 
 The primary IDEA model is selected with `IDEA_AGENT_MODEL` and defaults to
-`gpt-5.6-sol`. `IDEA_TOOL_MODEL` keeps station and web helper inference on
-`gpt-5.6-terra` when the primary changes. Primary chat uses the internal
+`gpt-5.6-terra`. `IDEA_TOOL_MODEL` keeps station and web helper inference on
+Terra if the primary changes. Primary chat uses the internal
 LiteLLM proxy and `LITELLM_VIRTUAL_KEY`; the end user's email is forwarded for
 usage attribution. The station/web helpers currently use the direct
 `OPENAI_*` endpoint rather than the proxy.

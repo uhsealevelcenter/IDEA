@@ -86,7 +86,10 @@ general_settings:
 litellm_settings:
   set_verbose: false # Disable debug logging in production.
   json_logs: true # Structured (JSON) logs.
-  request_timeout: 60 # Keep provider stalls bounded; the client uses the same ceiling.
+  # Bound one provider attempt inside the proxy. LangGraph has a separate,
+  # longer 180-second outer request ceiling so it can classify/report proxy
+  # timeouts and safely retry only before any streamed output.
+  request_timeout: 60
   # The router fallback below should run immediately when the primary is
   # throttled. Retrying the same deployment first caused a silent ~30-second
   # wait in the UI before another 429 response.

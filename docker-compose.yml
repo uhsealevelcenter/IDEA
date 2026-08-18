@@ -54,7 +54,7 @@ services:
       - IDEA_AGENT_RUNTIME=${IDEA_AGENT_RUNTIME:-langgraph}
       # Primary conversational model. Auxiliary model-backed tools remain on
       # their separately configured model.
-      - IDEA_AGENT_MODEL=${IDEA_AGENT_MODEL:-gpt-5.6-sol}
+      - IDEA_AGENT_MODEL=${IDEA_AGENT_MODEL:-gpt-5.6-terra}
       - IDEA_TOOL_MODEL=${IDEA_TOOL_MODEL:-gpt-5.6-terra}
       - IDEA_MODEL_REQUEST_TIMEOUT_SECONDS=${IDEA_MODEL_REQUEST_TIMEOUT_SECONDS:-180}
       - IDEA_MODEL_MAX_RETRIES=${IDEA_MODEL_MAX_RETRIES:-1}

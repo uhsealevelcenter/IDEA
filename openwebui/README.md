@@ -1,10 +1,9 @@
 # Open WebUI Integration
 
-Adds [Open WebUI](https://github.com/open-webui/open-webui) as an additional
-frontend for the existing `langgraph` agent (`ConversationOrchestrator` /
-`TerminalAgent`) and `sandbox_service` per-user microVM isolation. The Pipe
-is the browser/API translation boundary; trusted attachment and PaperQA
-processing continues inside LangGraph.
+Adds [Open WebUI](https://github.com/open-webui/open-webui) as the browser
+frontend for IDEA's checkpointed LangGraph runtime and `sandbox_service`
+per-user microVM isolation. The Pipe is the browser/API translation boundary;
+trusted attachment and PaperQA processing continues inside LangGraph.
 
 ## How it works
 
@@ -13,15 +12,17 @@ function](https://docs.openwebui.com/features/plugin/functions/pipe) that:
 
 1. Registers as a selectable model ("IDEA Agent") in Open WebUI's
    model dropdown.
-2. On each chat turn, POSTs to the existing `langgraph_service.py` `/chat`
-   SSE endpoint (see `langgraph/langgraph_service.py`), mapping Open WebUI's
-   `user.id` / `chat_id` into the `user_id` / `session_id` fields
-   `ConversationOrchestrator` already expects.
-3. Translates each streamed chunk (`{role, type, content, format, start,
-   end}` - the same format `frontend/assistant.js` renders) into markdown
-   text/images for Open WebUI's chat pane. LangGraph `status` chunks are
-   forwarded through Open WebUI's injected `__event_emitter__` and appear in
-   its native response-status UI; this requires no Open WebUI source changes.
+2. On each chat turn, POSTs to `langgraph_service.py`'s `/chat-runs` endpoint,
+   then polls its durable sequence-numbered events. Open WebUI's `user.id`,
+   `chat_id`, selected Assistant, visible branch, and response-message ID are
+   mapped to LangGraph's separate workspace, thread, checkpoint, and run
+   identities. The older `/chat` streaming endpoint and
+   `ConversationOrchestrator` remain rollback-only paths.
+3. Translates each persisted event chunk (`{role, type, content, format,
+   start, end}`) into Markdown text/images for Open WebUI's chat pane.
+   LangGraph `status` chunks are forwarded through Open WebUI's injected
+   `__event_emitter__` and appear in its native response-status UI; this
+   requires no Open WebUI source changes.
 
 ## Running it
 
@@ -56,7 +57,8 @@ from the user-facing Pipe model:
 
 - `IDEA Agent` remains the only visible chat model and continues
   to use the centrally configured `IDEA_AGENT_MODEL` through LangGraph
-  (`gpt-5.6-sol` by default; set it to `gpt-5.6-terra` to roll back).
+  (`gpt-5.6-terra` by default; `gpt-5.6-sol` remains available as an
+  explicit alternative).
 - `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
   Open WebUI, and marked hidden so it remains available to backend tasks
   without appearing in the chat model selector.
@@ -183,10 +185,11 @@ Markdown renderer opens the link in a new tab. Browser-safe passive formats
 use Open WebUI's canonical `/api/v1/files/.../content` URL so the IDEA Open
 WebUI customization can authorize them from shared conversations. Generated
 HTML remains on nginx's authenticated `/idea-file-preview/` route and is
-served with a sandbox Content Security Policy. On shared pages, IDEA Open
-WebUI `v0.11.0-idea.0.7` rewrites that HTML link to an authorized share-scoped
-endpoint with the same sandbox restrictions, so viewers can open the webpage
-in a new tab. Other formats retain the normal download behavior.
+served with a sandbox Content Security Policy. On shared pages, the current
+IDEA Open WebUI `v0.11.0-idea.0.8` image rewrites that HTML link to an
+authorized share-scoped endpoint with the same sandbox restrictions, so
+viewers can open the webpage in a new tab. Other formats retain the normal
+download behavior.
 The model is free to reorganize/rename files under `/outputs` mid-turn
 (`run_terminal_tool`); unchanged files from earlier turns are not attached
 again. Successful path/signature-to-file-ID mappings are retained in a
@@ -211,6 +214,9 @@ previously copied ID is reused only after authorization is checked again.
 If authorization, transfer, or size validation fails, the run stops instead
 of asking the model to work without the attachment. Input files are retained
 with the user's persistent sandbox; they are not published as outputs.
+Assistant Knowledge collections remain available for lazy PaperQA indexing,
+but a collection by itself does not trigger file-copy work or the
+"Preparing attached files…" status.
 
 PNG, JPEG, GIF, and WebP attachments are additionally sent to the configured
 vision-capable model as high-detail multimodal content. The model therefore

@@ -115,7 +115,7 @@ what the UI displays.
 ## Inference routing status
 
 Inference does not yet pass universally through LiteLLM. Primary IDEA chat
-(`gpt-5.6-sol`), PaperQA (`gpt-5.6-terra`), embeddings, and Open WebUI's hidden
+(`gpt-5.6-terra`), PaperQA (`gpt-5.6-terra`), embeddings, and Open WebUI's hidden
 task model (`gpt-5.6-luna`) use the internal LiteLLM proxy. Station lookup and
 web-search helper inference currently use the provider's OpenAI-compatible
 endpoint directly. Codex also uses a direct `OPENAI_*` fallback during the
@@ -164,7 +164,8 @@ Before non-developer rollout:
 
 - Set `IDEA_CODEX_ENABLED=false` and restart LangGraph to remove Codex without
   changing the main agent.
-- Set `IDEA_AGENT_MODEL=gpt-5.6-terra` to roll back the primary model through
+- If a deployment explicitly evaluates `gpt-5.6-sol`, restore
+  `IDEA_AGENT_MODEL=gpt-5.6-terra` to return primary chat to the default through
   the same LiteLLM route. `IDEA_TOOL_MODEL` remains independently configurable.
 - Set `IDEA_AGENT_RUNTIME=manual` only as a short-lived emergency rollback;
   that legacy path does not provide the checkpointed graph's current memory,
