@@ -64,5 +64,13 @@ services:
     ports:
       - "8030:8080"
 
+  langfuse:
+    # Dev-only direct access to the Langfuse UI (traces, and the one-time
+    # project-creation step that yields LANGFUSE_PUBLIC_KEY/SECRET_KEY - see
+    # example.env). Not present in the base docker-compose.yml, matching the
+    # other dev-only port publishes above.
+    ports:
+      - "3050:3000"
+
 volumes:
   redis_data:

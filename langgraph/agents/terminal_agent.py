@@ -412,6 +412,18 @@ class TerminalAgent:
         }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
+        # Forwarded through litellm to Langfuse (see
+        # litellm/litellm_config.yaml's success_callback/failure_callback)
+        # so every call groups into a per-conversation trace, itself
+        # attributable to this end user - mirrors LITELLM_END_USER_HEADER
+        # above, just scoped to Langfuse's own trace metadata convention
+        # instead of LiteLLM's spend tracking.
+        extra_body: Dict[str, Any] = {
+            "metadata": {
+                "trace_user_id": end_user_id,
+                "session_id": session_id,
+            },
+        }
         if _supports_prompt_caching(model):
             # GPT-5.6's implicit breakpoint includes the changing latest user
             # or tool message. Route calls from this session together and use
@@ -419,9 +431,8 @@ class TerminalAgent:
             llm_kwargs["model_kwargs"] = {
                 "prompt_cache_key": _prompt_cache_key(model, session_id),
             }
-            llm_kwargs["extra_body"] = {
-                "prompt_cache_options": {"mode": "explicit"},
-            }
+            extra_body["prompt_cache_options"] = {"mode": "explicit"}
+        llm_kwargs["extra_body"] = extra_body
         self.llm = ChatOpenAI(**llm_kwargs).bind_tools(self.all_tools)
     
     def _encode_image_to_base64(self, filepath: str) -> tuple[str, str]:
