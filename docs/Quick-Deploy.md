@@ -30,19 +30,22 @@ or changing defaults.
    At minimum, set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, the Postgres
    credentials, `WEBUI_SECRET_KEY`, `LITELLM_DB_PASSWORD`,
    `LANGGRAPH_DB_PASSWORD`, `LANGGRAPH_AES_KEY`, `IDEA_IDENTITY_SECRET`,
-   `LITELLM_MASTER_KEY`, `LITELLM_VIRTUAL_KEY`, and
-   `INTERNAL_SERVICE_TOKEN`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
+   `LITELLM_MASTER_KEY`, `LITELLM_VIRTUAL_KEY`,
+   `INTERNAL_SERVICE_TOKEN`, `LANGFUSE_DB_PASSWORD`,
+   `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_SALT`, and
+   `LANGFUSE_ENCRYPTION_KEY`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
    host, keep the default `IDEA_CODEX_ENABLED=true` when the published guest
    image is selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`, `ENABLE_SIGNUP`,
    `CORS_ORIGINS`, registry credentials, and the model names. Blank dedicated
    Codex endpoint/key values currently reuse the external `OPENAI_*` values.
 
-3. Create the isolated LiteLLM and LangGraph database roles, schemas, and
-   checkpoint tables:
+3. Create the isolated LiteLLM, LangGraph, and Langfuse database roles,
+   schemas, and checkpoint tables:
 
    ```bash
    ./litellm/setup_litellm_db.sh
    ./langgraph/db/setup_langgraph_db.sh
+   ./langfuse/setup_langfuse_db.sh
    ```
 
 4. Seed the shared scientific-data volume before first use, if a legacy data
@@ -98,7 +101,14 @@ or changing defaults.
      ./assistants/deploy_assistants_openwebui.py
    ```
 
-8. In **Admin Panel > Functions > IDEA Agent > Valves**, set
+8. Open the Langfuse UI (internal-only unless routed through your reverse
+   proxy - see the root [`README.md`](../README.md)'s "LLM Observability
+   (Langfuse)" section), create an org/project, and generate an API key pair
+   under **Project Settings > API Keys**. Save them as `LANGFUSE_PUBLIC_KEY`
+   and `LANGFUSE_SECRET_KEY` in `.env` (or set the `LANGFUSE_INIT_*`
+   variables beforehand to skip this manual step entirely).
+
+9. In **Admin Panel > Functions > IDEA Agent > Valves**, set
    `INTERNAL_SERVICE_TOKEN` to the same value used in `.env`, then disable
    public signup if required and restart the services after any `.env`
    changes:

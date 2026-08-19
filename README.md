@@ -116,6 +116,13 @@ WEBUI_SECRET_KEY=change_this
 # LiteLLM proxy (DB: openssl rand -hex 20; master: printf 'sk-'; openssl rand -hex 32)
 LITELLM_DB_PASSWORD=change_this
 LITELLM_MASTER_KEY=change_this
+
+# Langfuse LLM observability (DB: openssl rand -hex 20; the other three:
+# openssl rand -hex 32 each) - see "LLM Observability (Langfuse)" below.
+LANGFUSE_DB_PASSWORD=change_this
+LANGFUSE_NEXTAUTH_SECRET=change_this
+LANGFUSE_SALT=change_this
+LANGFUSE_ENCRYPTION_KEY=change_this
 ```
 
 See `example.env` for the full list of variables and inline comments explaining each one. Several are commented out by default (`PQA_HOME`/`PAPER_DIRECTORY`, `EARTHDATA_USERNAME`/`PASSWORD`, `SECRET_KEY`, `FIRST_SUPERUSER`/`PASSWORD`, `SMTP_*`, `GUEST_*`) - these are leftover from the previous `app.py`/`auth.py`-based backend, which no longer exists in this repo; leave them commented out unless something reintroduces a consumer for them.
@@ -124,13 +131,14 @@ IDEA has been tested with several LLM inference providers, including OpenAI (htt
 
 ### 3. Set Up the Service Database Roles
 
-LiteLLM and LangGraph use separate, least-privilege Postgres roles and schemas
-on the shared `db` service. Run both setup scripts once before starting the full
-stack; both are idempotent and safe to re-run:
+LiteLLM, LangGraph, and Langfuse each use a separate, least-privilege Postgres
+role and schema on the shared `db` service. Run all three setup scripts once
+before starting the full stack; all are idempotent and safe to re-run:
 
 ```bash
 ./litellm/setup_litellm_db.sh
 ./langgraph/db/setup_langgraph_db.sh
+./langfuse/setup_langfuse_db.sh
 ```
 
 The LangGraph setup builds its service image and initializes the checkpoint
@@ -223,6 +231,42 @@ See `openwebui/README.md` for full details on both.
 
 - Main app: http://localhost
 
+## LLM Observability (Langfuse)
+
+Every call `litellm` makes - from LangGraph's `TerminalAgent`, PaperQA, and Open
+WebUI's background-task model - is traced to a self-hosted
+[Langfuse](https://langfuse.com/) instance (`langfuse` service), grouped by
+conversation (`session_id`) and end user (`trace_user_id`), matching what
+`LITELLM_END_USER_HEADER` already does for spend tracking. This uses Langfuse
+**v2** (Postgres-only self-host), not the current v3, which additionally
+requires ClickHouse, S3/MinIO, and a dedicated Redis; v2 only receives
+security patches (no new features) per Langfuse's own docs, so revisit this
+choice if that becomes a blocker. See
+`docker-compose.yml`'s `langfuse` service and
+`litellm/litellm_config.yaml`'s `success_callback`/`failure_callback` for the
+wiring.
+
+1. Generate the four Langfuse secrets shown in step 2 above and run
+   `./langfuse/setup_langfuse_db.sh` (step 3 above) before first start.
+2. Start (or restart) the stack, then open the Langfuse UI - `:3050` in dev
+   (`docker-compose.override.yml`), otherwise wherever you route it in
+   production (see the Quick Deploy doc) - and create an org/project through
+   the normal sign-up flow. Alternatively, set the `LANGFUSE_INIT_*`
+   variables in `.env` (see `example.env`) to auto-create the org, project,
+   and admin user on first boot without touching the UI - useful for
+   scripted/CI environments.
+3. Under **Project Settings > API Keys**, generate a public/secret key pair
+   and save them into `.env` as `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`
+   (or, if you used `LANGFUSE_INIT_*`, they already match the project's
+   actual keys - no extra step needed).
+4. Restart `litellm` so it picks up the keys:
+   ```bash
+   docker compose up -d litellm
+   ```
+
+A failure to reach Langfuse only logs a warning inside `litellm` - it never
+blocks or fails the underlying LLM call.
+
 ## Deploying to Production (requires Docker)
 
 ```bash
@@ -231,8 +275,12 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 Explicit `-f` flags skip `docker-compose.override.yml`, so dev-only host ports (`langgraph`, `sandbox`, `litellm`) and the extra `nginx` service are never published. `docker-compose.prod.yml` is currently an empty overlay kept for this `-f` combo's sake (its one-time purpose - the `sandbox` `/dev/kvm` passthrough - now lives directly in `docker-compose.yml`, gated behind the `KVM_DEVICE_PATH` env var).
 
-Repeat both database setup scripts (step 3 above) and the one-time Open WebUI
-Function setup (step 5 above) on first deploy.
+Repeat all three database setup scripts (step 3 above) and the one-time Open
+WebUI Function setup (step 5 above) on first deploy. The `langfuse` service
+itself is not published to the host by the base `docker-compose.yml` (same as
+`langgraph`/`sandbox`/`litellm`) - route it through your reverse proxy only if
+you want production UI access to traces; `litellm` reaching it over the
+internal compose network is all that's required for tracing to work.
 
 In CI, this is what the `deploy` job in `.github/workflows/deploy.yml` runs remotely over SSH via each environment's `DEPLOY_CMD` GitHub Actions variable.
 
@@ -269,6 +317,7 @@ What this means in practice for local dev:
 ├── sandbox_service/               # Per-user microsandbox microVM execution service
 ├── interpreter_kernel/            # OCI image booted per microVM: Open Terminal + persistent Python kernel
 ├── litellm/                       # LiteLLM proxy config, Dockerfile, and DB setup script
+├── langfuse/                      # Langfuse (LLM observability) DB setup script
 ├── assistants/                    # Official Assistant prompts, logos, manifest, and deployment script
 └── openwebui/                     # Open WebUI Pipe function (idea_pipe.py) wiring the chat frontend to langgraph
     ├── functions/idea_pipe.py     # The Pipe function itself
