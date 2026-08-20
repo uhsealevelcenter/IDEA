@@ -246,15 +246,6 @@ choice if that becomes a blocker. See
 `litellm/litellm_config.yaml`'s `success_callback`/`failure_callback` for the
 wiring.
 
-Langfuse is disabled by default in local development so IDEA can run without
-the team's observability secrets. LiteLLM may log non-fatal callback warnings
-while it is absent. After configuring the variables below, enable the local
-service explicitly with:
-
-```bash
-docker compose --profile observability up -d langfuse litellm
-```
-
 1. Generate the four Langfuse secrets shown in step 2 above and run
    `./langfuse/setup_langfuse_db.sh` (step 3 above) before first start.
 2. Start (or restart) the stack, then open the Langfuse UI - `:3050` in dev
@@ -282,11 +273,7 @@ blocks or fails the underlying LLM call.
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-Explicit `-f` flags skip `docker-compose.override.yml`, so dev-only host ports
-(`langgraph`, `sandbox`, `litellm`) and the extra `nginx` service are never
-published. The production overlay also restores strict validation of the four
-required Langfuse secrets; the base file permits blanks only so the local
-override can disable observability.
+Explicit `-f` flags skip `docker-compose.override.yml`, so dev-only host ports (`langgraph`, `sandbox`, `litellm`) and the extra `nginx` service are never published. `docker-compose.prod.yml` is currently an empty overlay kept for this `-f` combo's sake (its one-time purpose - the `sandbox` `/dev/kvm` passthrough - now lives directly in `docker-compose.yml`, gated behind the `KVM_DEVICE_PATH` env var).
 
 Repeat all three database setup scripts (step 3 above) and the one-time Open
 WebUI Function setup (step 5 above) on first deploy. The `langfuse` service
