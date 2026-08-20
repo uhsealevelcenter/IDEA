@@ -229,12 +229,17 @@ class LangGraphShowImageTests(unittest.TestCase):
         show_tool.invoke.return_value = "✓ Image ready to display: /outputs/plot.png"
         agent = Mock()
         agent.tools_by_name = {"show_image_tool": show_tool}
-        agent._encode_image_to_base64.return_value = ("BASE64-PLOT", "png")
+        agent._encode_image_to_base64.return_value = (
+            base64.b64encode(PNG_BYTES).decode("ascii"),
+            "png",
+        )
         agent._shown_image_hashes = set()
+        agent.sandbox_id = "sandbox-1"
 
         runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
         runtime.agent = agent
         runtime.event_callback = Mock()
+        runtime.outputs_dir = "/outputs"
         runtime.displayed_image_paths = set()
         return runtime, agent, show_tool
 
@@ -264,7 +269,7 @@ class LangGraphShowImageTests(unittest.TestCase):
 
     def test_show_image_tool_deduplicates_identical_content(self):
         runtime, agent, _ = self.make_runtime()
-        digest = hashlib.sha256(b"BASE64-PLOT").hexdigest()
+        digest = hashlib.sha256(PNG_BYTES).hexdigest()
         agent._shown_image_hashes.add(digest)
 
         outcome = runtime.execute_tool(
@@ -278,10 +283,16 @@ class LangGraphShowImageTests(unittest.TestCase):
         self.assertIn("already displayed", outcome.content)
         runtime.event_callback.assert_not_called()
 
-    def test_workspace_image_also_references_default_published_path(self):
+    @patch.object(persistent_terminal, "write_file_stream")
+    def test_workspace_image_is_staged_and_emitted_from_outputs(self, write):
         runtime, _, show_tool = self.make_runtime()
         show_tool.invoke.return_value = (
             "✓ Image ready to display: /workspace/plots/plot.png"
+        )
+        write.return_value = len(PNG_BYTES)
+        digest = hashlib.sha256(PNG_BYTES).hexdigest()
+        staged_path = (
+            f"/outputs/.idea/display-images/plot-{digest[:16]}.png"
         )
 
         outcome = runtime.execute_tool(
@@ -293,10 +304,104 @@ class LangGraphShowImageTests(unittest.TestCase):
         )
 
         self.assertEqual(outcome.status, "completed")
-        self.assertEqual(runtime.displayed_image_paths, {
-            "/workspace/plots/plot.png",
-            "/outputs/plots/plot.png",
+        write.assert_called_once_with(
+            staged_path,
+            [PNG_BYTES],
+            session_id="sandbox-1",
+            expected_size=len(PNG_BYTES),
+        )
+        runtime.event_callback.assert_called_once_with({
+            "role": "assistant",
+            "type": "image",
+            "format": "png",
+            "filename": staged_path,
+            "start": True,
+            "end": True,
         })
+        self.assertEqual(runtime.displayed_image_paths, {staged_path})
+
+    @patch.object(persistent_terminal, "write_file_stream")
+    def test_output_image_is_not_staged_again(self, write):
+        runtime, _, _ = self.make_runtime()
+
+        outcome = runtime.execute_tool(
+            {
+                "name": "show_image_tool",
+                "args": {"filepath": "/outputs/plot.png"},
+            },
+            {},
+        )
+
+        self.assertEqual(outcome.status, "completed")
+        write.assert_not_called()
+        self.assertEqual(runtime.displayed_image_paths, {"/outputs/plot.png"})
+
+    @patch.object(persistent_terminal, "write_file_stream")
+    def test_same_named_images_with_different_content_do_not_collide(
+        self,
+        write,
+    ):
+        runtime, agent, show_tool = self.make_runtime()
+        second_image = PNG_BYTES + b"-different"
+        agent._encode_image_to_base64.side_effect = [
+            (base64.b64encode(PNG_BYTES).decode("ascii"), "png"),
+            (base64.b64encode(second_image).decode("ascii"), "png"),
+        ]
+        write.side_effect = [len(PNG_BYTES), len(second_image)]
+
+        for filepath in (
+            "/workspace/first/plot.png",
+            "/workspace/second/plot.png",
+        ):
+            show_tool.invoke.return_value = f"✓ Image ready to display: {filepath}"
+            outcome = runtime.execute_tool(
+                {
+                    "name": "show_image_tool",
+                    "args": {"filepath": filepath},
+                },
+                {},
+            )
+            self.assertEqual(outcome.status, "completed")
+
+        self.assertEqual(len(runtime.displayed_image_paths), 2)
+        self.assertEqual(
+            {Path(path).name for path in runtime.displayed_image_paths},
+            {
+                f"plot-{hashlib.sha256(PNG_BYTES).hexdigest()[:16]}.png",
+                f"plot-{hashlib.sha256(second_image).hexdigest()[:16]}.png",
+            },
+        )
+
+    @patch.object(
+        persistent_terminal,
+        "write_file_stream",
+        side_effect=RuntimeError("copy failed"),
+    )
+    def test_staging_failure_emits_error_instead_of_broken_image(self, _write):
+        runtime, _, show_tool = self.make_runtime()
+        show_tool.invoke.return_value = (
+            "✓ Image ready to display: /workspace/plot.png"
+        )
+
+        outcome = runtime.execute_tool(
+            {
+                "name": "show_image_tool",
+                "args": {"filepath": "/workspace/plot.png"},
+            },
+            {},
+        )
+
+        self.assertEqual(outcome.status, "failed")
+        self.assertIn("copy failed", outcome.error)
+        runtime.event_callback.assert_called_once_with({
+            "role": "computer",
+            "type": "console",
+            "format": "output",
+            "content": outcome.content,
+            "start": True,
+            "end": True,
+        })
+        self.assertEqual(runtime.displayed_image_paths, set())
 
 
 class LangGraphKernelImageTests(unittest.TestCase):

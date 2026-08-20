@@ -69,6 +69,7 @@ MODEL_STREAM_FLUSH_CHARS = 80
 MODEL_WAITING_STATUS_SECONDS = 5.0
 MODEL_BUSY_STATUS_SECONDS = 15.0
 KERNEL_IMAGE_EXTENSIONS = {"gif", "jpeg", "jpg", "png", "webp"}
+DISPLAY_IMAGE_OUTPUT_SUBDIR = ".idea/display-images"
 
 
 @dataclass
@@ -643,6 +644,46 @@ class TerminalGraphRuntime:
         )
         return path, image_format
 
+    def stage_displayed_image(
+        self,
+        source_path: str,
+        image_data: bytes,
+        image_format: str,
+        content_hash: str,
+    ) -> str:
+        """Copy an explicitly displayed image into the synced output tree."""
+        from tools.persistent_terminal import write_file_stream
+
+        normalized_source = posixpath.normpath(
+            source_path
+            if source_path.startswith("/")
+            else posixpath.join("/workspace", source_path)
+        )
+        normalized_outputs = posixpath.normpath(self.outputs_dir)
+        if normalized_source.startswith(normalized_outputs + "/"):
+            return normalized_source
+
+        source_stem = Path(normalized_source).stem
+        safe_stem = "".join(
+            char if char.isalnum() or char in {"-", "_"} else "-"
+            for char in source_stem
+        ).strip("-")[:80] or "image"
+        destination = (
+            f"{normalized_outputs}/{DISPLAY_IMAGE_OUTPUT_SUBDIR}/"
+            f"{safe_stem}-{content_hash[:16]}.{image_format}"
+        )
+        written = write_file_stream(
+            destination,
+            [image_data],
+            session_id=self.agent.sandbox_id,
+            expected_size=len(image_data),
+        )
+        if written != len(image_data):
+            raise RuntimeError(
+                f"staged {written} of {len(image_data)} image bytes"
+            )
+        return destination
+
     def execute_tool(self, tool_call: dict[str, Any], state: dict[str, Any]) -> ToolOutcome:
         name = str(tool_call.get("name") or "")
         args = dict(tool_call.get("args") or {})
@@ -849,24 +890,22 @@ class TerminalGraphRuntime:
                     encoded, image_format = self.agent._encode_image_to_base64(
                         image_path
                     )
-                    content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                    image_data = base64.b64decode(encoded, validate=True)
+                    content_hash = hashlib.sha256(image_data).hexdigest()
                     if content_hash in self.agent._shown_image_hashes:
                         result = (
                             "✓ Image already displayed to the user "
                             f"(identical content): {image_path}"
                         )
                     else:
+                        displayed_path = self.stage_displayed_image(
+                            image_path,
+                            image_data,
+                            image_format,
+                            content_hash,
+                        )
                         self.agent._shown_image_hashes.add(content_hash)
-                        self.displayed_image_paths.add(image_path)
-                        if image_path.startswith("/workspace/"):
-                            # publish_artifact_tool's default destination
-                            # preserves this relative path. Include it in
-                            # final sync references so an unchanged, already-
-                            # published image still produces a file event.
-                            self.displayed_image_paths.add(
-                                "/outputs/"
-                                + image_path.removeprefix("/workspace/")
-                            )
+                        self.displayed_image_paths.add(displayed_path)
                         self.emit({
                             "role": "assistant",
                             "type": "image",
@@ -876,7 +915,7 @@ class TerminalGraphRuntime:
                             # as conversation text and duplicated in the
                             # message's structured output.
                             "format": image_format,
-                            "filename": image_path,
+                            "filename": displayed_path,
                             "start": True,
                             "end": True,
                         })

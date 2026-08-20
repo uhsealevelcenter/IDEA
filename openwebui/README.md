@@ -221,7 +221,9 @@ but a collection by itself does not trigger file-copy work or the
 PNG, JPEG, GIF, and WebP attachments are additionally sent to the configured
 vision-capable model as high-detail multimodal content. The model therefore
 receives the actual pixels as well as the sandbox path. This is separate from
-`show_image_tool`, which only renders an image in the user's browser.
+`show_image_tool`, which publishes an explicitly displayed workspace image
+through `/outputs` for durable browser rendering but does not supply it to
+model vision.
 `inspect_image_tool` supplies an existing sandbox image to model vision in
 the next agent iteration. Vision input is bounded by
 `VISION_MAX_IMAGE_BYTES` and `VISION_MAX_IMAGES_PER_TURN`; an image outside

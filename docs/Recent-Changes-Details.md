@@ -384,9 +384,19 @@ payloads become explicit console errors and never fall back to inline bytes.
 `show_image_tool` and `inspect_image_tool` now have distinct meanings:
 
 - display emits a user-visible image reference and deduplicates identical
-  bytes within a turn; and
+  bytes within a turn. Images outside `/outputs` are copied to the
+  content-addressed
+  `/outputs/.idea/display-images/<name>-<hash>.<format>` area first, so
+  standalone scripts can display private workspace figures through the same
+  durable Open WebUI file flow as kernel plots; and
 - inspection makes the file available to model vision without necessarily
   redisplaying it.
+
+The image event names the staged output path rather than guessing that a
+corresponding file already exists under `/outputs`. If staging fails, the
+tool emits a visible error and does not leave a broken image placeholder in
+the conversation. Images already under `/outputs` are used in place without
+an extra copy.
 
 The graph tracks `active_artifact_id` and uses `_requests_visual_context()` to
 restore the last relevant image only for an actual visual follow-up (for
