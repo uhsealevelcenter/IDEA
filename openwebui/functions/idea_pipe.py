@@ -8,7 +8,7 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.2.5
+version: 0.2.6
 """
 
 import asyncio
@@ -76,16 +76,25 @@ CONVERSATION_SUMMARY_MARKER = "[CONVERSATION SUMMARY]"
 LEGACY_TOOL_OUTPUT_START = "<!-- IDEA_TOOL_OUTPUT_START -->"
 LEGACY_TOOL_OUTPUT_END = "<!-- IDEA_TOOL_OUTPUT_END -->"
 # Open WebUI escapes HTML comments in assistant Markdown, so readable comment
-# markers leak into chat. These Unicode format characters are non-rendering
-# delimiters: the tool content remains visible, while the next request can
-# still distinguish display-only blocks from model conversation context.
-TOOL_OUTPUT_START = "\u2063\u2064\u2063\u2064"
-TOOL_OUTPUT_END = "\u2064\u2063\u2064\u2063"
+# markers leak into chat. Raw Unicode format-character markers avoid visible
+# text, but Marked still tokenizes each marker line as a paragraph whose CSS
+# margins create large gaps between code and output. Emit the same unique
+# labels as Markdown reference definitions instead: they remain detectable in
+# persisted history but produce no rendered token. Keep the raw form below so
+# conversations written by Pipe versions 0.2.0-0.2.5 are still sanitized.
+RAW_TOOL_OUTPUT_START = "\u2063\u2064\u2063\u2064"
+RAW_TOOL_OUTPUT_END = "\u2064\u2063\u2064\u2063"
+TOOL_OUTPUT_START = f"[{RAW_TOOL_OUTPUT_START}]: <>"
+TOOL_OUTPUT_END = f"[{RAW_TOOL_OUTPUT_END}]: <>"
 TOOL_OUTPUT_BLOCK_RE = re.compile(
     r"(?:"
     + re.escape(TOOL_OUTPUT_START)
     + r".*?"
     + re.escape(TOOL_OUTPUT_END)
+    + r"|"
+    + re.escape(RAW_TOOL_OUTPUT_START)
+    + r".*?"
+    + re.escape(RAW_TOOL_OUTPUT_END)
     + r"|"
     + re.escape(LEGACY_TOOL_OUTPUT_START)
     + r".*?"

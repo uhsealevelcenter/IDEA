@@ -421,6 +421,13 @@ its fenced block so an IPython traceback's long hyphen separator cannot make
 Marked reinterpret the delimiter, fence, and first output line as a Setext
 heading.
 
+The invisible delimiter labels are emitted as Markdown reference definitions
+rather than bare format-character lines. Marked does not render reference
+definitions, eliminating the paragraph margins that previously created large
+vertical gaps between Python code, console output, and images. Model-history
+sanitization continues to recognize these definitions, the earlier raw
+Unicode delimiters, and the oldest HTML-comment delimiters.
+
 `_resolve_displayed_images()` in the Pipe matches emitted sandbox paths to
 durable Open WebUI files. Basename fallback is accepted only when
 unambiguous. Missing mappings do not expose base64. Model image requests use

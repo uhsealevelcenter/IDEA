@@ -1141,6 +1141,14 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             "````python\nprint(1)\n````\n"
             f"{idea_pipe.TOOL_OUTPUT_END}\n\n",
         )
+        self.assertEqual(
+            idea_pipe.TOOL_OUTPUT_START,
+            f"[{idea_pipe.RAW_TOOL_OUTPUT_START}]: <>",
+        )
+        self.assertEqual(
+            idea_pipe.TOOL_OUTPUT_END,
+            f"[{idea_pipe.RAW_TOOL_OUTPUT_END}]: <>",
+        )
 
     def test_translates_python_error_to_labeled_traceback_block(self):
         rendered = "".join(idea_pipe.Pipe._translate_chunk({
@@ -1454,6 +1462,22 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         ])
 
         self.assertNotIn("secret", structured[0]["content"])
+        self.assertIn("Before", structured[0]["content"])
+        self.assertIn("After", structured[0]["content"])
+
+    def test_previous_raw_unicode_tool_markers_are_still_removed_from_context(self):
+        content = (
+            f"Before\n{idea_pipe.RAW_TOOL_OUTPUT_START}\n"
+            "````output\nsecret\n````\n"
+            f"{idea_pipe.RAW_TOOL_OUTPUT_END}\nAfter"
+        )
+        structured = idea_pipe._structured_messages([
+            {"role": "assistant", "content": content},
+        ])
+
+        self.assertNotIn("secret", structured[0]["content"])
+        self.assertNotIn(idea_pipe.RAW_TOOL_OUTPUT_START, structured[0]["content"])
+        self.assertNotIn(idea_pipe.RAW_TOOL_OUTPUT_END, structured[0]["content"])
         self.assertIn("Before", structured[0]["content"])
         self.assertIn("After", structured[0]["content"])
 
