@@ -8,7 +8,7 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.2.3
+version: 0.2.5
 """
 
 import asyncio
@@ -140,7 +140,7 @@ def _is_python_console_chunk(chunk: dict) -> bool:
 
 
 def _python_console_stream_close() -> str:
-    return f"\n```\n{TOOL_OUTPUT_END}\n\n"
+    return f"\n````\n{TOOL_OUTPUT_END}\n\n"
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -1187,7 +1187,7 @@ class Pipe:
         elif chunk_type == "python_code_start":
             # Four backticks keep ordinary Markdown fences embedded in Python
             # string literals from prematurely closing the streamed block.
-            yield f"\n\n{TOOL_OUTPUT_START}\n````python\n"
+            yield f"\n\n{TOOL_OUTPUT_START}\n\n````python\n"
         elif chunk_type == "python_code_delta":
             yield content
         elif chunk_type == "python_code_end":
@@ -1195,7 +1195,7 @@ class Pipe:
         elif chunk_type == "code":
             lang = fmt or ""
             yield (
-                f"\n\n{TOOL_OUTPUT_START}\n```{lang}\n{content}\n```\n"
+                f"\n\n{TOOL_OUTPUT_START}\n\n```{lang}\n{content}\n```\n"
                 f"{TOOL_OUTPUT_END}\n\n"
             )
         elif chunk_type == "console":
@@ -1223,8 +1223,8 @@ class Pipe:
                         if fmt == "error" else ""
                     )
                     yield (
-                        f"\n\n{TOOL_OUTPUT_START}\n{error_label}"
-                        "```output\n"
+                        f"\n\n{TOOL_OUTPUT_START}\n\n{error_label}"
+                        "````output\n"
                     )
                 if content:
                     yield content
@@ -1232,14 +1232,14 @@ class Pipe:
                     yield _python_console_stream_close()
             elif fmt == "error":
                 yield (
-                    f"\n\n{TOOL_OUTPUT_START}\n"
+                    f"\n\n{TOOL_OUTPUT_START}\n\n"
                     "⚠️ **Python execution error**\n\n"
-                    f"```output\n{content}\n```\n"
+                    f"````output\n{content}\n````\n"
                     f"{TOOL_OUTPUT_END}\n\n"
                 )
             else:
                 yield (
-                    f"\n\n{TOOL_OUTPUT_START}\n```output\n{content}\n```\n"
+                    f"\n\n{TOOL_OUTPUT_START}\n\n````output\n{content}\n````\n"
                     f"{TOOL_OUTPUT_END}\n\n"
                 )
         elif chunk_type == "image" and content:

@@ -412,10 +412,14 @@ reuses successful early uploads instead of creating duplicate previews or
 attachments; if an early upload fails, the existing end-of-turn resolution
 remains the fallback.
 
-Streamed Python console output uses OpenWebUI-compatible triple-backtick
-`output` fences. This keeps stdout and a following traceback in one balanced
-block and prevents the closing delimiter from turning later assistant prose
-into a code block.
+Python console output uses four-backtick `output` fences. This matches the
+fence form that OpenWebUI reliably tokenizes beside IDEA's invisible tool
+output delimiters, keeps stdout and a following traceback in one balanced
+block, and prevents the closing delimiter from turning later assistant prose
+into a code block. A blank line separates each invisible start delimiter from
+its fenced block so an IPython traceback's long hyphen separator cannot make
+Marked reinterpret the delimiter, fence, and first output line as a Setext
+heading.
 
 `_resolve_displayed_images()` in the Pipe matches emitted sandbox paths to
 durable Open WebUI files. Basename fallback is accepted only when

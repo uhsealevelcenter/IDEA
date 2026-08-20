@@ -1137,7 +1137,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(
             "".join(chunks),
-            f"\n\n{idea_pipe.TOOL_OUTPUT_START}\n"
+            f"\n\n{idea_pipe.TOOL_OUTPUT_START}\n\n"
             "````python\nprint(1)\n````\n"
             f"{idea_pipe.TOOL_OUTPUT_END}\n\n",
         )
@@ -1151,8 +1151,13 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         }))
 
         self.assertIn("⚠️ **Python execution error**", rendered)
-        self.assertIn("```output\nTraceback", rendered)
-        self.assertIn("NameError: missing\n```", rendered)
+        self.assertIn("````output\nTraceback", rendered)
+        self.assertIn("NameError: missing\n````", rendered)
+        self.assertIn(
+            f"{idea_pipe.TOOL_OUTPUT_START}\n\n"
+            "⚠️ **Python execution error**",
+            rendered,
+        )
         self.assertIn(idea_pipe.TOOL_OUTPUT_START, rendered)
         self.assertIn(idea_pipe.TOOL_OUTPUT_END, rendered)
 
@@ -1181,7 +1186,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
-        self.assertEqual(rendered.count("```output"), 1)
+        self.assertEqual(rendered.count("````output"), 1)
         self.assertIn("first\nsecond\n", rendered)
 
     def test_streamed_python_error_without_call_id_is_output(self):
@@ -1204,7 +1209,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         )
 
         self.assertIn("⚠️ **Python execution error**", rendered)
-        self.assertIn("```output\nTraceback", rendered)
+        self.assertIn("````output\nTraceback", rendered)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
 
@@ -1232,7 +1237,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             for part in idea_pipe.Pipe._translate_chunk(event)
         )
 
-        self.assertEqual(rendered.count("```output"), 1)
+        self.assertEqual(rendered.count("````output"), 1)
         self.assertIn("starting\nTraceback\nValueError: bad input", rendered)
         self.assertLess(
             rendered.index("ValueError: bad input"),
@@ -1271,7 +1276,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
-        self.assertIn("```output\nTraceback", rendered)
+        self.assertIn("````output\nTraceback", rendered)
         self.assertLess(
             rendered.index(idea_pipe.TOOL_OUTPUT_END),
             rendered.index("I corrected the failed calculation."),
@@ -1292,7 +1297,12 @@ class IdeaPipeAssistantTests(unittest.TestCase):
                     "type": "console",
                     "format": "error",
                     "tool_name": "run_python_tool",
-                    "content": "NameError Traceback\nNameError: missing",
+                    "content": (
+                        "---------------------------------------------------------------------------\n"
+                        "NameError Traceback\n"
+                        "----> 4 print(intentional_missing_variable)\n\n"
+                        "NameError: name 'intentional_missing_variable' is not defined"
+                    ),
                     "start": False,
                     "end": False,
                 },
@@ -1327,11 +1337,15 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             rendered = "".join(asyncio.run(collect()))
 
         self.assertIn(
-            "```output\nThis message appears before the failure.\n"
-            "NameError Traceback\nNameError: missing\n```",
+            f"{idea_pipe.TOOL_OUTPUT_START}\n\n````output\n"
+            "This message appears before the failure.\n"
+            "---------------------------------------------------------------------------\n"
+            "NameError Traceback\n"
+            "----> 4 print(intentional_missing_variable)\n\n"
+            "NameError: name 'intentional_missing_variable' is not defined\n````",
             rendered,
         )
-        self.assertNotIn("````output", rendered)
+        self.assertNotIn("```output\n", rendered.replace("````output\n", ""))
         self.assertLess(
             rendered.index(idea_pipe.TOOL_OUTPUT_END),
             rendered.index("As expected, the cell failed."),
