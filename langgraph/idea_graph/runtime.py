@@ -69,6 +69,7 @@ MODEL_STREAM_FLUSH_CHARS = 80
 MODEL_WAITING_STATUS_SECONDS = 5.0
 MODEL_BUSY_STATUS_SECONDS = 15.0
 KERNEL_IMAGE_EXTENSIONS = {"gif", "jpeg", "jpg", "png", "webp"}
+DISPLAY_IMAGE_OUTPUT_SUBDIR = ".idea/display-images"
 
 
 @dataclass
@@ -141,6 +142,7 @@ class TerminalGraphRuntime:
         self.event_callback = event_callback
         self.outputs_before: dict[str, str] | None = None
         self.displayed_image_paths: set[str] = set()
+        self.early_synced_outputs: dict[str, dict[str, Any]] = {}
         self.system_prompt = compose_system_prompt(
             SYSTEM_PROMPT_PATH.read_text(),
             assistant_system_prompt,
@@ -605,6 +607,7 @@ class TerminalGraphRuntime:
         chunk: dict[str, Any],
         *,
         run_id: str,
+        execution_id: str,
         image_index: int,
     ) -> tuple[str, str]:
         """Persist a Jupyter display image without exposing base64 to chat."""
@@ -625,9 +628,14 @@ class TerminalGraphRuntime:
         safe_run_id = "".join(
             char for char in run_id if char.isalnum() or char in {"-", "_"}
         ) or uuid.uuid4().hex
+        safe_execution_id = "".join(
+            char
+            for char in execution_id
+            if char.isalnum() or char in {"-", "_"}
+        ) or uuid.uuid4().hex
         path = (
             f"{self.outputs_dir}/.idea/kernel-images/"
-            f"{safe_run_id}-{image_index}.{image_format}"
+            f"{safe_run_id}-{safe_execution_id}-{image_index}.{image_format}"
         )
         write_file_stream(
             path,
@@ -636,6 +644,66 @@ class TerminalGraphRuntime:
             expected_size=len(image_data),
         )
         return path, image_format
+
+    def stage_displayed_image(
+        self,
+        source_path: str,
+        image_data: bytes,
+        image_format: str,
+        content_hash: str,
+    ) -> str:
+        """Copy an explicitly displayed image into the synced output tree."""
+        from tools.persistent_terminal import write_file_stream
+
+        normalized_source = posixpath.normpath(
+            source_path
+            if source_path.startswith("/")
+            else posixpath.join("/workspace", source_path)
+        )
+        normalized_outputs = posixpath.normpath(self.outputs_dir)
+        if normalized_source.startswith(normalized_outputs + "/"):
+            return normalized_source
+
+        source_stem = Path(normalized_source).stem
+        safe_stem = "".join(
+            char if char.isalnum() or char in {"-", "_"} else "-"
+            for char in source_stem
+        ).strip("-")[:80] or "image"
+        destination = (
+            f"{normalized_outputs}/{DISPLAY_IMAGE_OUTPUT_SUBDIR}/"
+            f"{safe_stem}-{content_hash[:16]}.{image_format}"
+        )
+        written = write_file_stream(
+            destination,
+            [image_data],
+            session_id=self.agent.sandbox_id,
+            expected_size=len(image_data),
+        )
+        if written != len(image_data):
+            raise RuntimeError(
+                f"staged {written} of {len(image_data)} image bytes"
+            )
+        return destination
+
+    def sync_displayed_image(self, image_path: str) -> dict[str, Any] | None:
+        """Upload one image early so the Pipe can render it in event order."""
+        from tools.persistent_terminal import list_file_metadata
+
+        if not getattr(self.agent, "openwebui_authorization", None):
+            return None
+        metadata = list_file_metadata(
+            self.outputs_dir,
+            session_id=self.agent.sandbox_id,
+        )
+        signature = (metadata or {}).get(image_path)
+        if not signature:
+            return None
+        item = self.agent._upload_output_to_openwebui(image_path)
+        if not item or not item.get("openwebui_file_id"):
+            return None
+        recorded = {**item, "signature": signature}
+        self.early_synced_outputs[image_path] = recorded
+        return recorded
 
     def execute_tool(self, tool_call: dict[str, Any], state: dict[str, Any]) -> ToolOutcome:
         name = str(tool_call.get("name") or "")
@@ -728,7 +796,9 @@ class TerminalGraphRuntime:
             kernel_lost = False
             image_count = 0
             generated_images: list[str] = []
+            generated_image_events: list[tuple[str, str]] = []
             run_id = str(state.get("run_id") or "")
+            execution_id = str(state.get("_execution_id") or "")
             cancellation = state.get("_run_cancellation")
             console_stream_open = False
 
@@ -739,6 +809,7 @@ class TerminalGraphRuntime:
                 self.emit({
                     "role": "computer", "type": "console", "format": console_format,
                     "content": content, "tool_call_id": tool_call_id,
+                    "tool_name": "run_python_tool",
                     "start": not console_stream_open, "end": False,
                 })
                 console_stream_open = True
@@ -763,6 +834,7 @@ class TerminalGraphRuntime:
                             image_path, image_format = self.persist_kernel_image(
                                 chunk,
                                 run_id=run_id,
+                                execution_id=execution_id,
                                 image_index=image_count,
                             )
                         except Exception as exc:
@@ -773,21 +845,31 @@ class TerminalGraphRuntime:
                             continue
                         self.displayed_image_paths.add(image_path)
                         generated_images.append(image_path)
-                        self.emit({
-                            "role": "assistant",
-                            "type": "image",
-                            "format": image_format,
-                            "filename": image_path,
-                            "start": True,
-                            "end": True,
-                        })
+                        generated_image_events.append((image_path, image_format))
             finally:
                 if console_stream_open:
                     self.emit({
                         "role": "computer", "type": "console", "format": "output",
                         "content": "", "tool_call_id": tool_call_id,
+                        "tool_name": "run_python_tool",
                         "start": False, "end": True,
                     })
+            for image_path, image_format in generated_image_events:
+                synced_image = self.sync_displayed_image(image_path)
+                image_event = {
+                    "role": "assistant",
+                    "type": "image",
+                    "format": image_format,
+                    "filename": image_path,
+                    "tool_call_id": tool_call_id,
+                    "start": True,
+                    "end": True,
+                }
+                if synced_image:
+                    image_event["openwebui_file_id"] = synced_image[
+                        "openwebui_file_id"
+                    ]
+                self.emit(image_event)
             content = "\n".join(console).strip()
             if image_count:
                 content = (content + f"\n[{image_count} image(s) generated and shown to the user]").strip()
@@ -839,24 +921,22 @@ class TerminalGraphRuntime:
                     encoded, image_format = self.agent._encode_image_to_base64(
                         image_path
                     )
-                    content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                    image_data = base64.b64decode(encoded, validate=True)
+                    content_hash = hashlib.sha256(image_data).hexdigest()
                     if content_hash in self.agent._shown_image_hashes:
                         result = (
                             "✓ Image already displayed to the user "
                             f"(identical content): {image_path}"
                         )
                     else:
+                        displayed_path = self.stage_displayed_image(
+                            image_path,
+                            image_data,
+                            image_format,
+                            content_hash,
+                        )
                         self.agent._shown_image_hashes.add(content_hash)
-                        self.displayed_image_paths.add(image_path)
-                        if image_path.startswith("/workspace/"):
-                            # publish_artifact_tool's default destination
-                            # preserves this relative path. Include it in
-                            # final sync references so an unchanged, already-
-                            # published image still produces a file event.
-                            self.displayed_image_paths.add(
-                                "/outputs/"
-                                + image_path.removeprefix("/workspace/")
-                            )
+                        self.displayed_image_paths.add(displayed_path)
                         self.emit({
                             "role": "assistant",
                             "type": "image",
@@ -866,7 +946,7 @@ class TerminalGraphRuntime:
                             # as conversation text and duplicated in the
                             # message's structured output.
                             "format": image_format,
-                            "filename": image_path,
+                            "filename": displayed_path,
                             "start": True,
                             "end": True,
                         })
@@ -915,6 +995,7 @@ class TerminalGraphRuntime:
                 referenced_output_paths(response)
                 | self.displayed_image_paths
             ),
+            already_synced=self.early_synced_outputs,
         )
         events: list[dict[str, Any]] = []
         for item in synced:

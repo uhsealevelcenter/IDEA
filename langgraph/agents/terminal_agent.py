@@ -741,10 +741,56 @@ class TerminalAgent:
 
         return synced
     
+    def _upload_output_to_openwebui(
+        self,
+        filepath: str,
+        *,
+        data: bytes | None = None,
+        deadline: float | None = None,
+    ) -> dict | None:
+        """Upload one output file and return its durable OpenWebUI mapping."""
+        if not self.openwebui_authorization:
+            return None
+        if deadline is None:
+            deadline = time.monotonic() + OUTPUT_SYNC_TIMEOUT_SECONDS
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            if data is None:
+                data = read_file_bytes(
+                    filepath,
+                    session_id=self.sandbox_id,
+                    timeout=remaining,
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            filename = Path(filepath).name
+            response = requests.post(
+                f"{OPENWEBUI_BASE_URL}/api/v1/files/",
+                headers={"Authorization": self.openwebui_authorization},
+                files={"file": (filename, data)},
+                params={"process": "false"},
+                timeout=(min(5, remaining), remaining),
+            )
+            response.raise_for_status()
+            file_id = response.json().get("id")
+            if file_id:
+                print(f"✓ Synced {filepath} to Open WebUI (file_id={file_id})")
+                return {
+                    "filename": filepath,
+                    "openwebui_file_id": file_id,
+                }
+        except Exception as e:
+            print(f"⚠️  Failed to sync {filepath} to Open WebUI: {e}")
+        return None
+
     def _sync_outputs_to_openwebui(
         self,
         outputs_before_turn: dict[str, str] | None,
         referenced_paths: set[str] | None = None,
+        already_synced: dict[str, dict] | None = None,
     ) -> list[dict]:
         """
         Scan this sandbox's OUTPUTS_DIR (final state, after the model has
@@ -790,8 +836,23 @@ class TerminalAgent:
             if path in outputs_after_turn
         }
 
+        early_reused: list[dict] = []
+        for filepath, item in (already_synced or {}).items():
+            if (
+                filepath in outputs_after_turn
+                and item.get("signature") == outputs_after_turn[filepath]
+                and item.get("openwebui_file_id")
+            ):
+                early_reused.append({
+                    "filename": filepath,
+                    "openwebui_file_id": item["openwebui_file_id"],
+                })
+                changed_paths.discard(filepath)
+
         reused: list[dict] = []
-        unresolved_references = set(referenced_paths)
+        unresolved_references = set(referenced_paths) - {
+            item["filename"] for item in early_reused
+        }
         if registry and referenced_paths:
             try:
                 registry_records = registry.get_many(referenced_paths)
@@ -813,7 +874,25 @@ class TerminalAgent:
         # the final response explicitly references.
         filepaths = sorted(changed_paths | unresolved_references)
         if not filepaths:
-            return reused
+            if registry:
+                for item in early_reused:
+                    filepath = item["filename"]
+                    try:
+                        registry.upsert(
+                            filepath,
+                            outputs_after_turn[filepath],
+                            item["openwebui_file_id"],
+                            Path(filepath).name,
+                        )
+                    except Exception as e:
+                        print(
+                            f"⚠️  Artifact registry update failed for "
+                            f"{filepath}: {e}"
+                        )
+            return sorted(
+                early_reused + reused,
+                key=lambda item: item["filename"],
+            )
 
         sync_deadline = time.monotonic() + OUTPUT_SYNC_TIMEOUT_SECONDS
         html_data: dict[str, bytes] = {}
@@ -850,46 +929,17 @@ class TerminalAgent:
                     f"{filepath}: {e}"
                 )
 
-        def upload(filepath: str, data: bytes | None = None) -> dict | None:
-            try:
-                remaining = sync_deadline - time.monotonic()
-                if remaining <= 0:
-                    return None
-                if data is None:
-                    data = read_file_bytes(
-                        filepath,
-                        session_id=self.sandbox_id,
-                        timeout=remaining,
-                    )
-                remaining = sync_deadline - time.monotonic()
-                if remaining <= 0:
-                    return None
-                filename = Path(filepath).name
-                response = requests.post(
-                    f"{OPENWEBUI_BASE_URL}/api/v1/files/",
-                    headers={"Authorization": self.openwebui_authorization},
-                    files={"file": (filename, data)},
-                    params={"process": "false"},
-                    timeout=(min(5, remaining), remaining),
-                )
-                response.raise_for_status()
-                file_id = response.json().get("id")
-                if file_id:
-                    print(f"✓ Synced {filepath} to Open WebUI (file_id={file_id})")
-                    return {
-                        "filename": filepath,
-                        "openwebui_file_id": file_id,
-                    }
-            except Exception as e:
-                print(f"⚠️  Failed to sync {filepath} to Open WebUI: {e}")
-            return None
-
         executor = ThreadPoolExecutor(
             max_workers=min(OUTPUT_SYNC_MAX_WORKERS, len(filepaths)),
             thread_name_prefix="idea-output-sync",
         )
         futures = [
-            executor.submit(upload, filepath, html_data.get(filepath))
+            executor.submit(
+                self._upload_output_to_openwebui,
+                filepath,
+                data=html_data.get(filepath),
+                deadline=sync_deadline,
+            )
             for filepath in filepaths
         ]
         synced: list[dict] = []
@@ -912,7 +962,7 @@ class TerminalAgent:
             executor.shutdown(wait=False, cancel_futures=True)
 
         if registry:
-            for item in synced:
+            for item in early_reused + synced:
                 filepath = item["filename"]
                 try:
                     registry.upsert(
@@ -927,7 +977,10 @@ class TerminalAgent:
                         f"{filepath}: {e}"
                     )
 
-        return sorted(reused + synced, key=lambda item: item["filename"])
+        return sorted(
+            early_reused + reused + synced,
+            key=lambda item: item["filename"],
+        )
 
     @staticmethod
     def _invoke_with_heartbeat(

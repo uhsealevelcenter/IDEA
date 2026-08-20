@@ -447,7 +447,11 @@ def build_idea_graph(
                 # their own cleanup instead of beginning another kernel call.
                 outcome = runtime.execute_tool(
                     call,
-                    {**state, "_run_cancellation": cancellation},
+                    {
+                        **state,
+                        "_run_cancellation": cancellation,
+                        "_execution_id": execution_id,
+                    },
                 )
                 outcome_content = outcome.content
                 outcome_status = outcome.status

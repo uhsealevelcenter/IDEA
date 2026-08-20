@@ -367,37 +367,73 @@ tracebacks from older guest images through `_looks_like_legacy_kernel_error()`.
 
 `TerminalGraphRuntime.execute_tool()` marks a Python tool outcome failed when
 it receives error chunks while continuing to stream the traceback. The Pipe
-renders those chunks as a labeled **Python execution error** block. This is a
-tool failure the model can correct; it does not automatically convert the
-whole assistant run into a generic failed response.
+renders those chunks as a labeled **Python execution error** `output` block
+and defensively closes an incomplete console stream before later assistant
+prose. This is a tool failure the model can correct; it does not automatically
+convert the whole assistant run into a generic failed response.
 
 ### Plot capture and durable image delivery
 
 Python display-image chunks are no longer embedded as base64 in chat history.
 `TerminalGraphRuntime.persist_kernel_image()` validates the image format and
 base64 payload, writes it to
-`/outputs/.idea/kernel-images/<run>-<index>.<format>`, records it as an
+`/outputs/.idea/kernel-images/<run>-<execution>-<index>.<format>`, records it as an
 artifact/vision input, and emits a lightweight filename event. Invalid image
 payloads become explicit console errors and never fall back to inline bytes.
 
 `show_image_tool` and `inspect_image_tool` now have distinct meanings:
 
 - display emits a user-visible image reference and deduplicates identical
-  bytes within a turn; and
+  bytes within a turn. Images outside `/outputs` are copied to the
+  content-addressed
+  `/outputs/.idea/display-images/<name>-<hash>.<format>` area first, so
+  standalone scripts can display private workspace figures through the same
+  durable Open WebUI file flow as kernel plots; and
 - inspection makes the file available to model vision without necessarily
   redisplaying it.
+
+The image event names the staged output path rather than guessing that a
+corresponding file already exists under `/outputs`. If staging fails, the
+tool emits a visible error and does not leave a broken image placeholder in
+the conversation. Images already under `/outputs` are used in place without
+an extra copy.
 
 The graph tracks `active_artifact_id` and uses `_requests_visual_context()` to
 restore the last relevant image only for an actual visual follow-up (for
 example, “change this plot” or “what can you see?”). A new independent request
 to create a plot does not automatically receive the previous image.
 
-`_resolve_displayed_images()` in the Pipe matches emitted sandbox paths to the
-files uploaded during finalization and produces durable Open WebUI preview
-links. Basename fallback is accepted only when unambiguous. Missing mappings
-do not expose base64. Model image requests use the configured vision-capable
-primary model; attachment detection validates file magic, applies size/count
-limits, uses high-detail image parts, and avoids logging data URIs.
+After each Python kernel execution, the graph closes any open console stream,
+uploads that block's persisted images through the current user's Open WebUI
+credential, and emits lightweight image events containing the durable file
+IDs. The Pipe renders those events immediately, preserving code/output/image
+order without putting base64 in chat history. Final output synchronization
+reuses successful early uploads instead of creating duplicate previews or
+attachments; if an early upload fails, the existing end-of-turn resolution
+remains the fallback.
+
+Python console output uses four-backtick `output` fences. This matches the
+fence form that OpenWebUI reliably tokenizes beside IDEA's invisible tool
+output delimiters, keeps stdout and a following traceback in one balanced
+block, and prevents the closing delimiter from turning later assistant prose
+into a code block. A blank line separates each invisible start delimiter from
+its fenced block so an IPython traceback's long hyphen separator cannot make
+Marked reinterpret the delimiter, fence, and first output line as a Setext
+heading.
+
+The invisible delimiter labels are emitted as Markdown reference definitions
+rather than bare format-character lines. Marked does not render reference
+definitions, eliminating the paragraph margins that previously created large
+vertical gaps between Python code, console output, and images. Model-history
+sanitization continues to recognize these definitions, the earlier raw
+Unicode delimiters, and the oldest HTML-comment delimiters.
+
+`_resolve_displayed_images()` in the Pipe matches emitted sandbox paths to
+durable Open WebUI files. Basename fallback is accepted only when
+unambiguous. Missing mappings do not expose base64. Model image requests use
+the configured vision-capable primary model; attachment detection validates
+file magic, applies size/count limits, uses high-detail image parts, and
+avoids logging data URIs.
 
 ### Output synchronization and links
 
