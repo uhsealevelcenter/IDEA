@@ -97,6 +97,16 @@ general_settings:
 litellm_settings:
   set_verbose: false # Disable debug logging in production.
   json_logs: true # Structured (JSON) logs.
+  # Send every request/response (langgraph's TerminalAgent, PaperQA, and Open
+  # WebUI's background-task model all route through this proxy - see
+  # docker-compose.yml's `litellm` service) to the self-hosted `langfuse`
+  # service below as a trace. Reads LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY
+  # / LANGFUSE_HOST from this process's environment (env_file in
+  # docker-compose.yml) - see example.env's Langfuse section. A failure to
+  # reach Langfuse only logs a warning here; it never blocks or fails the
+  # underlying LLM call.
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
   # Bound one provider attempt inside the proxy. LangGraph has a separate,
   # longer 180-second outer request ceiling so it can classify/report proxy
   # timeouts and safely retry only before any streamed output.

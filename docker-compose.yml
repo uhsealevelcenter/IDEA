@@ -248,6 +248,12 @@ services:
       # section and litellm/init_litellm_db.sql for how the `litellm`
       # role/schema this points at get created.
       - LITELLM_DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}?schema=litellm
+      # Consumed by litellm_config.yaml's success_callback/failure_callback
+      # (["langfuse"]) below - LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY are
+      # NOT re-declared here for the same reason OPENAI_API_KEY isn't above -
+      # env_file already injects them literally from .env once generated
+      # through the `langfuse` service's own UI (see example.env).
+      - LANGFUSE_HOST=http://langfuse:3000
     volumes:
       # Lets the config be edited without rebuilding the image.
       - ./litellm/litellm_config.yaml:/app/litellm_config.yaml:ro
@@ -256,6 +262,60 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      # Only needs to be reachable, not necessarily healthy first - a
+      # transient Langfuse outage should log a callback warning, not block
+      # LLM traffic (see litellm_config.yaml's comment on success_callback).
+      langfuse:
+        condition: service_started
+
+  # Self-hosted LLM observability - every call litellm makes (from
+  # langgraph's TerminalAgent, PaperQA, and Open WebUI's background-task
+  # model - see litellm/litellm_config.yaml's success/failure_callback) is
+  # sent here as a trace, grouped by session_id/trace_user_id set in
+  # agents/terminal_agent.py's extra_body["metadata"]. Uses Langfuse v2
+  # (Postgres-only self-host: https://langfuse.com/self-hosting/v2/docker-compose)
+  # rather than the current v3, which additionally requires ClickHouse + S3/
+  # MinIO + a dedicated Redis - v2 only receives security patches (no new
+  # features) per Langfuse's own docs, so revisit if that becomes a
+  # blocker. Reuses the existing `db` Postgres via a dedicated role/schema,
+  # the same pattern as `litellm` below - see langfuse/init_langfuse_db.sql,
+  # which must be run once (idempotent, safe to re-run) before this service
+  # can start successfully.
+  langfuse:
+    # Pinned to the v2 major tag (not a digest, unlike most other images in
+    # this file) - Langfuse's own docs recommend tracking `:2` and running
+    # `docker compose pull langfuse` periodically for patches instead.
+    image: langfuse/langfuse:2
+    container_name: idea_langfuse
+    restart: unless-stopped
+    # No host port here either - dev-only exposure lives in
+    # docker-compose.override.yml, matching langgraph/sandbox/litellm above.
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD?Variable not set}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?schema=langfuse
+      - NEXTAUTH_URL=${LANGFUSE_NEXTAUTH_URL:-http://localhost:3050}
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET?Variable not set}
+      - SALT=${LANGFUSE_SALT?Variable not set}
+      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY?Variable not set}
+      - TELEMETRY_ENABLED=false
+      # LANGFUSE_INIT_* one-shot bootstrap of an org/project/user on first
+      # boot - see example.env's Langfuse section for the recommended flow
+      # (create the project through the UI once, then paste the generated
+      # keys back into .env for litellm to use, same as LITELLM_VIRTUAL_KEY
+      # below).
+      - LANGFUSE_INIT_ORG_ID=${LANGFUSE_INIT_ORG_ID:-}
+      - LANGFUSE_INIT_ORG_NAME=${LANGFUSE_INIT_ORG_NAME:-}
+      - LANGFUSE_INIT_PROJECT_ID=${LANGFUSE_INIT_PROJECT_ID:-}
+      - LANGFUSE_INIT_PROJECT_NAME=${LANGFUSE_INIT_PROJECT_NAME:-}
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL:-}
+      - LANGFUSE_INIT_USER_NAME=${LANGFUSE_INIT_USER_NAME:-}
+      - LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
 
   # Open WebUI frontend, talking to the existing langgraph service via the
   # Pipe function in ./openwebui/functions/idea_pipe.py. Replaces the old
