@@ -409,9 +409,11 @@ class LangGraphKernelImageTests(unittest.TestCase):
         runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
         runtime.agent = Mock()
         runtime.agent.sandbox_id = "sandbox-1"
+        runtime.agent.openwebui_authorization = None
         runtime.event_callback = Mock()
         runtime.outputs_dir = "/outputs"
         runtime.displayed_image_paths = set()
+        runtime.early_synced_outputs = {}
         return runtime
 
     @patch("tools.persistent_terminal.inspect_python_namespace")
@@ -586,11 +588,136 @@ class LangGraphKernelImageTests(unittest.TestCase):
             "type": "image",
             "format": "png",
             "filename": image_path,
+            "tool_call_id": "",
             "start": True,
             "end": True,
         }, emitted)
         self.assertNotIn("base64", str(emitted))
         self.assertNotIn(PNG_BYTES.decode("latin1"), str(emitted))
+
+    @patch(
+        "tools.persistent_terminal.list_file_metadata",
+        return_value={
+            "/outputs/.idea/kernel-images/run-1-exec-1-1.png": "20:100.0",
+        },
+    )
+    @patch("tools.persistent_terminal.inspect_python_namespace", return_value=[])
+    @patch("tools.persistent_terminal.write_file_stream")
+    @patch("tools.persistent_terminal.run_python_stream")
+    def test_python_image_is_uploaded_after_console_closes(
+        self,
+        run_python_stream,
+        _write_file_stream,
+        _inspect_python_namespace,
+        _list_file_metadata,
+    ):
+        run_python_stream.return_value = [
+            {"type": "console", "format": "output", "content": "done\n"},
+            {
+                "type": "image",
+                "format": "base64.png",
+                "content": base64.b64encode(PNG_BYTES).decode(),
+            },
+        ]
+        runtime = self.make_runtime()
+        runtime.agent.openwebui_authorization = "Bearer user-token"
+        image_path = "/outputs/.idea/kernel-images/run-1-exec-1-1.png"
+        runtime.agent._upload_output_to_openwebui.return_value = {
+            "filename": image_path,
+            "openwebui_file_id": "file-image",
+        }
+
+        outcome = runtime.execute_tool(
+            {
+                "id": "call-1",
+                "name": "run_python_tool",
+                "args": {"code": "print('done'); plt.show()"},
+            },
+            {
+                "run_id": "run-1",
+                "kernel_id": "kernel-1",
+                "_execution_id": "exec-1",
+            },
+        )
+
+        self.assertEqual(outcome.status, "completed")
+        emitted = [call.args[0] for call in runtime.event_callback.call_args_list]
+        console_end = next(
+            index for index, event in enumerate(emitted)
+            if event.get("type") == "console" and event.get("end")
+        )
+        image_index = next(
+            index for index, event in enumerate(emitted)
+            if event.get("type") == "image"
+        )
+        self.assertLess(console_end, image_index)
+        self.assertEqual(emitted[image_index], {
+            "role": "assistant",
+            "type": "image",
+            "format": "png",
+            "filename": image_path,
+            "tool_call_id": "call-1",
+            "start": True,
+            "end": True,
+            "openwebui_file_id": "file-image",
+        })
+        self.assertEqual(runtime.early_synced_outputs, {
+            image_path: {
+                "filename": image_path,
+                "openwebui_file_id": "file-image",
+                "signature": "20:100.0",
+            },
+        })
+        self.assertNotIn("base64", str(emitted))
+
+    @patch(
+        "tools.persistent_terminal.list_file_metadata",
+        return_value={
+            "/outputs/.idea/kernel-images/run-1-exec-1-1.png": "20:100.0",
+        },
+    )
+    @patch("tools.persistent_terminal.inspect_python_namespace", return_value=[])
+    @patch("tools.persistent_terminal.write_file_stream")
+    @patch("tools.persistent_terminal.run_python_stream")
+    def test_early_upload_failure_keeps_image_for_finalization_fallback(
+        self,
+        run_python_stream,
+        _write_file_stream,
+        _inspect_python_namespace,
+        _list_file_metadata,
+    ):
+        run_python_stream.return_value = [{
+            "type": "image",
+            "format": "base64.png",
+            "content": base64.b64encode(PNG_BYTES).decode(),
+        }]
+        runtime = self.make_runtime()
+        runtime.agent.openwebui_authorization = "Bearer user-token"
+        runtime.agent._upload_output_to_openwebui.return_value = None
+
+        runtime.execute_tool(
+            {
+                "id": "call-1",
+                "name": "run_python_tool",
+                "args": {"code": "plt.show()"},
+            },
+            {
+                "run_id": "run-1",
+                "kernel_id": "kernel-1",
+                "_execution_id": "exec-1",
+            },
+        )
+
+        image_event = next(
+            call.args[0]
+            for call in runtime.event_callback.call_args_list
+            if call.args[0].get("type") == "image"
+        )
+        self.assertNotIn("openwebui_file_id", image_event)
+        self.assertEqual(runtime.early_synced_outputs, {})
+        self.assertEqual(runtime.displayed_image_paths, {
+            "/outputs/.idea/kernel-images/run-1-exec-1-1.png",
+        })
 
     @patch("tools.persistent_terminal.inspect_python_namespace", return_value=[])
     @patch("tools.persistent_terminal.write_file_stream")

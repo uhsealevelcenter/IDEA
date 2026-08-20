@@ -403,12 +403,26 @@ restore the last relevant image only for an actual visual follow-up (for
 example, “change this plot” or “what can you see?”). A new independent request
 to create a plot does not automatically receive the previous image.
 
-`_resolve_displayed_images()` in the Pipe matches emitted sandbox paths to the
-files uploaded during finalization and produces durable Open WebUI preview
-links. Basename fallback is accepted only when unambiguous. Missing mappings
-do not expose base64. Model image requests use the configured vision-capable
-primary model; attachment detection validates file magic, applies size/count
-limits, uses high-detail image parts, and avoids logging data URIs.
+After each Python kernel execution, the graph closes any open console stream,
+uploads that block's persisted images through the current user's Open WebUI
+credential, and emits lightweight image events containing the durable file
+IDs. The Pipe renders those events immediately, preserving code/output/image
+order without putting base64 in chat history. Final output synchronization
+reuses successful early uploads instead of creating duplicate previews or
+attachments; if an early upload fails, the existing end-of-turn resolution
+remains the fallback.
+
+Streamed Python console output uses OpenWebUI-compatible triple-backtick
+`output` fences. This keeps stdout and a following traceback in one balanced
+block and prevents the closing delimiter from turning later assistant prose
+into a code block.
+
+`_resolve_displayed_images()` in the Pipe matches emitted sandbox paths to
+durable Open WebUI files. Basename fallback is accepted only when
+unambiguous. Missing mappings do not expose base64. Model image requests use
+the configured vision-capable primary model; attachment detection validates
+file magic, applies size/count limits, uses high-detail image parts, and
+avoids logging data URIs.
 
 ### Output synchronization and links
 

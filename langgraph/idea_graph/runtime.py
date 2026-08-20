@@ -142,6 +142,7 @@ class TerminalGraphRuntime:
         self.event_callback = event_callback
         self.outputs_before: dict[str, str] | None = None
         self.displayed_image_paths: set[str] = set()
+        self.early_synced_outputs: dict[str, dict[str, Any]] = {}
         self.system_prompt = compose_system_prompt(
             SYSTEM_PROMPT_PATH.read_text(),
             assistant_system_prompt,
@@ -684,6 +685,26 @@ class TerminalGraphRuntime:
             )
         return destination
 
+    def sync_displayed_image(self, image_path: str) -> dict[str, Any] | None:
+        """Upload one image early so the Pipe can render it in event order."""
+        from tools.persistent_terminal import list_file_metadata
+
+        if not getattr(self.agent, "openwebui_authorization", None):
+            return None
+        metadata = list_file_metadata(
+            self.outputs_dir,
+            session_id=self.agent.sandbox_id,
+        )
+        signature = (metadata or {}).get(image_path)
+        if not signature:
+            return None
+        item = self.agent._upload_output_to_openwebui(image_path)
+        if not item or not item.get("openwebui_file_id"):
+            return None
+        recorded = {**item, "signature": signature}
+        self.early_synced_outputs[image_path] = recorded
+        return recorded
+
     def execute_tool(self, tool_call: dict[str, Any], state: dict[str, Any]) -> ToolOutcome:
         name = str(tool_call.get("name") or "")
         args = dict(tool_call.get("args") or {})
@@ -775,6 +796,7 @@ class TerminalGraphRuntime:
             kernel_lost = False
             image_count = 0
             generated_images: list[str] = []
+            generated_image_events: list[tuple[str, str]] = []
             run_id = str(state.get("run_id") or "")
             execution_id = str(state.get("_execution_id") or "")
             cancellation = state.get("_run_cancellation")
@@ -823,14 +845,7 @@ class TerminalGraphRuntime:
                             continue
                         self.displayed_image_paths.add(image_path)
                         generated_images.append(image_path)
-                        self.emit({
-                            "role": "assistant",
-                            "type": "image",
-                            "format": image_format,
-                            "filename": image_path,
-                            "start": True,
-                            "end": True,
-                        })
+                        generated_image_events.append((image_path, image_format))
             finally:
                 if console_stream_open:
                     self.emit({
@@ -839,6 +854,22 @@ class TerminalGraphRuntime:
                         "tool_name": "run_python_tool",
                         "start": False, "end": True,
                     })
+            for image_path, image_format in generated_image_events:
+                synced_image = self.sync_displayed_image(image_path)
+                image_event = {
+                    "role": "assistant",
+                    "type": "image",
+                    "format": image_format,
+                    "filename": image_path,
+                    "tool_call_id": tool_call_id,
+                    "start": True,
+                    "end": True,
+                }
+                if synced_image:
+                    image_event["openwebui_file_id"] = synced_image[
+                        "openwebui_file_id"
+                    ]
+                self.emit(image_event)
             content = "\n".join(console).strip()
             if image_count:
                 content = (content + f"\n[{image_count} image(s) generated and shown to the user]").strip()
@@ -964,6 +995,7 @@ class TerminalGraphRuntime:
                 referenced_output_paths(response)
                 | self.displayed_image_paths
             ),
+            already_synced=self.early_synced_outputs,
         )
         events: list[dict[str, Any]] = []
         for item in synced:

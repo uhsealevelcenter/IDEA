@@ -8,7 +8,7 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.2.1
+version: 0.2.3
 """
 
 import asyncio
@@ -140,7 +140,7 @@ def _is_python_console_chunk(chunk: dict) -> bool:
 
 
 def _python_console_stream_close() -> str:
-    return f"\n````\n{TOOL_OUTPUT_END}\n\n"
+    return f"\n```\n{TOOL_OUTPUT_END}\n\n"
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -838,6 +838,7 @@ class Pipe:
         artifact_reference_confirmed = False
         pending_files: list[dict] = []
         pending_images: list[str] = []
+        referenced_file_ids: set[str] = set()
         completed_python_stream_ids: set[str] = set()
         python_console_stream_open = False
         model_text_seen = False
@@ -1042,6 +1043,23 @@ class Pipe:
                             pending_files.append(chunk)
                             continue
                         if chunk.get("type") == "image" and chunk.get("filename"):
+                            if chunk.get("openwebui_file_id"):
+                                closure = close_python_console_stream()
+                                if closure:
+                                    yield closure
+                                if message_buffer:
+                                    yield flush_message_buffer()
+                                rendered, image_file_ids = (
+                                    _resolve_displayed_images(
+                                        [str(chunk["filename"])],
+                                        [chunk],
+                                        public_base_url,
+                                    )
+                                )
+                                referenced_file_ids.update(image_file_ids)
+                                if rendered:
+                                    yield rendered
+                                continue
                             pending_images.append(str(chunk["filename"]))
                             continue
                         if message_buffer:
@@ -1105,7 +1123,6 @@ class Pipe:
                 })
             await request_backend_stop()
 
-        referenced_file_ids: set[str] = set()
         closure = close_python_console_stream()
         if closure:
             yield closure
@@ -1207,7 +1224,7 @@ class Pipe:
                     )
                     yield (
                         f"\n\n{TOOL_OUTPUT_START}\n{error_label}"
-                        "````output\n"
+                        "```output\n"
                     )
                 if content:
                     yield content
@@ -1217,7 +1234,7 @@ class Pipe:
                 yield (
                     f"\n\n{TOOL_OUTPUT_START}\n"
                     "⚠️ **Python execution error**\n\n"
-                    f"````output\n{content}\n````\n"
+                    f"```output\n{content}\n```\n"
                     f"{TOOL_OUTPUT_END}\n\n"
                 )
             else:

@@ -134,6 +134,40 @@ class OutputSyncTests(unittest.TestCase):
         self.assertEqual(synced, [])
         post.assert_not_called()
 
+    def test_reuses_early_synced_image_without_uploading_it_again(self):
+        filepath = "/outputs/.idea/kernel-images/run-exec-1.png"
+        signature = "20:100.0"
+        agent = self.make_agent()
+        agent.artifact_registry = self.FakeRegistry()
+        with (
+            patch.object(
+                terminal_agent,
+                "list_file_metadata",
+                return_value={filepath: signature},
+            ),
+            patch.object(terminal_agent.requests, "post") as post,
+        ):
+            synced = agent._sync_outputs_to_openwebui(
+                {},
+                referenced_paths={filepath},
+                already_synced={
+                    filepath: {
+                        "filename": filepath,
+                        "openwebui_file_id": "file-image",
+                        "signature": signature,
+                    },
+                },
+            )
+
+        self.assertEqual(synced, [{
+            "filename": filepath,
+            "openwebui_file_id": "file-image",
+        }])
+        post.assert_not_called()
+        self.assertEqual(agent.artifact_registry.upserts, [
+            (filepath, signature, "file-image", "run-exec-1.png"),
+        ])
+
     def test_reuses_registered_unchanged_referenced_output(self):
         filepath = "/outputs/report/page.html"
         signature = "100:200.0"

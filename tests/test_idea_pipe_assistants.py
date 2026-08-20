@@ -629,6 +629,84 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         ])
         self.assertNotIn("data:image", "".join(result))
 
+    def test_pipe_renders_early_uploaded_image_before_later_message(self):
+        image_path = "/outputs/.idea/kernel-images/run-exec-1.png"
+        second_image_path = "/outputs/.idea/kernel-images/run-exec-2.png"
+
+        async def aiter_lines():
+            yield (
+                'data: {"type":"code","format":"python",'
+                '"content":"plt.show()"}'
+            )
+            yield (
+                'data: {"type":"image","format":"png",'
+                f'"filename":"{image_path}",'
+                '"openwebui_file_id":"file-image"}'
+            )
+            yield (
+                'data: {"type":"code","format":"python",'
+                '"content":"plt.plot([2, 1])"}'
+            )
+            yield (
+                'data: {"type":"image","format":"png",'
+                f'"filename":"{second_image_path}",'
+                '"openwebui_file_id":"file-image-2"}'
+            )
+            yield 'data: {"type":"message","content":"Analysis complete."}'
+            yield (
+                'data: {"type":"file",'
+                f'"filename":"{image_path}",'
+                '"openwebui_file_id":"file-image"}'
+            )
+            yield (
+                'data: {"type":"file",'
+                f'"filename":"{second_image_path}",'
+                '"openwebui_file_id":"file-image-2"}'
+            )
+
+        client = self._chat_run_client(aiter_lines)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Plot it"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            result = asyncio.run(collect())
+
+        rendered = "".join(result)
+        image_markdown = (
+            "![generated image](/api/v1/files/file-image/content)"
+        )
+        second_image_markdown = (
+            "![generated image](/api/v1/files/file-image-2/content)"
+        )
+        self.assertLess(
+            rendered.index("plt.show()"),
+            rendered.index(image_markdown),
+        )
+        self.assertLess(
+            rendered.index(image_markdown),
+            rendered.index("plt.plot([2, 1])"),
+        )
+        self.assertLess(
+            rendered.index("plt.plot([2, 1])"),
+            rendered.index(second_image_markdown),
+        )
+        self.assertLess(
+            rendered.index(second_image_markdown),
+            rendered.index("Analysis complete."),
+        )
+        self.assertEqual(rendered.count(image_markdown), 1)
+        self.assertEqual(rendered.count(second_image_markdown), 1)
+        self.assertNotIn("data:image", rendered)
+        self.assertNotIn("📎", rendered)
+
     def test_pipe_yields_ordinary_assistant_text_before_stream_finishes(self):
         response = Mock()
         response.raise_for_status.return_value = None
@@ -1073,8 +1151,8 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         }))
 
         self.assertIn("⚠️ **Python execution error**", rendered)
-        self.assertIn("````output\nTraceback", rendered)
-        self.assertIn("NameError: missing\n````", rendered)
+        self.assertIn("```output\nTraceback", rendered)
+        self.assertIn("NameError: missing\n```", rendered)
         self.assertIn(idea_pipe.TOOL_OUTPUT_START, rendered)
         self.assertIn(idea_pipe.TOOL_OUTPUT_END, rendered)
 
@@ -1103,7 +1181,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
-        self.assertEqual(rendered.count("````output"), 1)
+        self.assertEqual(rendered.count("```output"), 1)
         self.assertIn("first\nsecond\n", rendered)
 
     def test_streamed_python_error_without_call_id_is_output(self):
@@ -1126,7 +1204,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         )
 
         self.assertIn("⚠️ **Python execution error**", rendered)
-        self.assertIn("````output\nTraceback", rendered)
+        self.assertIn("```output\nTraceback", rendered)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
 
@@ -1154,7 +1232,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             for part in idea_pipe.Pipe._translate_chunk(event)
         )
 
-        self.assertEqual(rendered.count("````output"), 1)
+        self.assertEqual(rendered.count("```output"), 1)
         self.assertIn("starting\nTraceback\nValueError: bad input", rendered)
         self.assertLess(
             rendered.index("ValueError: bad input"),
@@ -1193,10 +1271,70 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
-        self.assertIn("````output\nTraceback", rendered)
+        self.assertIn("```output\nTraceback", rendered)
         self.assertLess(
             rendered.index(idea_pipe.TOOL_OUTPUT_END),
             rendered.index("I corrected the failed calculation."),
+        )
+
+    def test_pipe_closes_stdout_then_error_before_assistant_text(self):
+        async def aiter_lines():
+            for chunk in (
+                {
+                    "type": "console",
+                    "format": "output",
+                    "tool_name": "run_python_tool",
+                    "content": "This message appears before the failure.\n",
+                    "start": True,
+                    "end": False,
+                },
+                {
+                    "type": "console",
+                    "format": "error",
+                    "tool_name": "run_python_tool",
+                    "content": "NameError Traceback\nNameError: missing",
+                    "start": False,
+                    "end": False,
+                },
+                {
+                    "type": "console",
+                    "format": "output",
+                    "tool_name": "run_python_tool",
+                    "content": "",
+                    "start": False,
+                    "end": True,
+                },
+                {
+                    "type": "message",
+                    "content": "As expected, the cell failed.",
+                },
+            ):
+                yield "data: " + json.dumps(chunk)
+
+        client = self._chat_run_client(aiter_lines)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Test it"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            rendered = "".join(asyncio.run(collect()))
+
+        self.assertIn(
+            "```output\nThis message appears before the failure.\n"
+            "NameError Traceback\nNameError: missing\n```",
+            rendered,
+        )
+        self.assertNotIn("````output", rendered)
+        self.assertLess(
+            rendered.index(idea_pipe.TOOL_OUTPUT_END),
+            rendered.index("As expected, the cell failed."),
         )
 
     def test_suppresses_only_matching_completed_python_replay(self):
