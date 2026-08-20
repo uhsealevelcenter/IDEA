@@ -293,11 +293,14 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD?Variable not set}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?schema=langfuse
+      # Local development can disable this service through
+      # docker-compose.override.yml without possessing production secrets.
+      # docker-compose.prod.yml restores strict required-variable checks.
+      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?schema=langfuse
       - NEXTAUTH_URL=${LANGFUSE_NEXTAUTH_URL:-http://localhost:3050}
-      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET?Variable not set}
-      - SALT=${LANGFUSE_SALT?Variable not set}
-      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY?Variable not set}
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-}
+      - SALT=${LANGFUSE_SALT:-}
+      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY:-}
       - TELEMETRY_ENABLED=false
       # LANGFUSE_INIT_* one-shot bootstrap of an org/project/user on first
       # boot - see example.env's Langfuse section for the recommended flow

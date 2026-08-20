@@ -63,8 +63,18 @@ services:
     # unrelated services already bound to 8080 on this host.
     ports:
       - "8030:8080"
+    depends_on:
+      # Langfuse is optional in local development. LiteLLM already treats
+      # callback delivery failures as non-fatal, so chat remains usable when
+      # the observability profile is disabled.
+      langfuse:
+        condition: service_started
+        required: false
 
   langfuse:
+    # Avoid requiring team observability secrets for ordinary local IDEA
+    # work. Enable explicitly with `--profile observability` when needed.
+    profiles: ["observability"]
     # Dev-only direct access to the Langfuse UI (traces, and the one-time
     # project-creation step that yields LANGFUSE_PUBLIC_KEY/SECRET_KEY - see
     # example.env). Not present in the base docker-compose.yml, matching the

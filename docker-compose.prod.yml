@@ -11,6 +11,16 @@ version: '3.8'
 # details.
 
 services:
+  langfuse:
+    # Production must fail during Compose interpolation instead of starting
+    # Langfuse with missing database or cryptographic secrets. The base file
+    # permits blanks only so the local override can disable observability.
+    environment:
+      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD?Variable not set}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?schema=langfuse
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET?Variable not set}
+      - SALT=${LANGFUSE_SALT?Variable not set}
+      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY?Variable not set}
+
   nginx:
     # Pinned by digest (was floating :alpine).
     image: nginx@sha256:1a8724a52d432501548a8d8681bb1554c2d09778f8b9ed0882fc3442549980b7
