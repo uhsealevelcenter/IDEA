@@ -1069,10 +1069,11 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             "type": "console",
             "format": "error",
             "content": "Traceback (most recent call last):\nNameError: missing",
+            "tool_name": "run_python_tool",
         }))
 
         self.assertIn("⚠️ **Python execution error**", rendered)
-        self.assertIn("````text\nTraceback", rendered)
+        self.assertIn("````output\nTraceback", rendered)
         self.assertIn("NameError: missing\n````", rendered)
         self.assertIn(idea_pipe.TOOL_OUTPUT_START, rendered)
         self.assertIn(idea_pipe.TOOL_OUTPUT_END, rendered)
@@ -1083,14 +1084,17 @@ class IdeaPipeAssistantTests(unittest.TestCase):
             for event in (
                 {
                     "type": "console", "format": "output",
+                    "tool_name": "run_python_tool",
                     "content": "first\n", "start": True, "end": False,
                 },
                 {
                     "type": "console", "format": "output",
+                    "tool_name": "run_python_tool",
                     "content": "second\n", "start": False, "end": False,
                 },
                 {
                     "type": "console", "format": "output",
+                    "tool_name": "run_python_tool",
                     "content": "", "start": False, "end": True,
                 },
             )
@@ -1099,8 +1103,101 @@ class IdeaPipeAssistantTests(unittest.TestCase):
 
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
         self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
-        self.assertEqual(rendered.count("````text"), 1)
+        self.assertEqual(rendered.count("````output"), 1)
         self.assertIn("first\nsecond\n", rendered)
+
+    def test_streamed_python_error_without_call_id_is_output(self):
+        rendered = "".join(
+            part
+            for event in (
+                {
+                    "type": "console", "format": "error",
+                    "tool_name": "run_python_tool",
+                    "content": "Traceback\nNameError: missing",
+                    "start": True, "end": False,
+                },
+                {
+                    "type": "console", "format": "output",
+                    "tool_name": "run_python_tool",
+                    "content": "", "start": False, "end": True,
+                },
+            )
+            for part in idea_pipe.Pipe._translate_chunk(event)
+        )
+
+        self.assertIn("⚠️ **Python execution error**", rendered)
+        self.assertIn("````output\nTraceback", rendered)
+        self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
+        self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
+
+    def test_error_after_console_text_remains_in_the_output_block(self):
+        rendered = "".join(
+            part
+            for event in (
+                {
+                    "type": "console", "format": "output",
+                    "tool_name": "run_python_tool",
+                    "content": "starting\n", "start": True, "end": False,
+                },
+                {
+                    "type": "console", "format": "error",
+                    "tool_name": "run_python_tool",
+                    "content": "Traceback\nValueError: bad input",
+                    "start": False, "end": False,
+                },
+                {
+                    "type": "console", "format": "output",
+                    "tool_name": "run_python_tool",
+                    "content": "", "start": False, "end": True,
+                },
+            )
+            for part in idea_pipe.Pipe._translate_chunk(event)
+        )
+
+        self.assertEqual(rendered.count("````output"), 1)
+        self.assertIn("starting\nTraceback\nValueError: bad input", rendered)
+        self.assertLess(
+            rendered.index("ValueError: bad input"),
+            rendered.index(idea_pipe.TOOL_OUTPUT_END),
+        )
+
+    def test_pipe_closes_incomplete_python_output_before_assistant_text(self):
+        async def aiter_lines():
+            yield 'data: ' + json.dumps({
+                "type": "console",
+                "format": "error",
+                "tool_name": "run_python_tool",
+                "content": "Traceback\nNameError: missing",
+                "start": True,
+                "end": False,
+            })
+            yield 'data: ' + json.dumps({
+                "type": "message",
+                "content": "I corrected the failed calculation.",
+            })
+
+        client = self._chat_run_client(aiter_lines)
+
+        async def collect():
+            return [
+                chunk
+                async for chunk in idea_pipe.Pipe().pipe(
+                    {"messages": [{"role": "user", "content": "Calculate it"}]},
+                    __user__={"id": "user-1", "role": "user"},
+                    __metadata__={"chat_id": "chat-1"},
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            rendered = "".join(asyncio.run(collect()))
+
+        self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_START), 1)
+        self.assertEqual(rendered.count(idea_pipe.TOOL_OUTPUT_END), 1)
+        self.assertIn("````output\nTraceback", rendered)
+        self.assertLess(
+            rendered.index(idea_pipe.TOOL_OUTPUT_END),
+            rendered.index("I corrected the failed calculation."),
+        )
 
     def test_suppresses_only_matching_completed_python_replay(self):
         completed = set()

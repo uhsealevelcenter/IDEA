@@ -337,6 +337,7 @@ class LangGraphKernelImageTests(unittest.TestCase):
             "format": "error",
             "content": traceback,
             "tool_call_id": "",
+            "tool_name": "run_python_tool",
             "start": True,
             "end": False,
         }, emitted)
@@ -346,6 +347,7 @@ class LangGraphKernelImageTests(unittest.TestCase):
             "format": "output",
             "content": "",
             "tool_call_id": "",
+            "tool_name": "run_python_tool",
             "start": False,
             "end": True,
         }, emitted)
@@ -444,10 +446,14 @@ class LangGraphKernelImageTests(unittest.TestCase):
 
         outcome = runtime.execute_tool(
             {"name": "run_python_tool", "args": {"code": "plt.show()"}},
-            {"run_id": "run-1", "kernel_id": "kernel-1"},
+            {
+                "run_id": "run-1",
+                "kernel_id": "kernel-1",
+                "_execution_id": "exec-1",
+            },
         )
 
-        image_path = "/outputs/.idea/kernel-images/run-1-1.png"
+        image_path = "/outputs/.idea/kernel-images/run-1-exec-1-1.png"
         self.assertEqual(outcome.status, "completed")
         self.assertIn("1 image(s) generated", outcome.content)
         self.assertEqual(outcome.artifacts, [image_path])
@@ -480,6 +486,56 @@ class LangGraphKernelImageTests(unittest.TestCase):
         }, emitted)
         self.assertNotIn("base64", str(emitted))
         self.assertNotIn(PNG_BYTES.decode("latin1"), str(emitted))
+
+    @patch("tools.persistent_terminal.inspect_python_namespace", return_value=[])
+    @patch("tools.persistent_terminal.write_file_stream")
+    @patch("tools.persistent_terminal.run_python_stream")
+    def test_separate_python_executions_use_distinct_image_paths(
+        self, run_python_stream, write_file_stream, _inspect_python_namespace
+    ):
+        second_png = PNG_BYTES + b"second"
+        run_python_stream.side_effect = [
+            [{
+                "type": "image",
+                "format": "base64.png",
+                "content": base64.b64encode(PNG_BYTES).decode(),
+            }],
+            [{
+                "type": "image",
+                "format": "base64.png",
+                "content": base64.b64encode(second_png).decode(),
+            }],
+        ]
+        runtime = self.make_runtime()
+
+        first = runtime.execute_tool(
+            {"id": "call-1", "name": "run_python_tool", "args": {"code": "one()"}},
+            {
+                "run_id": "shared-run",
+                "kernel_id": "kernel-1",
+                "_execution_id": "exec-first",
+            },
+        )
+        second = runtime.execute_tool(
+            {"id": "call-2", "name": "run_python_tool", "args": {"code": "two()"}},
+            {
+                "run_id": "shared-run",
+                "kernel_id": "kernel-1",
+                "_execution_id": "exec-second",
+            },
+        )
+
+        self.assertEqual(first.artifacts, [
+            "/outputs/.idea/kernel-images/shared-run-exec-first-1.png"
+        ])
+        self.assertEqual(second.artifacts, [
+            "/outputs/.idea/kernel-images/shared-run-exec-second-1.png"
+        ])
+        self.assertEqual(len(runtime.displayed_image_paths), 2)
+        self.assertEqual(
+            [call.args[0] for call in write_file_stream.call_args_list],
+            first.artifacts + second.artifacts,
+        )
 
     @patch("tools.persistent_terminal.write_file_stream")
     @patch("tools.persistent_terminal.run_python_stream")

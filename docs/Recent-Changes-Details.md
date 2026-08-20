@@ -367,16 +367,17 @@ tracebacks from older guest images through `_looks_like_legacy_kernel_error()`.
 
 `TerminalGraphRuntime.execute_tool()` marks a Python tool outcome failed when
 it receives error chunks while continuing to stream the traceback. The Pipe
-renders those chunks as a labeled **Python execution error** block. This is a
-tool failure the model can correct; it does not automatically convert the
-whole assistant run into a generic failed response.
+renders those chunks as a labeled **Python execution error** `output` block
+and defensively closes an incomplete console stream before later assistant
+prose. This is a tool failure the model can correct; it does not automatically
+convert the whole assistant run into a generic failed response.
 
 ### Plot capture and durable image delivery
 
 Python display-image chunks are no longer embedded as base64 in chat history.
 `TerminalGraphRuntime.persist_kernel_image()` validates the image format and
 base64 payload, writes it to
-`/outputs/.idea/kernel-images/<run>-<index>.<format>`, records it as an
+`/outputs/.idea/kernel-images/<run>-<execution>-<index>.<format>`, records it as an
 artifact/vision input, and emits a lightweight filename event. Invalid image
 payloads become explicit console errors and never fall back to inline bytes.
 

@@ -605,6 +605,7 @@ class TerminalGraphRuntime:
         chunk: dict[str, Any],
         *,
         run_id: str,
+        execution_id: str,
         image_index: int,
     ) -> tuple[str, str]:
         """Persist a Jupyter display image without exposing base64 to chat."""
@@ -625,9 +626,14 @@ class TerminalGraphRuntime:
         safe_run_id = "".join(
             char for char in run_id if char.isalnum() or char in {"-", "_"}
         ) or uuid.uuid4().hex
+        safe_execution_id = "".join(
+            char
+            for char in execution_id
+            if char.isalnum() or char in {"-", "_"}
+        ) or uuid.uuid4().hex
         path = (
             f"{self.outputs_dir}/.idea/kernel-images/"
-            f"{safe_run_id}-{image_index}.{image_format}"
+            f"{safe_run_id}-{safe_execution_id}-{image_index}.{image_format}"
         )
         write_file_stream(
             path,
@@ -729,6 +735,7 @@ class TerminalGraphRuntime:
             image_count = 0
             generated_images: list[str] = []
             run_id = str(state.get("run_id") or "")
+            execution_id = str(state.get("_execution_id") or "")
             cancellation = state.get("_run_cancellation")
             console_stream_open = False
 
@@ -739,6 +746,7 @@ class TerminalGraphRuntime:
                 self.emit({
                     "role": "computer", "type": "console", "format": console_format,
                     "content": content, "tool_call_id": tool_call_id,
+                    "tool_name": "run_python_tool",
                     "start": not console_stream_open, "end": False,
                 })
                 console_stream_open = True
@@ -763,6 +771,7 @@ class TerminalGraphRuntime:
                             image_path, image_format = self.persist_kernel_image(
                                 chunk,
                                 run_id=run_id,
+                                execution_id=execution_id,
                                 image_index=image_count,
                             )
                         except Exception as exc:
@@ -786,6 +795,7 @@ class TerminalGraphRuntime:
                     self.emit({
                         "role": "computer", "type": "console", "format": "output",
                         "content": "", "tool_call_id": tool_call_id,
+                        "tool_name": "run_python_tool",
                         "start": False, "end": True,
                     })
             content = "\n".join(console).strip()

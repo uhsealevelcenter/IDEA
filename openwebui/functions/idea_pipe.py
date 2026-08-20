@@ -8,7 +8,7 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.2.0
+version: 0.2.1
 """
 
 import asyncio
@@ -126,6 +126,21 @@ def _bounded_general_console(content: object) -> str:
 def _indented_markdown(text: str) -> str:
     """Render arbitrary text without a closing Markdown delimiter."""
     return "    " + text.replace("\n", "\n    ")
+
+
+def _is_python_console_chunk(chunk: dict) -> bool:
+    """Identify Python console events without depending on provider call IDs."""
+    return (
+        chunk.get("type") == "console"
+        and (
+            chunk.get("tool_name") == "run_python_tool"
+            or bool(chunk.get("tool_call_id"))
+        )
+    )
+
+
+def _python_console_stream_close() -> str:
+    return f"\n````\n{TOOL_OUTPUT_END}\n\n"
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -824,6 +839,7 @@ class Pipe:
         pending_files: list[dict] = []
         pending_images: list[str] = []
         completed_python_stream_ids: set[str] = set()
+        python_console_stream_open = False
         model_text_seen = False
         model_boundary_pending = False
         last_model_text_character = ""
@@ -905,6 +921,13 @@ class Pipe:
             last_model_text_character = text[-1]
             return text
 
+        def close_python_console_stream() -> str:
+            nonlocal python_console_stream_open
+            if not python_console_stream_open:
+                return ""
+            python_console_stream_open = False
+            return _python_console_stream_close()
+
         await emit_status({
             "action": "idea_agent",
             "phase": "starting",
@@ -956,6 +979,13 @@ class Pipe:
                             chunk, completed_python_stream_ids
                         ):
                             continue
+                        if _is_python_console_chunk(chunk):
+                            if chunk.get("start") and python_console_stream_open:
+                                yield close_python_console_stream()
+                            if chunk.get("start"):
+                                python_console_stream_open = True
+                            if chunk.get("end"):
+                                python_console_stream_open = False
                         if chunk.get("type") == "idea_context":
                             if __event_emitter__:
                                 try:
@@ -969,9 +999,16 @@ class Pipe:
                         if chunk.get("type") == "status":
                             if chunk.get("phase") == "thinking" and model_text_seen:
                                 model_boundary_pending = True
+                            if chunk.get("phase") == "thinking":
+                                closure = close_python_console_stream()
+                                if closure:
+                                    yield closure
                             await emit_status(chunk)
                             continue
                         if "error" in chunk:
+                            closure = close_python_console_stream()
+                            if closure:
+                                yield closure
                             error_event_received = True
                             # Preserve a preceding classified terminal status
                             # (for example model_timeout) instead of replacing
@@ -985,6 +1022,9 @@ class Pipe:
                                     "error": True,
                                 })
                         if chunk.get("type") == "message":
+                            closure = close_python_console_stream()
+                            if closure:
+                                yield closure
                             content = format_model_text_chunk(
                                 chunk.get("content", "")
                             )
@@ -1046,6 +1086,9 @@ class Pipe:
             })
             if message_buffer:
                 yield flush_message_buffer()
+            closure = close_python_console_stream()
+            if closure:
+                yield closure
             yield f"\n\n**Error reaching langgraph service:** {exc}\n\n"
             return
         finally:
@@ -1063,6 +1106,9 @@ class Pipe:
             await request_backend_stop()
 
         referenced_file_ids: set[str] = set()
+        closure = close_python_console_stream()
+        if closure:
+            yield closure
         if message_buffer:
             resolved_message, referenced_file_ids = _resolve_output_links(
                 message_buffer,
@@ -1139,32 +1185,44 @@ class Pipe:
             # Current graph events identify Python console streams with their
             # tool-call id.  General tool results should normally remain
             # agent-facing and reach the UI only for failures; render legacy
-            # or failure events without IDEA's internal Unicode delimiters or
-            # a fence that can be stranded by cancellation.
-            if not chunk.get("tool_call_id"):
+            # or failure events in one balanced, non-fenced display block.
+            # The delimiters keep the display-only observation out of the
+            # next model request without risking a stranded Markdown fence.
+            if not _is_python_console_chunk(chunk):
                 bounded = _bounded_general_console(content)
                 if bounded:
                     label = "Tool error" if fmt == "error" else "Tool output"
-                    yield f"\n\n⚠️ **{label}**\n\n{_indented_markdown(bounded)}\n\n"
+                    yield (
+                        f"\n\n{TOOL_OUTPUT_START}\n"
+                        f"⚠️ **{label}**\n\n{_indented_markdown(bounded)}\n"
+                        f"{TOOL_OUTPUT_END}\n\n"
+                    )
                 return
             is_stream = not (chunk.get("start") is None and chunk.get("end") is None)
             if is_stream:
                 if chunk.get("start"):
-                    yield f"\n\n{TOOL_OUTPUT_START}\n````text\n"
+                    error_label = (
+                        "⚠️ **Python execution error**\n\n"
+                        if fmt == "error" else ""
+                    )
+                    yield (
+                        f"\n\n{TOOL_OUTPUT_START}\n{error_label}"
+                        "````output\n"
+                    )
                 if content:
                     yield content
                 if chunk.get("end"):
-                    yield f"\n````\n{TOOL_OUTPUT_END}\n\n"
+                    yield _python_console_stream_close()
             elif fmt == "error":
                 yield (
                     f"\n\n{TOOL_OUTPUT_START}\n"
                     "⚠️ **Python execution error**\n\n"
-                    f"````text\n{content}\n````\n"
+                    f"````output\n{content}\n````\n"
                     f"{TOOL_OUTPUT_END}\n\n"
                 )
             else:
                 yield (
-                    f"\n\n{TOOL_OUTPUT_START}\n```text\n{content}\n```\n"
+                    f"\n\n{TOOL_OUTPUT_START}\n```output\n{content}\n```\n"
                     f"{TOOL_OUTPUT_END}\n\n"
                 )
         elif chunk_type == "image" and content:

@@ -32,6 +32,7 @@ class FakeRuntime:
         self.events = []
         self.model_calls = 0
         self.executed = []
+        self.execution_states = []
 
     def emit(self, chunk):
         self.events.append(chunk)
@@ -85,6 +86,7 @@ class FakeRuntime:
 
     def execute_tool(self, tool_call, state):
         self.executed.append(tool_call)
+        self.execution_states.append(state)
         return ToolOutcome(
             content="[1 image generated]",
             artifacts=["/outputs/.idea/kernel-images/run-1-1.png"],
@@ -453,6 +455,10 @@ class LangGraphMemoryTests(unittest.TestCase):
             "values = [1, 2, 3]\nline = values",
         )
         self.assertEqual(result["python_executions"][0]["status"], "completed")
+        self.assertEqual(
+            runtime.execution_states[0]["_execution_id"],
+            result["python_executions"][0]["execution_id"],
+        )
         snapshot = graph.get_state(config)
         self.assertEqual(
             snapshot.values["python_executions"][0]["defined_names"],
