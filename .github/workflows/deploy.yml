@@ -176,11 +176,23 @@ jobs:
       - name: Smoke check
         run: |
           set -euo pipefail
-          for i in $(seq 1 3); do
-            response=$(curl -fsS "http://${{ vars.VM_HOST }}/idea-api/health" 2>/dev/null) || { echo "Waiting for app to come up ($i/3)..."; sleep 30; continue; }
-            if echo "${response}" | grep -q '"${{ github.sha }}"'; then
-              echo "Healthy. SHA verified: ${{ github.sha }}"; exit 0
-            fi
-            echo "App responded but SHA mismatch. Response: ${response}"; sleep 30
-          done
-          echo "::error::Health check failed after deploy."; exit 1
+          ssh -i ~/.ssh/deploy_key \
+              -p "${{ vars.VM_SSH_PORT || '22' }}" \
+              "${{ vars.VM_USER }}@${{ vars.VM_HOST }}" 'bash -s' <<'REMOTE'
+            set -euo pipefail
+            for i in $(seq 1 12); do
+              response=$(curl -fsS "http://localhost/idea-api/health" 2>/dev/null) || {
+                echo "Waiting for app to come up (${i}/12)..."
+                sleep 10
+                continue
+              }
+              if echo "${response}" | grep -q '"${{ github.sha }}"'; then
+                echo "Healthy. SHA verified: ${{ github.sha }}"
+                exit 0
+              fi
+              echo "App responded but SHA mismatch (${i}/12). Response: ${response}"
+              sleep 10
+            done
+            echo "::error::Health check failed after deploy."
+            exit 1
+          REMOTE
