@@ -2,7 +2,7 @@
 
 This is the OCI image `sandbox_service/msb_sandbox.py` boots per-user
 microsandbox microVMs *from* - not a `docker-compose.yml` service of its
-own. It combines two things inside one VM:
+own. It combines three things inside one VM:
 
 1. **[`open-webui/open-terminal`](https://github.com/open-webui/open-terminal)**
    (unmodified, pulled as the base image) - gives `grep_search_tool`/
@@ -10,15 +10,18 @@ own. It combines two things inside one VM:
    `grep`/`find` shelling.
 2. **This repo's own persistent Python kernel** (`daemon.py`), reusing Open
    Interpreter's *execution engine only*
-   (`../interpreter/core/computer/terminal/languages/python.py`, a real
+   (`interpreter/core/computer/terminal/languages/python.py`, a real
    `jupyter_client`-backed IPython kernel) - gives `run_python_tool` real
    stateful-kernel semantics: variables, imports, and matplotlib figures
    created in one turn are still there on the next. Open Terminal's own
    `/execute` endpoint is a fresh background process per call, not a
    kernel, so it doesn't provide this on its own - see "Why not just use
    Open Terminal's `/execute`?" below.
+3. **The pinned OpenAI Codex SDK and CLI runtime**, invoked per delegated
+   coding turn by `codex_runner.py`. It is subordinate to LangGraph and runs
+   with read-only or workspace-write access inside this same VM.
 
-**Neither of these makes LangGraph's `ConversationOrchestrator`/
+**None of these makes LangGraph's `ConversationOrchestrator`/
 `TerminalAgent` optional.** Open Terminal's own OpenWebUI-native
 integration (its "Native tool-calling" mode, where OpenWebUI's backend
 becomes the agent loop) and its own multi-user isolation modes (per-Linux-
@@ -31,24 +34,35 @@ built from for the full reasoning.
 
 ## How it's used
 
-Inside a running VM, three processes matter (see `entrypoint.sh`):
+Inside a running VM, the two lazy long-lived services and one on-demand coding
+process are:
 
-- **Open Terminal**, listening on `127.0.0.1:8000` - started via its own
-  unmodified `entrypoint-slim.sh` (home dir setup, optional egress
-  firewall, privilege drop to a non-root user).
-- **The kernel daemon** (`daemon.py`), listening on `127.0.0.1:8721`.
+- **Open Terminal**, listening on `127.0.0.1:8000` - started on the first
+  grep/glob request via its own unmodified `entrypoint-slim.sh` (home dir
+  setup, optional egress firewall, privilege drop to a non-root user).
+- **The kernel daemon** (`daemon.py`), listening on `127.0.0.1:8721` and
+  started by `client.py` on the first Python request.
+- **Codex app-server**, launched only for an active `delegate_to_codex` turn;
+  it communicates with `codex_runner.py` over stdio and makes model requests
+  through the separately configured guest-reachable endpoint.
 - Both bind to loopback only - **neither is reachable from outside the
   VM**. `sandbox_service` never talks to either directly over a network
   path; it uses the microsandbox SDK's own `sandbox.shell()` (already
   confirmed to work for plain command exec) to run `curl` (for Open
   Terminal) or `client.py` (for the kernel daemon) *inside* the VM.
 
-Open Terminal requires an API key on every request. `entrypoint.sh`
-generates one per VM at boot and writes it to a fixed path
-(`/opt/oi_kernel/.open_terminal_api_key`); `sandbox_service` reads it once
-via the SDK's `fs.read()` (the same channel already used for file I/O, not
-a network request) and caches it for that VM's lifetime - see
-`msb_sandbox.py`'s `_get_open_terminal_key()`.
+Open Terminal requires an API key on every request. The direct-Docker
+`entrypoint.sh` and microsandbox's lazy starter both generate one per guest and
+write it to a fixed path (`/opt/oi_kernel/.open_terminal_api_key`);
+`sandbox_service` reads it once via the SDK's `fs.read()` (the same channel
+already used for file I/O, not a network request) and caches it for that VM's
+lifetime - see `msb_sandbox.py`'s `_get_open_terminal_key()`.
+
+Microsandbox imports OCI `ENTRYPOINT`/`CMD` metadata but does not run the
+image's primary process for a detached SDK sandbox. Consequently,
+`MicrosandboxTerminal` starts both services lazily and idempotently, including
+after stop/resume. `entrypoint.sh` remains the combined startup path for direct
+Docker execution and the container-level smoke test.
 
 See `sandbox_service/msb_sandbox.py` (`run_python()`, `grep_search()`,
 `glob_search()`) for the host-side half of this, and
@@ -60,15 +74,54 @@ the microsandbox SDK's own `shell()`/`fs.write()`/`fs.read()` directly,
 not through Open Terminal, since that already works and Open Terminal's
 `/execute` doesn't offer anything more for plain shell commands.
 
+## Python interruption and recovery
+
+`sandbox_service` supervises each streamed Python run without acquiring the
+execution lock held by that run. A user Stop first signals the existing guest
+stream bridge with `SIGINT`. If it does not release within
+`SANDBOX_PYTHON_INTERRUPT_GRACE_SECONDS`, IDEA retires only that ipykernel and
+kills the stale bridge. If that still cannot release the host-side stream, it
+stop/resumes the same named microVM; this clears Python variables but preserves
+the sandbox filesystem. Runs exceeding
+`SANDBOX_PYTHON_EXECUTION_TIMEOUT_SECONDS` enter the same recovery path.
+
+The guest also checks ipykernel liveness while capturing output and compares
+the cgroup-v2 OOM counter. A dead child closes the stream with a structured
+`kernel_died` or `kernel_oom` error, and the daemon lazily creates a clean
+kernel for the next execution. These changes live in this guest image, so
+editing the source or restarting Compose is insufficient: rebuild/publish the
+image and recreate test sandboxes before validation.
+
 ## Building
 
+This directory is a self-contained build context. Build and validate it on a
+developer machine before considering publication:
+
 ```bash
-# From the repo root (needs interpreter/core/computer/ in the build context):
-docker build -f interpreter_kernel/Dockerfile -t idea/oi-kernel:slim .
-msb pull idea/oi-kernel:slim   # or push to a registry microsandbox can pull from
+./interpreter_kernel/test_image.sh idea/oi-kernel:research-local
 ```
 
-Set `SANDBOX_IMAGE=idea/oi-kernel:slim` on the `sandbox` service
+The script never pushes. It builds for the local architecture, checks both
+Python environments, exercises the scientific/document/OCR stack, compiles a
+LaTeX document, launches headless Chromium, verifies Codex and GuardDog, starts
+Open Terminal and the persistent kernel, and enforces a 6 GiB unpacked image
+limit. Set `IDEA_DOCKER_CONFIG` if the current shell needs an alternate Docker
+configuration, or `SKIP_BUILD=1` to retest an existing local tag.
+
+On a Linux/KVM development host with the `sandbox` Compose service running,
+also test the exact image through microsandbox's production SDK path:
+
+```bash
+./interpreter_kernel/test_microsandbox_image.sh \
+  idea/oi-kernel:research-local
+```
+
+This streams the local Docker image into microsandbox's cache (still no push),
+boots one specially named disposable microVM, checks both guest services,
+Codex, GuardDog, and the persistent kernel, then removes that VM. It refuses to
+replace an existing sandbox. Use `SKIP_LOAD=1` to retest an already loaded tag.
+
+Set `SANDBOX_IMAGE=idea/oi-kernel:research-local` on the `sandbox` service
 (`docker-compose.yml`) to have new sandboxes boot from this image instead
 of the bare `python` image. `run_terminal_tool`/`write_file_tool` work
 against any image; `run_python_tool`/`grep_search_tool`/`glob_search_tool`
@@ -76,22 +129,28 @@ specifically require this one (or one built on top of it).
 
 ## Updating the deployed image
 
-When pushing a rebuilt image to the registry (e.g.
-`ghcr.io/uhsealevelcenter/idea-oi-kernel:slim`), two things matter:
+Publication is deliberately separate from local testing. After the local test
+above passes, manually run the **Microsandbox image** GitHub Actions workflow,
+enter an immutable version, explicitly set `publish=true`, and select either
+amd64-only or the amd64+arm64 architecture set. The workflow repeats the amd64
+smoke test before its protected, cache-enabled publish job creates the selected
+image manifest with SBOM/provenance attestations. It publishes only
+`research-<version>` and `sha-<commit>` tags; it does not silently move a
+`latest` or `slim` tag. Configure required reviewers on the
+`microsandbox-image-publish` GitHub Environment before production use.
+
+`numcodecs==0.15.1`, retained for the Zarr 2 environment, has no CPython 3.12
+Linux ARM64 wheel. The Dockerfile disables its x86-only SSE2/AVX2 source paths
+when `TARGETARCH=arm64`; otherwise QEMU can expose host CPU flags that cause
+the ARM compiler to receive invalid `-msse2`/`-mavx2` options.
+
+When rolling out a published image, two things matter:
 
 1. **Build for the deploy host's actual architecture(s).** `msb pull`
-   resolves a single platform out of the pushed manifest index and fails
-   outright (`no entry found in image index manifest matching client's
-   default platform`) if that platform isn't present - it does not fall
-   back to another architecture. Build multi-arch explicitly, e.g.:
-   ```bash
-   docker buildx build --platform linux/amd64,linux/arm64 \
-     -f interpreter_kernel/Dockerfile \
-     -t ghcr.io/uhsealevelcenter/idea-oi-kernel:slim --push .
-   ```
-   Building on Apple Silicon without `--platform linux/amd64` will silently
-   produce an arm64-only image, which fails to pull on a typical amd64
-   deploy host.
+   resolves a single platform out of the pushed manifest index and fails if
+   that platform is absent. The manual workflow builds both supported
+   architectures. Record the immutable tag and manifest digest in the release
+   or deployment change.
 
 2. **Existing sandboxes don't pick up a new image on their own.**
    `MicrosandboxTerminal._connect_or_create()`
@@ -101,32 +160,52 @@ When pushing a rebuilt image to the registry (e.g.
    `SANDBOX_IMAGE` is set to now. To roll a newly-pushed image out to every
    currently-existing microVM, run:
    ```bash
-   ./interpreter_kernel/refresh_sandboxes.sh
+   ./interpreter_kernel/refresh_sandboxes.sh \
+     --allow-destructive-developer-refresh
    ```
    This pulls the current `SANDBOX_IMAGE` into the `sandbox` service's
    `msb` cache, then removes and immediately recreates every existing
    sandbox from it. This **wipes each sandbox's filesystem state**
-   (installed packages, any files not yet synced to `/outputs`) - only run
-   it once the new image is confirmed pushed and ready.
+   (installed packages, any files not yet synced to `/outputs`). That is
+   currently allowed only because all workspaces are disposable developer
+   test environments. Before non-developer users are admitted, replace this
+   with a tested snapshot/restore migration and remove this destructive rollout
+   from normal operations.
+
+   **Deferred migration TODO:** design and test that versioned workspace
+   migration before IDEA leaves developer-only testing. The streaming-kernel
+   rollout intentionally does not implement it; all current users may receive
+   a newly-created `idea-oi-kernel` workspace.
 
 ## Dependency modules (`modules/`)
 
-`modules/` holds optional, swappable dependency sets, each a subfolder with
-its own `requirements.txt`. `config.env`'s `ACTIVE_MODULE` selects which one
-the Dockerfile installs at build time - `original` (mirroring the repo
-root's `pyproject.toml` `[project.dependencies]`, kept in sync manually -
-there is no automated sync) is enabled by default. This lets
-`run_python_tool` sessions `import` those packages directly instead of the
-agent installing them on demand mid-session via `run_terminal_tool`. Set
-`ACTIVE_MODULE=none` in `config.env` to skip the layer entirely and fall
-back to the minimal baseline above.
+`config.env` selects the dependency module installed into the isolated
+`/opt/idea-venv`. `research` is the supported module. Its `requirements.in`
+documents intentional version ranges and `requirements.lock` records the exact,
+transitive, cross-platform resolution. This preserves the legacy IDEA analysis
+stack while adding packages repeatedly needed by CIndRA work (HDF5-backed
+NetCDF, ReportLab, OCR, `adjustText`, browser automation, and current
+oceanographic/geospatial clients). Heavy build headers exist only in the
+builder stage; GuardDog has its own small venv because its Click constraint
+conflicts with Copernicus Marine.
 
-The `original` module is a much heavier, slower-to-build layer than the
-minimal baseline (adds `cartopy`, `rasterio`, `selenium`, `paper-qa`, etc.)
-and some of these packages have system-level (e.g. GDAL/GEOS) dependencies
-that `ghcr.io/open-webui/open-terminal:slim`'s base image may not provide -
-verify the image still builds after changing this list, and add any missing
-`apt-get` packages to the Dockerfile if a wheel build fails.
+After changing `requirements.in`, regenerate and review the lock, then rerun
+the complete local image test:
+
+```bash
+uv pip compile --universal --python-version 3.12 \
+  --no-emit-index-url --no-annotate \
+  interpreter_kernel/modules/research/requirements.in \
+  -o interpreter_kernel/modules/research/requirements.lock
+./interpreter_kernel/test_image.sh idea/oi-kernel:research-local
+```
+
+The `original` module remains only as a historical legacy snapshot; it is not
+selected because its uncoordinated pins downgrade the Open Terminal service's
+FastAPI/uvicorn dependencies. Add packages to `research` based on recurring
+workload evidence, not one-off conversations, to keep the image bounded.
+See [`DEPENDENCY_AUDIT.md`](DEPENDENCY_AUDIT.md) for the current audit results,
+the two reviewed findings, and the required recheck procedure.
 
 ## Private registry auth
 

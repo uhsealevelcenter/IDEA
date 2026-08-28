@@ -12,16 +12,20 @@ sandbox_service instead of in this process.
 
 import json
 import os
+import posixpath
+import re
+import shlex
 import time
 import uuid
-from typing import Optional
+from typing import Iterable, Optional
 import httpx
 from langchain_core.tools import tool
 
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-from config import (
+from utils.output_sync import parse_file_metadata_output
+from idea_config import (
     SANDBOX_SERVICE_URL,
     SANDBOX_HTTP_CONNECT_TIMEOUT_SECONDS,
     SANDBOX_HTTP_READ_TIMEOUT_SECONDS,
@@ -30,6 +34,10 @@ from config import (
     INTERNAL_SERVICE_TOKEN as _INTERNAL_SERVICE_TOKEN,
     OUTPUT_HEAD_TAIL_LINES,
     MAX_OUTPUT_TOKENS,
+    IDEA_CODEX_API_KEY,
+    IDEA_CODEX_BASE_URL,
+    IDEA_CODEX_MAX_EVENTS,
+    IDEA_CODEX_MODEL,
     TEMP_OUTPUT_DIR as _TEMP_OUTPUT_DIR,
 )
 
@@ -127,6 +135,85 @@ _default_headers = (
 _client = httpx.Client(base_url=SANDBOX_SERVICE_URL, timeout=_HTTP_TIMEOUT, headers=_default_headers)
 
 
+def run_codex(
+    task: str,
+    session_id: str,
+    *,
+    cwd: str = "/workspace",
+    access: str = "read-only",
+    thread_id: str = "",
+    run_id: str = "",
+) -> dict:
+    """Delegate one coding turn to Codex inside the user's sandbox."""
+    payload = {
+        "task": task,
+        "cwd": cwd,
+        "access": access,
+        "thread_id": thread_id,
+        "run_id": run_id,
+        "model": IDEA_CODEX_MODEL,
+        "base_url": IDEA_CODEX_BASE_URL,
+        "api_key": IDEA_CODEX_API_KEY,
+        "max_events": IDEA_CODEX_MAX_EVENTS,
+    }
+    try:
+        response = _client.post(f"/sandboxes/{session_id}/codex/runs", json=payload)
+        response.raise_for_status()
+        result = response.json()
+        return result if isinstance(result, dict) else {
+            "ok": False, "status": "failed", "error": "Invalid Codex response"
+        }
+    except httpx.HTTPStatusError as exc:
+        try:
+            detail = exc.response.json().get("detail", str(exc))
+        except Exception:
+            detail = str(exc)
+        return {"ok": False, "status": "failed", "error": detail, "events": []}
+    except httpx.HTTPError as exc:
+        return {
+            "ok": False,
+            "status": "failed",
+            "error": f"Failed to reach sandbox service: {exc}",
+            "events": [],
+        }
+
+
+def make_codex_tool():
+    """Return the model-facing schema; runtime injects identity and credentials."""
+    @tool
+    def delegate_to_codex(
+        task: str,
+        cwd: str = "/workspace",
+        access: str = "read-only",
+    ) -> str:
+        """
+        Delegate a substantial repository investigation or coding task to
+        Codex in the same private workspace. Codex can inspect files, edit
+        them when access is workspace-write, run commands, and verify its
+        work. Prefer read-only for investigation and workspace-write only
+        when the user requested changes. Do not use for trivial one-command
+        tasks. The thread is resumed automatically for each working directory.
+
+        Args:
+            task: Complete, bounded task and desired verification criteria.
+            cwd: Working directory under /workspace.
+            access: Either "read-only" or "workspace-write".
+        """
+        return "Codex delegation must be invoked through the IDEA graph runtime."
+
+    return delegate_to_codex
+
+
+# Failure signatures sandbox_service's PersistentTerminal.run() returns when
+# the shell it's talking to has died mid-session (crash/OOM/host hiccup) -
+# not recoverable by retrying the same command, only by restarting the
+# session's terminal (see restart_terminal_tool in make_agent_tools below).
+_DEAD_SHELL_SIGNATURES = (
+    "Shell desynchronized before command start.",
+    "Shell process exited unexpectedly.",
+)
+
+
 def close_terminal(session_id: str) -> None:
     """
     Ask sandbox_service to gracefully stop (state-preserving) this
@@ -164,8 +251,8 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
     Returns:
         The output from running the command (stdout/stderr), truncated to
         its first/last OUTPUT_HEAD_TAIL_LINES lines and MAX_OUTPUT_TOKENS
-        tokens - the full output is saved to a temp file in the sandbox
-        (see read_output_range for paging through it).
+        tokens. When truncation occurs, the full output is saved to a temp
+        file in the sandbox (see read_output_range for paging through it).
     """
     try:
         response = _client.post(f"/sandboxes/{session_id}/exec", json={"command": command})
@@ -185,31 +272,49 @@ def run_terminal(command: str, session_id: str = 'default') -> str:
         if success else f"✗ Command failed after {time_str}."
     )
 
+    if not success and output in _DEAD_SHELL_SIGNATURES:
+        return (
+            f"{status_line}\nOutput:\n{output}\n\n"
+            "The underlying shell process appears to have died. Call "
+            "restart_terminal_tool() to get a fresh shell, then retry this "
+            "command. Note: this resets cwd/env vars/background processes "
+            "for this session; files already written to disk are unaffected."
+        )
+
     if not output:
         return f"{status_line}\nOutput:\n(no output)"
-
-    ext = _guess_output_extension(output)
-    output_filepath = f"{_TEMP_OUTPUT_DIR}/output_{int(time.time())}_{uuid.uuid4().hex[:8]}.{ext}"
-    write_result = write_file(output_filepath, output, session_id=session_id)
-    saved_ok = write_result.startswith("✓")
 
     truncated_output = _truncate_output(output)
     was_truncated = truncated_output != output
 
-    parts = [status_line, "Output:", truncated_output]
+    parts = [status_line]
+    if was_truncated:
+        ext = _guess_output_extension(output)
+        output_filepath = (
+            f"{_TEMP_OUTPUT_DIR}/output_{int(time.time())}_"
+            f"{uuid.uuid4().hex[:8]}.{ext}"
+        )
+        write_result = write_file(
+            output_filepath, output, session_id=session_id
+        )
+        if write_result.startswith("✓"):
+            # Keep this agent-facing recovery instruction ahead of the output
+            # excerpt so the hard observation-byte cap cannot discard it.
+            parts.append(f"Full output saved to: {output_filepath}")
+            parts.append(
+                "Use read_output_range_tool(filepath, offset, n_limit) to read "
+                "specific character ranges of this file if you need more detail."
+            )
+        else:
+            parts.append(
+                f"(Failed to save full output to a temp file: {write_result})"
+            )
+    parts.extend(["Output:", truncated_output])
     if was_truncated:
         parts.append(
             f"\n(Output truncated to first/last {OUTPUT_HEAD_TAIL_LINES} lines, "
             f"max {MAX_OUTPUT_TOKENS} tokens.)"
         )
-    if saved_ok:
-        parts.append(f"\nFull output saved to: {output_filepath}")
-        parts.append(
-            "Use read_output_range_tool(filepath, offset, n_limit) to read "
-            "specific character ranges of this file if you need more detail."
-        )
-    else:
-        parts.append(f"\n(Failed to save full output to a temp file: {write_result})")
 
     return "\n".join(parts)
 
@@ -238,9 +343,43 @@ def write_file(filepath: str, content: str, session_id: str, append: bool = Fals
     return f"✓ {action} {chars} characters ({lines} lines) to {filepath}"
 
 
-def read_file_bytes(filepath: str, session_id: str) -> bytes:
+def write_file_stream(
+    filepath: str,
+    chunks: Iterable[bytes],
+    session_id: str,
+    expected_size: int | None = None,
+    timeout: httpx.Timeout | float | None = None,
+) -> int:
+    """Stream arbitrary bytes into a sandbox without JSON/base64 encoding."""
+    response = _client.put(
+        f"/sandboxes/{session_id}/files/content",
+        params={
+            "filepath": filepath,
+            **(
+                {"expected_size": expected_size}
+                if expected_size is not None
+                else {}
+            ),
+        },
+        headers={"Content-Type": "application/octet-stream"},
+        content=chunks,
+        timeout=timeout or _HTTP_TIMEOUT,
+    )
+    response.raise_for_status()
+    return int(response.json().get("size", 0))
+
+
+def read_file_bytes(
+    filepath: str,
+    session_id: str,
+    timeout: httpx.Timeout | float | None = None,
+) -> bytes:
     """Read raw file bytes from inside the session's sandbox (via sandbox_service)."""
-    response = _client.get(f"/sandboxes/{session_id}/files/content", params={"filepath": filepath})
+    response = _client.get(
+        f"/sandboxes/{session_id}/files/content",
+        params={"filepath": filepath},
+        timeout=timeout or _HTTP_TIMEOUT,
+    )
     response.raise_for_status()
     return response.content
 
@@ -273,14 +412,80 @@ def read_output_range(filepath: str, session_id: str, offset: int = 0, n_limit: 
     return f"Characters {offset}-{end} of {total_len} total in {filepath}:\n\n{chunk}"
 
 
-def file_exists(filepath: str, session_id: str) -> bool:
+def file_exists(
+    filepath: str,
+    session_id: str,
+    timeout: httpx.Timeout | float | None = None,
+) -> bool:
     """Check whether filepath exists in the session's sandbox (via sandbox_service)."""
     try:
-        response = _client.get(f"/sandboxes/{session_id}/files/exists", params={"filepath": filepath})
+        response = _client.get(
+            f"/sandboxes/{session_id}/files/exists",
+            params={"filepath": filepath},
+            timeout=timeout or _HTTP_TIMEOUT,
+        )
         response.raise_for_status()
         return response.json().get("exists", False)
     except httpx.HTTPError:
         return False
+
+
+def normalize_publish_paths(
+    source_path: str,
+    output_path: str | None = None,
+) -> tuple[str, str]:
+    """Validate and normalize an explicit /workspace -> /outputs publish."""
+    source = posixpath.normpath(source_path.strip())
+    if source == "/workspace" or not source.startswith("/workspace/"):
+        raise ValueError("source_path must name a file under /workspace")
+
+    if output_path and output_path.strip():
+        destination = posixpath.normpath(output_path.strip())
+    else:
+        relative = posixpath.relpath(source, "/workspace")
+        destination = posixpath.normpath(posixpath.join("/outputs", relative))
+
+    if destination == "/outputs" or not destination.startswith("/outputs/"):
+        raise ValueError("output_path must name a file under /outputs")
+    return source, destination
+
+
+def publish_artifact(
+    source_path: str,
+    session_id: str,
+    output_path: str | None = None,
+) -> str:
+    """
+    Copy one explicitly selected workspace file into the publish-only
+    /outputs tree without exposing or scanning the rest of /workspace.
+    """
+    try:
+        source, destination = normalize_publish_paths(source_path, output_path)
+    except ValueError as exc:
+        return f"✗ {exc}"
+
+    source_q = shlex.quote(source)
+    destination_q = shlex.quote(destination)
+    destination_parent_q = shlex.quote(posixpath.dirname(destination))
+    command = (
+        "set -eu; "
+        "mkdir -p -- /workspace /outputs; "
+        f"source_real=$(realpath -e -- {source_q}); "
+        "workspace_real=$(realpath -e -- /workspace); "
+        'case "$source_real" in "$workspace_real"/*) ;; '
+        "*) echo 'Source escapes /workspace' >&2; exit 64 ;; esac; "
+        '[ -f "$source_real" ] || { echo "Source is not a regular file" >&2; exit 66; }; '
+        f"mkdir -p -- {destination_parent_q}; "
+        "outputs_real=$(realpath -e -- /outputs); "
+        f"destination_parent_real=$(realpath -e -- {destination_parent_q}); "
+        'case "$destination_parent_real" in "$outputs_real"|"$outputs_real"/*) ;; '
+        "*) echo 'Destination escapes /outputs' >&2; exit 64 ;; esac; "
+        f"[ ! -L {destination_q} ] || "
+        "{ echo 'Destination may not be a symbolic link' >&2; exit 64; }; "
+        f"cp -- \"$source_real\" {destination_q}; "
+        f"printf 'Published %s\\n' {destination_q}"
+    )
+    return run_terminal(command, session_id=session_id)
 
 
 def list_files(directory: str, session_id: str) -> list[str]:
@@ -309,7 +514,45 @@ def list_files(directory: str, session_id: str) -> list[str]:
     return [line.strip() for line in output.splitlines() if line.strip()]
 
 
-def run_python(code: str, session_id: str) -> list[dict]:
+def list_file_metadata(
+    directory: str,
+    session_id: str,
+) -> dict[str, str] | None:
+    """
+    Snapshot regular files under `directory` as path -> size/mtime signature.
+
+    Returns None when the sandbox cannot be inspected, allowing callers to
+    distinguish a failed snapshot from a valid empty directory.
+    """
+    quoted_directory = shlex.quote(directory)
+    command = (
+        f"if [ -d {quoted_directory} ]; then "
+        f"find {quoted_directory} -type f "
+        r"-printf '%p\t%s\t%T@\n'; "
+        "fi"
+    )
+    try:
+        response = _client.post(
+            f"/sandboxes/{session_id}/exec",
+            json={"command": command},
+        )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPError:
+        return None
+
+    if not result.get("success", False):
+        return None
+
+    return parse_file_metadata_output(result.get("output", "") or "")
+
+
+def run_python(
+    code: str,
+    session_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+) -> list[dict]:
     """
     Execute Python code in the session's persistent kernel (via
     sandbox_service's /run-python, backed by the in-VM OI kernel daemon -
@@ -324,12 +567,150 @@ def run_python(code: str, session_id: str) -> list[dict]:
     just summarizes this into text for the LLM-facing tool result.
     """
     try:
-        response = _client.post(f"/sandboxes/{session_id}/run-python", json={"code": code})
+        response = _client.post(
+            f"/sandboxes/{session_id}/run-python",
+            json={"code": code, "kernel_id": kernel_id, "run_id": run_id},
+        )
         response.raise_for_status()
         result = response.json()
     except httpx.HTTPError as e:
-        return [{"type": "console", "format": "output", "content": f"✗ Failed to reach sandbox service: {e}"}]
-    return result.get("chunks", [])
+        return [{"type": "console", "format": "error", "content": f"✗ Failed to reach sandbox service: {e}"}]
+    return _normalize_kernel_chunks(result.get("chunks", []))
+
+
+def run_python_stream(
+    code: str,
+    session_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+):
+    """Yield normalized kernel chunks from sandbox_service's NDJSON stream."""
+    try:
+        with _client.stream(
+            "POST",
+            f"/sandboxes/{session_id}/run-python/stream",
+            json={"code": code, "kernel_id": kernel_id, "run_id": run_id},
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                if isinstance(chunk, dict):
+                    yield _normalize_kernel_chunk(chunk)
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        yield {
+            "type": "console", "format": "error",
+            "content": f"✗ Failed to stream from sandbox service: {exc}",
+        }
+
+
+_PYTHON_EXCEPTION_LINE_RE = re.compile(
+    r"^(?:[A-Za-z_][\w.]*(?:Error|Exception)|KeyboardInterrupt|SystemExit):"
+)
+
+
+def _looks_like_legacy_kernel_error(content: str) -> bool:
+    """Recognize error chunks produced by pre-format-metadata kernel images."""
+    if "Traceback (most recent call last):" in content:
+        return True
+    if "Cell In[" not in content:
+        return False
+    return any(
+        _PYTHON_EXCEPTION_LINE_RE.match(line.strip())
+        for line in reversed(content.splitlines())
+        if line.strip()
+    )
+
+
+def _normalize_kernel_chunks(chunks: list[dict]) -> list[dict]:
+    """Preserve explicit error metadata and upgrade legacy traceback chunks."""
+    return [_normalize_kernel_chunk(chunk) for chunk in chunks]
+
+
+def _normalize_kernel_chunk(raw_chunk: dict) -> dict:
+    chunk = dict(raw_chunk)
+    if (
+        chunk.get("type") == "console"
+        and chunk.get("format", "output") == "output"
+        and _looks_like_legacy_kernel_error(str(chunk.get("content") or ""))
+    ):
+        chunk["format"] = "error"
+    return chunk
+
+
+_IDEA_NAMESPACE_MARKER = "__IDEA_KERNEL_NAMESPACE_V1__:"
+
+
+def inspect_python_namespace(
+    *,
+    session_id: str,
+    kernel_id: str,
+    names: list[str],
+    run_id: str = "",
+) -> list[dict]:
+    """Return a bounded structural summary of selected live kernel names.
+
+    Values and reprs are deliberately excluded: the model only needs enough
+    evidence to know that reusable objects still exist and what broad shape
+    they have. This is a best-effort internal kernel call, never model code.
+    """
+    selected = [name for name in names if str(name).isidentifier()][-100:]
+    if not selected:
+        return []
+    names_json = json.dumps(selected)
+    code = (
+        "print(" + repr(_IDEA_NAMESPACE_MARKER) + " + "
+        "__import__('json').dumps(["
+        "{'name': __idea_name, "
+        "'type': type(globals()[__idea_name]).__name__, "
+        "'shape': list(getattr(globals()[__idea_name], 'shape')) "
+        "if isinstance(getattr(globals()[__idea_name], 'shape', None), tuple) "
+        "else None, "
+        "'length': len(globals()[__idea_name]) "
+        "if isinstance(globals()[__idea_name], (str, bytes, list, tuple, dict, set)) "
+        "else None} "
+        "for __idea_name in " + names_json + " if __idea_name in globals()], "
+        "separators=(',', ':'), default=str))"
+    )
+    chunks = run_python(
+        code,
+        session_id=session_id,
+        kernel_id=kernel_id,
+        run_id=run_id,
+    )
+    for chunk in chunks:
+        if chunk.get("type") != "console":
+            continue
+        content = str(chunk.get("content") or "")
+        marker_at = content.find(_IDEA_NAMESPACE_MARKER)
+        if marker_at < 0:
+            continue
+        payload = content[marker_at + len(_IDEA_NAMESPACE_MARKER):].strip()
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(decoded, list):
+            return []
+        return [item for item in decoded if isinstance(item, dict)][:100]
+    return []
+
+
+def interrupt_run(session_id: str, run_id: str) -> bool:
+    """Best-effort, run-scoped interruption that preserves workspace files."""
+    try:
+        # Do not inherit the normal 30-minute Python read timeout.  An
+        # interrupt has its own 30-second guest-side ceiling and must never
+        # strand a LangGraph stop worker indefinitely.
+        response = _client.post(
+            f"/sandboxes/{session_id}/runs/{run_id}/interrupt",
+            timeout=35.0,
+        )
+        response.raise_for_status()
+        return bool(response.json().get("interrupted"))
+    except httpx.HTTPError:
+        return False
 
 
 def grep_search(
@@ -392,14 +773,31 @@ def glob_search(
 def make_agent_tools(session_id: str):
     """
     Build a run_terminal_tool / write_file_tool / show_image_tool /
-    read_output_range_tool set bound to one specific session's terminal
-    (local shell or microsandbox microVM).
+    inspect_image_tool / read_output_range_tool set bound to one specific
+    session's terminal (local shell or microsandbox microVM).
 
     Every TerminalAgent must build its own set via this factory instead of
     sharing module-level tool instances, so concurrent users never end up
     executing commands in - or writing files into - the same underlying
     shell/sandbox.
     """
+
+    @tool
+    def restart_terminal_tool() -> str:
+        """
+        Restart this session's terminal after run_terminal_tool reports that
+        the underlying shell process has died (e.g. "Shell desynchronized
+        before command start."). Gets a fresh shell so subsequent commands
+        work again. This resets cwd/env vars/background processes for this
+        session - files already written to /workspace are unaffected. Only
+        call this when a command actually failed with that specific error,
+        not as a general-purpose reset.
+
+        Returns:
+            Confirmation that a fresh terminal is ready.
+        """
+        close_terminal(session_id)
+        return "✓ Terminal restarted. cwd/env vars/background processes were reset; retry your command."
 
     @tool
     def run_terminal_tool(command: str) -> str:
@@ -437,6 +835,31 @@ def make_agent_tools(session_id: str):
         return write_file(filepath, content, session_id=session_id, append=append)
 
     @tool
+    def publish_artifact_tool(
+        source_path: str,
+        output_path: str = "",
+    ) -> str:
+        """
+        Publish one existing workspace file as a user deliverable by safely
+        copying it from /workspace into /outputs. Use this instead of making
+        /workspace directly downloadable. The source must be a regular file
+        under /workspace. The optional destination must be under /outputs;
+        when omitted, the workspace-relative path is preserved.
+
+        Args:
+            source_path: Existing file under /workspace.
+            output_path: Optional destination under /outputs.
+
+        Returns:
+            The published /outputs path, or a validation/copy error.
+        """
+        return publish_artifact(
+            source_path,
+            session_id=session_id,
+            output_path=output_path or None,
+        )
+
+    @tool
     def read_output_range_tool(filepath: str, offset: int = 0, n_limit: int = 2000) -> str:
         """
         Read a slice of a (typically large) file's text content - e.g. the
@@ -465,8 +888,10 @@ def make_agent_tools(session_id: str):
         automatically. Prefer this over run_terminal_tool for Python data
         analysis/plotting, so you don't have to re-load data or re-import
         libraries every call. Plots created with matplotlib are
-        automatically captured and shown to the user - no need to save to
-        a file or call show_image_tool for them.
+        automatically captured, shown to the user, and supplied to model
+        vision on the next iteration - no need to save to a file or call
+        inspect_image_tool/show_image_tool for them. For follow-up changes,
+        reuse live variables instead of repeating unchanged setup.
 
         Args:
             code: Python code to execute
@@ -520,6 +945,35 @@ def make_agent_tools(session_id: str):
             return f"✗ Image not found: {filepath}"
 
         return f"✓ Image ready to display: {filepath}"
+
+    @tool
+    def inspect_image_tool(filepath: str) -> str:
+        """
+        Load an image file into model vision so you can visually inspect and
+        describe it. Use this for existing images in the sandbox and for a
+        saved image that has not already been supplied to model vision. This
+        does not display the image to the user. Call show_image_tool
+        separately for an existing image that the user should see; plots
+        produced by run_python_tool are already displayed and supplied to
+        model vision automatically.
+
+        Args:
+            filepath: Path to a PNG, JPEG, GIF, or WebP image.
+
+        Returns:
+            A readiness message. The agent loop supplies the actual pixels
+            to model vision in the next iteration.
+        """
+        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext not in valid_extensions:
+            return (
+                f"✗ Unsupported model-vision image extension '{ext}' for "
+                f"{filepath}; convert it to PNG, JPEG, GIF, or WebP first"
+            )
+        if not file_exists(filepath, session_id):
+            return f"✗ Image not found: {filepath}"
+        return f"✓ Image ready for model inspection: {filepath}"
 
     @tool
     def grep_search_tool(
@@ -604,8 +1058,11 @@ def make_agent_tools(session_id: str):
 
     return (
         run_terminal_tool,
+        restart_terminal_tool,
         write_file_tool,
+        publish_artifact_tool,
         show_image_tool,
+        inspect_image_tool,
         read_output_range_tool,
         run_python_tool,
         grep_search_tool,

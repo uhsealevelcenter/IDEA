@@ -1,0 +1,3 @@
+# Legacy PromptManager strings intentionally contain significant trailing
+# spaces. Preserve them and do not report them as whitespace errors.
+assistants/prompts/*.md whitespace=-trailing-space

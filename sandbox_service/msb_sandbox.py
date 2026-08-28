@@ -13,14 +13,17 @@ underlying aiohttp-based SDK session stays alive across calls.
 """
 
 import asyncio
+import contextlib
 import json
 import os
+import queue
+import signal
 import shlex
 import threading
 import time
 import urllib.parse
 import uuid
-from typing import Optional
+from typing import Callable, Optional
 
 # ioctl request number for KVM_GET_API_VERSION (arch-independent, see
 # linux/kvm.h) - used by _kvm_functional() below. Imported lazily inside
@@ -30,11 +33,24 @@ _KVM_GET_API_VERSION = 0xAE00
 DEFAULT_IMAGE = os.getenv("SANDBOX_IMAGE", "python")
 DEFAULT_CPUS = int(os.getenv("SANDBOX_CPUS", "1"))
 DEFAULT_MEMORY_MB = int(os.getenv("SANDBOX_MEMORY_MB", "1024"))
+# Optional absolute directory inside the sandbox-service container which is
+# exposed read-only at /app/data in every microVM. docker-compose.yml mounts
+# the administrator-managed idea_shared_data volume here. Leaving it unset
+# preserves standalone/non-Compose behavior.
+DEFAULT_SHARED_DATA_HOST_PATH = os.getenv("SHARED_DATA_HOST_PATH", "").strip()
+SHARED_DATA_GUEST_PATH = "/app/data"
+SHARED_DATA_REQUIRED_PATHS = (
+    "metadata/fd_metadata.geojson",
+    "benchmarks/all_benchmarks.json",
+    "altimetry/cmems_altimetry_regrid.nc",
+    "InSight",
+)
 
 # Path to client.py *inside* the VM image - see ../interpreter_kernel/.
 # Only meaningful when SANDBOX_IMAGE is that image (or one built on top of
 # it); run_python() below fails clearly if the VM doesn't have it.
 OI_KERNEL_CLIENT_PATH = os.getenv("OI_KERNEL_CLIENT_PATH", "/opt/oi_kernel/client.py")
+CODEX_RUNNER_PATH = os.getenv("CODEX_RUNNER_PATH", "/opt/oi_kernel/codex_runner.py")
 
 # Where entrypoint.sh drops Open Terminal's per-VM API key - see
 # ../interpreter_kernel/entrypoint.sh. Read once per MicrosandboxTerminal
@@ -52,6 +68,38 @@ _IDLE_TIMEOUT_ENV = os.getenv("SANDBOX_IDLE_TIMEOUT_SECONDS", "1800")
 _MAX_DURATION_ENV = os.getenv("SANDBOX_MAX_DURATION_SECONDS", "")
 DEFAULT_IDLE_TIMEOUT = int(_IDLE_TIMEOUT_ENV) if _IDLE_TIMEOUT_ENV else None
 DEFAULT_MAX_DURATION = int(_MAX_DURATION_ENV) if _MAX_DURATION_ENV else None
+
+
+def shared_data_volumes(host_path: str) -> dict:
+    """Build the read-only Microsandbox mount mapping for shared data."""
+    if not host_path:
+        return {}
+    shared_data_path = os.path.abspath(host_path)
+    if not os.path.isdir(shared_data_path):
+        raise RuntimeError(
+            f"SHARED_DATA_HOST_PATH is not a directory: {shared_data_path}"
+        )
+    missing = [
+        relative_path
+        for relative_path in SHARED_DATA_REQUIRED_PATHS
+        if not os.path.exists(os.path.join(shared_data_path, relative_path))
+    ]
+    if missing:
+        raise RuntimeError(
+            "Shared data is not initialized; missing "
+            f"{', '.join(missing)}. See shared_data/README.md."
+        )
+    from microsandbox import Volume
+
+    return {
+        SHARED_DATA_GUEST_PATH: Volume.bind(
+            shared_data_path,
+            readonly=True,
+            noexec=True,
+            nosuid=True,
+            nodev=True,
+        )
+    }
 
 
 def _kvm_functional(path: str = "/dev/kvm") -> bool:
@@ -116,6 +164,7 @@ class MicrosandboxTerminal:
         memory: int = DEFAULT_MEMORY_MB,
         idle_timeout: Optional[int] = DEFAULT_IDLE_TIMEOUT,
         max_duration: Optional[int] = DEFAULT_MAX_DURATION,
+        shared_data_host_path: str = DEFAULT_SHARED_DATA_HOST_PATH,
     ):
         self.session_id = session_id
         self.image = image
@@ -123,9 +172,12 @@ class MicrosandboxTerminal:
         self.memory = memory
         self.idle_timeout = idle_timeout
         self.max_duration = max_duration
+        self.shared_data_host_path = shared_data_host_path
         self._sandbox = None
         self._open_terminal_key: Optional[str] = None
         self._cwd: Optional[str] = None
+        self._stream_handles: dict[str, object] = {}
+        self._stream_handles_lock = threading.Lock()
 
         # Dedicated event loop + thread so the SDK's connection(s) persist
         # across calls instead of being torn down/recreated each time
@@ -161,7 +213,13 @@ class MicrosandboxTerminal:
             return await coro_factory()
 
         future = asyncio.run_coroutine_threadsafe(_runner(), self._loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except Exception:
+            # A timed-out SDK operation must not remain queued on the shared
+            # loop and unexpectedly mutate a replacement sandbox later.
+            future.cancel()
+            raise
 
     def _exec(self, coro_factory, timeout: Optional[float] = None):
         """
@@ -217,6 +275,9 @@ class MicrosandboxTerminal:
                     create_kwargs["idle_timeout"] = self.idle_timeout
                 if self.max_duration is not None:
                     create_kwargs["max_duration"] = self.max_duration
+                volumes = shared_data_volumes(self.shared_data_host_path)
+                if volumes:
+                    create_kwargs["volumes"] = volumes
                 return await Sandbox.create(self.session_id, **create_kwargs)
 
             await handle.refresh()
@@ -254,7 +315,12 @@ class MicrosandboxTerminal:
         # Generous ceiling; mirrors PersistentTerminal's default 1800s window.
         return 1800.0
 
-    def run_python(self, code: str) -> dict:
+    def run_python(
+        self,
+        code: str,
+        kernel_id: str = "default",
+        run_id: str = "",
+    ) -> dict:
         """
         Execute Python code in this sandbox's persistent Jupyter-backed
         kernel (see ../interpreter_kernel/daemon.py, baked into the VM
@@ -276,11 +342,14 @@ class MicrosandboxTerminal:
         try:
             self._exec(lambda: self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
             output = self._exec(
-                lambda: self._sandbox.shell(f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path}"),
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path} "
+                    f"--kernel-id {shlex.quote(kernel_id)} --run-id {shlex.quote(run_id)}"
+                ),
                 timeout=self._exec_timeout(code),
             )
         except Exception as e:
-            return {"chunks": [{"type": "console", "format": "output", "content": f"Kernel exec failed: {e}"}]}
+            return {"chunks": [{"type": "console", "format": "error", "content": f"Kernel exec failed: {e}"}]}
         finally:
             try:
                 self._exec(lambda: self._sandbox.shell(f"rm -f {tmp_path}"))
@@ -293,7 +362,291 @@ class MicrosandboxTerminal:
         except json.JSONDecodeError:
             stderr = getattr(output, "stderr_text", None) or ""
             content = text or stderr or "(no output from kernel client)"
-            return {"chunks": [{"type": "console", "format": "output", "content": content}]}
+            return {"chunks": [{"type": "console", "format": "error", "content": content}]}
+
+    def run_python_stream(
+        self,
+        code: str,
+        kernel_id: str = "default",
+        run_id: str = "",
+        cancelled: Optional[Callable[[], bool]] = None,
+    ):
+        """Yield persistent-kernel chunks as the guest produces them."""
+        tmp_path = f"/tmp/.oi_kernel_code_{uuid.uuid4().hex}.py"
+        events: queue.Queue = queue.Queue()
+        sentinel = object()
+        stderr_parts: list[bytes] = []
+        exit_code = 0
+
+        try:
+            self._exec(lambda: self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
+        except Exception as exc:
+            yield {
+                "type": "console", "format": "error",
+                "content": f"Kernel exec failed: {exc}",
+            }
+            return
+
+        command = (
+            f"python3 {OI_KERNEL_CLIENT_PATH} --run-stream-file {tmp_path} "
+            f"--kernel-id {shlex.quote(kernel_id)} --run-id {shlex.quote(run_id)}"
+        )
+
+        async def _produce() -> None:
+            cancellation_monitor = None
+            try:
+                handle = await self._sandbox.shell_stream(
+                    command,
+                    timeout=self._exec_timeout(code),
+                )
+                if run_id:
+                    if not hasattr(self, "_stream_handles_lock"):
+                        self._stream_handles_lock = threading.Lock()
+                        self._stream_handles = {}
+                    with self._stream_handles_lock:
+                        self._stream_handles[run_id] = handle
+
+                async def _monitor_cancellation() -> None:
+                    while True:
+                        if cancelled is not None and cancelled():
+                            # Signal the already-running guest bridge. Opening
+                            # another sandbox.shell() here can block behind a
+                            # cold VM/client startup and make Stop ineffective.
+                            await handle.signal(signal.SIGINT)
+                            return
+                        await asyncio.sleep(0.05)
+
+                if cancelled is not None:
+                    cancellation_monitor = asyncio.create_task(
+                        _monitor_cancellation()
+                    )
+                async for event in handle:
+                    event_type = str(getattr(event, "event_type", "")).lower()
+                    if "stdout" in event_type:
+                        events.put(("stdout", bytes(getattr(event, "data", b"") or b"")))
+                    elif "stderr" in event_type:
+                        events.put(("stderr", bytes(getattr(event, "data", b"") or b"")))
+                    elif "exit" in event_type:
+                        events.put(("exit", int(getattr(event, "code", 0) or 0)))
+            except Exception as exc:
+                events.put(("error", exc))
+            finally:
+                if run_id and hasattr(self, "_stream_handles_lock"):
+                    with self._stream_handles_lock:
+                        self._stream_handles.pop(run_id, None)
+                if cancellation_monitor is not None:
+                    cancellation_monitor.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await cancellation_monitor
+                events.put(("done", sentinel))
+
+        future = asyncio.run_coroutine_threadsafe(_produce(), self._loop)
+        stdout_buffer = b""
+        saw_error_chunk = False
+        completed = False
+        try:
+            while True:
+                try:
+                    kind, value = events.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if kind == "stdout":
+                    stdout_buffer += value
+                    while b"\n" in stdout_buffer:
+                        raw_line, stdout_buffer = stdout_buffer.split(b"\n", 1)
+                        chunk = self._decode_kernel_stream_line(raw_line)
+                        if chunk is not None:
+                            saw_error_chunk = saw_error_chunk or chunk.get("format") == "error"
+                            yield chunk
+                elif kind == "stderr":
+                    stderr_parts.append(value)
+                elif kind == "exit":
+                    exit_code = value
+                elif kind == "error":
+                    saw_error_chunk = True
+                    yield {
+                        "type": "console", "format": "error",
+                        "content": f"Kernel exec failed: {value}",
+                    }
+                elif kind == "done":
+                    completed = True
+                    break
+
+            if stdout_buffer.strip():
+                chunk = self._decode_kernel_stream_line(stdout_buffer)
+                if chunk is not None:
+                    saw_error_chunk = saw_error_chunk or chunk.get("format") == "error"
+                    yield chunk
+            if exit_code and stderr_parts and not saw_error_chunk:
+                yield {
+                    "type": "console", "format": "error",
+                    "content": b"".join(stderr_parts).decode("utf-8", errors="replace").strip(),
+                }
+        finally:
+            if not completed and not future.done():
+                self.interrupt_python(kernel_id)
+                future.cancel()
+            try:
+                self._exec(lambda: self._sandbox.shell(f"rm -f {tmp_path}"))
+            except Exception:
+                pass
+
+    @staticmethod
+    def _decode_kernel_stream_line(raw_line: bytes):
+        if not raw_line.strip():
+            return None
+        try:
+            envelope = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {
+                "type": "console", "format": "error",
+                "content": raw_line.decode("utf-8", errors="replace"),
+            }
+        if envelope.get("event") == "chunk" and isinstance(envelope.get("chunk"), dict):
+            return envelope["chunk"]
+        if envelope.get("event") == "error":
+            return {
+                "type": "console", "format": "error",
+                "content": str(envelope.get("error") or "Unknown kernel stream error"),
+            }
+        return None
+
+    def interrupt_python(self, kernel_id: str) -> bool:
+        """Send a Jupyter interrupt through the in-VM daemon."""
+        try:
+            output = self._exec(
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --interrupt "
+                    f"--kernel-id {shlex.quote(kernel_id)}"
+                ),
+                timeout=30.0,
+            )
+            payload = json.loads((output.stdout_text or "").strip())
+            return bool(payload.get("interrupted"))
+        except Exception:
+            return False
+
+    def python_kernel_status(self, kernel_id: str) -> Optional[dict]:
+        """Return bounded guest-reported kernel state without taking its lock."""
+        try:
+            output = self._run(
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --kernel-status "
+                    f"--kernel-id {shlex.quote(kernel_id)}"
+                ),
+                timeout=10.0,
+            )
+            payload = json.loads((output.stdout_text or "").strip())
+            return payload if isinstance(payload, dict) else None
+        except Exception:
+            return None
+
+    def signal_python_run(self, run_id: str, sig: signal.Signals) -> bool:
+        """Signal an existing guest bridge without opening another shell."""
+        if not run_id or not hasattr(self, "_stream_handles_lock"):
+            return False
+        with self._stream_handles_lock:
+            handle = self._stream_handles.get(run_id)
+        if handle is None:
+            return False
+        try:
+            self._run(lambda: handle.signal(sig), timeout=3.0)
+            return True
+        except Exception:
+            return False
+
+    def restart_python_kernel(self, kernel_id: str) -> bool:
+        """Replace one ipykernel while preserving the microVM filesystem."""
+        try:
+            # Recovery owns reconnect/escalation. Do not let _exec() retry a
+            # timed-out control request and double this bounded grace period.
+            output = self._run(
+                lambda: self._sandbox.shell(
+                    f"python3 {OI_KERNEL_CLIENT_PATH} --restart-kernel "
+                    f"--kernel-id {shlex.quote(kernel_id)}"
+                ),
+                timeout=10.0,
+            )
+            payload = json.loads((output.stdout_text or "").strip())
+            return bool(payload.get("restarted"))
+        except Exception:
+            return False
+
+    def recover_sandbox(self, run_id: str = "") -> bool:
+        """Stop/resume this named microVM without deleting its filesystem."""
+        self.signal_python_run(run_id, signal.SIGKILL)
+
+        async def _recover():
+            from microsandbox import Sandbox
+
+            if self._sandbox is not None:
+                await self._sandbox.stop()
+            self._sandbox = await Sandbox.start(self.session_id, detached=True)
+
+        try:
+            self._run(_recover, timeout=30.0)
+            self._open_terminal_key = None
+            self._cwd = None
+            return True
+        except Exception:
+            return False
+
+    def run_codex(self, request: dict) -> dict:
+        """Run the guest Codex SDK bridge using a credential-safe request file."""
+        request_path = f"/tmp/.idea_codex_request_{uuid.uuid4().hex}.json"
+        run_id = str(request.get("run_id", ""))
+        cancel_path = (
+            f"/tmp/.idea_codex_cancel_{self._safe_run_id(run_id)}" if run_id else ""
+        )
+        try:
+            data = json.dumps(request).encode("utf-8")
+            self._exec(lambda: self._sandbox.fs.write(request_path, data))
+            self._exec(
+                lambda: self._sandbox.shell(
+                    f"chmod 600 -- {shlex.quote(request_path)}"
+                )
+            )
+            output = self._exec(
+                lambda: self._sandbox.shell(
+                    f"python3 {shlex.quote(CODEX_RUNNER_PATH)} "
+                    f"--request-file {shlex.quote(request_path)}"
+                ),
+                timeout=self._exec_timeout(str(request.get("task", ""))),
+            )
+            text = (output.stdout_text or "").strip()
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                stderr = getattr(output, "stderr_text", None) or ""
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error": text or stderr or "Codex runner returned no JSON",
+                    "events": [],
+                }
+        except Exception as exc:
+            return {"ok": False, "status": "failed", "error": str(exc), "events": []}
+        finally:
+            targets = " ".join(shlex.quote(path) for path in (request_path, cancel_path) if path)
+            try:
+                self._exec(lambda: self._sandbox.shell(f"rm -f -- {targets}"))
+            except Exception:
+                pass
+
+    @staticmethod
+    def _safe_run_id(run_id: str) -> str:
+        return "".join(char if char.isalnum() or char in "_.-" else "_" for char in run_id)[:160]
+
+    def interrupt_codex(self, run_id: str) -> bool:
+        """Signal the guest runner's cancellation watcher without taking its lock."""
+        if not run_id:
+            return False
+        path = f"/tmp/.idea_codex_cancel_{self._safe_run_id(run_id)}"
+        try:
+            self._exec(lambda: self._sandbox.fs.write(path, b"cancel\n"), timeout=10.0)
+            return True
+        except Exception:
+            return False
 
     def _get_open_terminal_key(self, retries: int = 10, delay: float = 0.5) -> str:
         """
@@ -307,6 +660,11 @@ class MicrosandboxTerminal:
         after Sandbox.create() and entrypoint.sh hasn't written the key file
         yet.
         """
+        # Microsandbox imports OCI entrypoint/CMD metadata but does not run
+        # the image's primary process when a detached sandbox is created or
+        # resumed. Start Open Terminal lazily (and restart it after an idle
+        # stop/resume) before trying to read the key generated for it.
+        self._ensure_open_terminal()
         if self._open_terminal_key:
             return self._open_terminal_key
 
@@ -326,6 +684,38 @@ class MicrosandboxTerminal:
             f"Open Terminal API key not available at {OPEN_TERMINAL_KEY_PATH} "
             f"in sandbox {self.session_id} after {retries} retries: {last_error}"
         )
+
+    def _ensure_open_terminal(self) -> None:
+        """Start the in-VM Open Terminal server if it is not already healthy."""
+        key_path = shlex.quote(OPEN_TERMINAL_KEY_PATH)
+        health_url = shlex.quote(
+            f"http://127.0.0.1:{OPEN_TERMINAL_PORT}/health"
+        )
+        command = (
+            f"if ! curl -fsS --max-time 2 {health_url} >/dev/null 2>&1; then "
+            f"KEY_PATH={key_path}; "
+            'if [ ! -s "$KEY_PATH" ]; then '
+            'head -c 32 /dev/urandom | od -An -tx1 | tr -d \' \\n\' > "$KEY_PATH"; '
+            "fi; "
+            'chmod 600 "$KEY_PATH"; '
+            'nohup env OPEN_TERMINAL_API_KEY="$(cat "$KEY_PATH")" '
+            "/app/entrypoint-slim.sh run "
+            ">/tmp/idea-open-terminal.log 2>&1 </dev/null & "
+            "fi; "
+            f"for attempt in $(seq 1 20); do "
+            f"curl -fsS --max-time 2 {health_url} >/dev/null 2>&1 && exit 0; "
+            "sleep 0.5; done; exit 1"
+        )
+        output = self._exec(
+            lambda: self._sandbox.shell(command),
+            timeout=20.0,
+        )
+        if output.exit_code != 0:
+            stderr = getattr(output, "stderr_text", None) or ""
+            raise RuntimeError(
+                f"Open Terminal failed to start in sandbox {self.session_id}: "
+                f"{stderr or 'health check timed out'}"
+            )
 
     def _open_terminal_get(self, path: str, params: dict) -> dict:
         """
@@ -434,21 +824,62 @@ class MicrosandboxTerminal:
     def write_file(self, filepath: str, content: str, append: bool = False) -> None:
         """Write content to a file inside the sandbox's filesystem."""
         filepath = self._resolve_path(filepath)
+        parent = os.path.dirname(filepath)
+        if parent:
+            quoted_parent = shlex.quote(parent)
+            self._exec(
+                lambda: self._sandbox.shell(f"mkdir -p -- {quoted_parent}")
+            )
         data = content.encode("utf-8")
-        # fs.write()/fs.exists() (unlike shell's `>`/`>>` redirection) does
-        # not create missing parent directories on its own, so a first
-        # write into a not-yet-existing directory (e.g. TEMP_OUTPUT_DIR in
-        # langgraph/tools/persistent_terminal.py) fails with ENOENT.
-        dirpath = os.path.dirname(filepath)
-        if dirpath and dirpath != "/":
-            self._exec(lambda: self._sandbox.shell(f"mkdir -p {shlex.quote(dirpath)}"))
         if append:
             # No native append API - emulate via shell so it stays atomic
             # inside the sandbox rather than round-tripping bytes twice.
             escaped = content.replace("'", "'\\''")
-            self._exec(lambda: self._sandbox.shell(f"printf '%s' '{escaped}' >> {filepath}"))
+            quoted_filepath = shlex.quote(filepath)
+            self._exec(
+                lambda: self._sandbox.shell(
+                    f"printf '%s' '{escaped}' >> {quoted_filepath}"
+                )
+            )
         else:
             self._exec(lambda: self._sandbox.fs.write(filepath, data))
+
+    def write_file_bytes(self, filepath: str, source) -> None:
+        """Atomically stream a binary file into the sandbox filesystem."""
+        filepath = self._resolve_path(filepath)
+        parent = os.path.dirname(filepath)
+        if parent:
+            quoted_parent = shlex.quote(parent)
+            self._exec(
+                lambda: self._sandbox.shell(f"mkdir -p -- {quoted_parent}")
+            )
+
+        temporary_path = f"{filepath}.idea-upload-{uuid.uuid4().hex}"
+        sink = self._exec(
+            lambda: self._sandbox.fs.write_stream(temporary_path)
+        )
+        try:
+            while True:
+                chunk = source.read(1024 * 1024)
+                if not chunk:
+                    break
+                self._exec(lambda chunk=chunk: sink.write(chunk))
+            self._exec(lambda: sink.close())
+            self._exec(
+                lambda: self._sandbox.fs.rename(temporary_path, filepath)
+            )
+        except Exception:
+            try:
+                self._exec(lambda: sink.close())
+            except Exception:
+                pass
+            try:
+                self._exec(
+                    lambda: self._sandbox.fs.remove(temporary_path)
+                )
+            except Exception:
+                pass
+            raise
 
     def read_file(self, filepath: str) -> bytes:
         """Read raw bytes of a file from inside the sandbox (e.g. for image display)."""

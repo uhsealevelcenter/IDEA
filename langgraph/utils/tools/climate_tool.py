@@ -1,12 +1,18 @@
 """
 Climate Index Tool
-Fetches and parses global climate indices (ENSO, PDO, PNA, etc.) into a tidy
-(time, value) time series, returned as CSV text so the agent can save it to
-a file (via write_file_tool) and analyze/plot it from the terminal.
+Fetches and parses global climate indices (ENSO, PDO, PNA, etc.) and writes
+them directly into the current user's sandbox. Large time series never pass
+through the model as tool-result text.
 """
 
+import hashlib
+import json
+import posixpath
 import re
+import time
+from datetime import datetime, timezone
 from io import StringIO
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -48,6 +54,8 @@ _SEASON_TO_MIDMONTH = {
     "DJF": 1, "JFM": 2, "FMA": 3, "MAM": 4, "AMJ": 5, "MJJ": 6,
     "JJA": 7, "JAS": 8, "ASO": 9, "SON": 10, "OND": 11, "NDJ": 12,
 }
+_MAX_INDICES_PER_CALL = len(_URLS)
+_CANONICAL_INDEX_NAMES = {name.upper(): name for name in _URLS}
 
 
 def _parse_cpc_oni_like(text: str, value_col: str = "value") -> pd.DataFrame:
@@ -131,7 +139,7 @@ def _get_climate_index_dataframe(climate_index_name: str) -> pd.DataFrame:
         return df[["time", "value"]].reset_index(drop=True)
 
     if climate_index_name == "PDO":
-        data = pd.read_csv(StringIO(raw_data), delim_whitespace=True, skiprows=1)
+        data = pd.read_csv(StringIO(raw_data), sep=r"\s+", skiprows=1)
         data = data.melt(id_vars=["Year"], var_name="Month", value_name="value")
         months = {month: index for index, month in enumerate(
             ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -156,14 +164,19 @@ def _get_climate_index_dataframe(climate_index_name: str) -> pd.DataFrame:
             "value": [float(item['y']) for item in items],
         }).set_index("time")
 
-        monthly = df.resample('M').mean()
-        monthly.index = monthly.index + pd.Timedelta(days=15)
+        # Pandas 3 removed the ambiguous ``M`` alias. Resample at month start
+        # and then use the 15th as the common timestamp convention shared by
+        # every index returned by this tool.
+        monthly = df.resample("MS").mean()
+        monthly.index = monthly.index + pd.Timedelta(days=14)
         monthly = monthly.reset_index()
         return monthly[["time", "value"]]
 
     if climate_index_name in ["PMM-SST", "PMM-Wind", "AMM-SST", "AMM-Wind"]:
         columns = ["Year", "Month", "SST", "Wind"]
-        data = pd.read_csv(StringIO(raw_data), delim_whitespace=True, names=columns, skiprows=1)
+        data = pd.read_csv(
+            StringIO(raw_data), sep=r"\s+", names=columns, skiprows=1
+        )
         data["time"] = pd.to_datetime(data[["Year", "Month"]].assign(Day=15))
         value_column = "SST" if "-SST" in climate_index_name else "Wind"
         data = data.rename(columns={value_column: "value"})
@@ -173,34 +186,182 @@ def _get_climate_index_dataframe(climate_index_name: str) -> pd.DataFrame:
     raise ValueError(f"Unhandled climate index: {climate_index_name}")
 
 
-@tool
-def get_climate_index_tool(climate_index_name: str) -> str:
-    """
-    Fetch a global climate index time series as CSV text (columns: time, value).
+def normalize_climate_output_path(output_path: str) -> tuple[str, str]:
+    """Return safe CSV/provenance paths under the private workspace."""
+    normalized = posixpath.normpath(str(output_path or "").strip())
+    if normalized == "/workspace" or not normalized.startswith("/workspace/"):
+        raise ValueError("output_path must name a CSV file under /workspace")
+    if normalized == "/workspace/uploads" or normalized.startswith(
+        "/workspace/uploads/"
+    ):
+        raise ValueError("output_path may not overwrite synchronized uploads")
+    if not normalized.lower().endswith(".csv"):
+        raise ValueError("output_path must end in .csv")
+    provenance_path = normalized[:-4] + ".provenance.json"
+    return normalized, provenance_path
 
-    Always call this instead of scraping or re-implementing a fetch for a
-    climate index. Use write_file_tool to save the CSV output to a file
-    before plotting or further analysis.
 
-    NOAA/NCEP CPC transitioned to the Relative Oceanic Nino Index (RONI) as
-    the official ENSO monitoring/prediction index effective February 1, 2026;
-    RONI is a 3-month running mean of Nino 3.4 SST anomalies made relative to
-    the global tropics (20N-20S), rescaled to match traditional ONI
-    amplitude, and uses the same +/-0.5C threshold for ENSO classification.
-    Legacy ONI files remain available.
+def normalize_climate_index_names(climate_index_names: list[str]) -> list[str]:
+    """Validate, uppercase, and de-duplicate requested climate indices."""
+    if not isinstance(climate_index_names, list) or not climate_index_names:
+        raise ValueError("climate_index_names must contain at least one index")
+    if len(climate_index_names) > _MAX_INDICES_PER_CALL:
+        raise ValueError(
+            f"at most {_MAX_INDICES_PER_CALL} climate indices may be fetched "
+            "in one call"
+        )
 
-    Args:
-        climate_index_name: One of "RONI", "ONI", "PDO", "PNA", "PMM-SST",
-            "PMM-Wind", "AMM-SST", "AMM-Wind", "TNA", "AO", "NAO", "IOD".
+    normalized = []
+    for value in climate_index_names:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("each climate index name must be a non-empty string")
+        requested_name = value.strip().upper()
+        name = _CANONICAL_INDEX_NAMES.get(requested_name)
+        if name is None:
+            raise ValueError(
+                f"unknown climate index {value!r}; supported indices are "
+                f"{', '.join(_URLS)}"
+            )
+        if name not in normalized:
+            normalized.append(name)
+    return normalized
 
-    Returns:
-        A message with row count, a short preview, and the full CSV data.
-    """
-    df = _get_climate_index_dataframe(climate_index_name)
-    csv_text = df.to_csv(index=False)
-    preview = df.head(5).to_string(index=False)
-    return (
-        f"Loaded {len(df)} rows for '{climate_index_name}'.\n"
-        f"Preview:\n{preview}\n\n"
-        f"Full CSV data:\n{csv_text}"
+
+def build_climate_indices_bundle(
+    climate_index_names: list[str],
+    output_path: str,
+    *,
+    fetch_index: Callable[[str], pd.DataFrame] | None = None,
+    retrieved_at: datetime | None = None,
+) -> tuple[bytes, bytes, dict]:
+    """Build one long-form CSV and compact machine-readable provenance."""
+    names = normalize_climate_index_names(climate_index_names)
+    csv_path, provenance_path = normalize_climate_output_path(output_path)
+    fetch_index = fetch_index or _get_climate_index_dataframe
+    retrieved_at = retrieved_at or datetime.now(timezone.utc)
+
+    frames = []
+    index_metadata = []
+    starts = []
+    ends = []
+    started = time.monotonic()
+
+    for name in names:
+        frame = fetch_index(name).copy()
+        if not {"time", "value"}.issubset(frame.columns):
+            raise ValueError(
+                f"{name} data must contain time and value columns"
+            )
+        frame = frame[["time", "value"]]
+        frame["time"] = pd.to_datetime(frame["time"], errors="coerce")
+        if frame["time"].isna().any():
+            raise ValueError(f"{name} data contains invalid timestamps")
+        if frame.empty:
+            raise ValueError(f"{name} data source returned no rows")
+        if frame["time"].duplicated().any():
+            raise ValueError(f"{name} data contains duplicate timestamps")
+        frame = frame.sort_values("time").reset_index(drop=True)
+
+        start = frame["time"].iloc[0]
+        end = frame["time"].iloc[-1]
+        starts.append(start)
+        ends.append(end)
+        index_metadata.append({
+            "name": name,
+            "source_url": _URLS[name],
+            "rows": int(len(frame)),
+            "missing_values": int(frame["value"].isna().sum()),
+            "start": start.strftime("%Y-%m-%d"),
+            "end": end.strftime("%Y-%m-%d"),
+        })
+        frame.insert(1, "index", name)
+        frames.append(frame)
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined[["time", "index", "value"]].sort_values(
+        ["time", "index"]
     )
+    csv_text = combined.to_csv(
+        index=False,
+        date_format="%Y-%m-%d",
+        lineterminator="\n",
+    )
+    csv_bytes = csv_text.encode("utf-8")
+    common_start = max(starts)
+    common_end = min(ends)
+
+    metadata = {
+        "schema_version": 1,
+        "dataset_path": csv_path,
+        "provenance_path": provenance_path,
+        "format": "long_csv",
+        "columns": ["time", "index", "value"],
+        "retrieved_at": retrieved_at.isoformat(),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "total_rows": int(len(combined)),
+        "sha256": hashlib.sha256(csv_bytes).hexdigest(),
+        "common_period": (
+            {
+                "start": common_start.strftime("%Y-%m-%d"),
+                "end": common_end.strftime("%Y-%m-%d"),
+            }
+            if common_start <= common_end
+            else None
+        ),
+        "indices": index_metadata,
+    }
+    provenance_bytes = (
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    return csv_bytes, provenance_bytes, metadata
+
+
+def make_get_climate_indices_tool(
+    write_bytes: Callable[[str, bytes], int],
+):
+    """Create a climate tool bound to one user's sandbox writer."""
+
+    @tool
+    def get_climate_indices_tool(
+        climate_index_names: list[str],
+        output_path: str = "/workspace/climate_indices.csv",
+    ) -> str:
+        """
+        Fetch one or more global climate indices directly into the private
+        workspace as one tidy long-form CSV with columns time,index,value.
+        A provenance JSON file is written beside it. The dataset itself is
+        never returned through model context.
+
+        Always call this instead of scraping or reimplementing a climate-index
+        fetch. Batch indices needed for one analysis into the same call. Read
+        the returned dataset_path with Python for plotting or analysis.
+
+        NOAA/NCEP CPC transitioned to RONI as the official ENSO index effective
+        February 1, 2026; legacy ONI remains available.
+
+        Args:
+            climate_index_names: One or more of RONI, ONI, PDO, PNA, PMM-SST,
+                PMM-Wind, AMM-SST, AMM-Wind, TNA, AO, NAO, or IOD.
+            output_path: Destination CSV under /workspace.
+
+        Returns:
+            Compact JSON metadata containing paths, source URLs, row counts,
+            date coverage, missing-value counts, and a checksum.
+        """
+        csv_bytes, provenance_bytes, metadata = build_climate_indices_bundle(
+            climate_index_names,
+            output_path,
+        )
+        for path, data in (
+            (metadata["dataset_path"], csv_bytes),
+            (metadata["provenance_path"], provenance_bytes),
+        ):
+            written = write_bytes(path, data)
+            if written != len(data):
+                raise RuntimeError(
+                    f"incomplete sandbox write for {path}: expected "
+                    f"{len(data)} bytes, wrote {written}"
+                )
+        return json.dumps(metadata, separators=(",", ":"), sort_keys=True)
+
+    return get_climate_indices_tool

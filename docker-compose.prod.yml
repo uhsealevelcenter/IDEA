@@ -26,5 +26,4 @@ services:
       # - ./certbot/www:/var/www/certbot:ro    # certbot's renewal challenge path
       # - ./nginx-https-prod.conf:/etc/nginx/https.d/https.conf:ro   # TODO uncomment once nginx-https-prod.conf has a real domain + cert paths filled in
     depends_on:
-      - web
       - openwebui

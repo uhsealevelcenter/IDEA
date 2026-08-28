@@ -1,30 +1,70 @@
 #!/bin/bash
 # Pulls the current SANDBOX_IMAGE (see docker-compose.yml's `sandbox`
 # service) into the `sandbox` service's local microsandbox image cache,
-# then removes every currently-existing microVM so a fresh one is created
-# from that image - see sandbox_service/msb_sandbox.py's
-# MicrosandboxTerminal._connect_or_create(): `image=` is only applied the
-# first time a given sandbox_id is created, so an existing (running or
-# stopped-but-resumable) VM never picks up a newly-pushed image on its own.
+# then removes every currently-existing microVM so a fresh one is created.
+# Use this after changing either the guest image or creation-time settings
+# such as shared volume mounts - see sandbox_service/msb_sandbox.py's
+# MicrosandboxTerminal._connect_or_create(). Existing (running or
+# stopped-but-resumable) VMs never pick up either kind of change on their own.
 #
 # Removing a VM wipes its filesystem (installed packages, any in-progress
-# files not yet synced to /outputs) - only run this right after pushing a
-# new interpreter_kernel/ build that every active session should pick up.
+# files not yet synced to /outputs). This is acceptable only while every
+# workspace belongs to a developer who has agreed to start fresh. Before IDEA
+# has non-developer users, replace this workflow with a versioned migration
+# that snapshots, validates, and restores each writable workspace.
 #
 # `msb remove` is used directly (inside the `sandbox` container) rather
 # than sandbox_service's own /destroy endpoint, since that endpoint only
 # acts on sandbox_ids still present in its in-memory terminal cache (empty
 # after any sandbox_service restart) - see terminal_registry.destroy_terminal.
 #
-# Usage: ./interpreter_kernel/refresh_sandboxes.sh [sandbox-service-name]
-#   (sandbox-service-name defaults to "sandbox" - the docker-compose.yml service)
+# Usage:
+#   ./interpreter_kernel/refresh_sandboxes.sh \
+#     --allow-destructive-developer-refresh [--skip-pull] [sandbox-service-name]
+#   sandbox-service-name defaults to "sandbox". --skip-pull is appropriate
+#   for mount-only changes when SANDBOX_IMAGE is already cached. The explicit
+#   destructive flag is mandatory; it is not a substitute for user backups.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+PULL_IMAGE=1
+ALLOW_DESTRUCTIVE=0
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --skip-pull)
+      PULL_IMAGE=0
+      ;;
+    --allow-destructive-developer-refresh)
+      ALLOW_DESTRUCTIVE=1
+      ;;
+    *)
+      echo "Error: unknown option '$1'." >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [ "${ALLOW_DESTRUCTIVE}" -ne 1 ]; then
+  cat >&2 <<'EOF'
+Refusing to replace sandbox workspaces without explicit acknowledgement.
+
+This developer-stage operation permanently deletes every sandbox filesystem.
+Run again with --allow-destructive-developer-refresh only after confirming all
+affected developers can start fresh. Do not use this workflow once IDEA has
+non-developer users; implement a snapshot/restore migration first.
+EOF
+  exit 2
+fi
+
 SANDBOX_SERVICE="${1:-sandbox}"
+if [ "$#" -gt 1 ]; then
+  echo "Error: expected at most one sandbox service name." >&2
+  exit 2
+fi
 
 CONTAINER="$(docker compose ps -q "${SANDBOX_SERVICE}")"
 if [ -z "${CONTAINER}" ]; then
@@ -33,27 +73,17 @@ if [ -z "${CONTAINER}" ]; then
 fi
 
 SANDBOX_IMAGE="$(docker exec "${CONTAINER}" printenv SANDBOX_IMAGE)"
-echo "==> Pulling latest '${SANDBOX_IMAGE}' into msb's image cache..."
-# KNOWN BUG (msb 0.6.6): `msb pull -f` (force re-download) can fail with
-#   error: cache error at .../cache/layers/sha256_<digest>.tar.gz: No such
-#   file or directory (os error 2)
-# This has been observed specifically on very small (e.g. 32-byte, "empty
-# diff") OCI layers - msb's forced-redownload path appears to mishandle
-# re-creating/locking that layer's cache entry. A plain `msb pull` (no
-# `-f`) against the same reference does NOT hit this bug and correctly
-# resolves to the newly-pushed digest (verify with `msb images`), so we
-# fall back to it automatically below rather than failing the whole
-# refresh.
-#
-# If both the forced and non-forced pulls fail, or the resolved digest
-# still doesn't match what you just pushed, manually clear the corrupt
-# layer's cache entry (both files - a stray/incomplete `.lock` can also
-# confuse this) inside the sandbox container and retry:
-#   docker exec <container> rm -f /root/.microsandbox/cache/layers/sha256_<digest>.tar.gz*
-#   docker exec <container> msb pull "${SANDBOX_IMAGE}"
-if ! docker exec "${CONTAINER}" msb pull -f "${SANDBOX_IMAGE}"; then
-  echo "==> 'msb pull -f' failed (see known cache bug note above) - retrying without -f..." >&2
-  docker exec "${CONTAINER}" msb pull "${SANDBOX_IMAGE}"
+if [ "${PULL_IMAGE}" -eq 1 ]; then
+  echo "==> Pulling latest '${SANDBOX_IMAGE}' into msb's image cache..."
+  # msb 0.6.6 can mishandle very small OCI layers during a forced pull.
+  # A normal pull still resolves the tag to the newly published digest, so
+  # retry without -f before failing the refresh.
+  if ! docker exec "${CONTAINER}" msb pull -f "${SANDBOX_IMAGE}"; then
+    echo "==> 'msb pull -f' failed; retrying without -f..." >&2
+    docker exec "${CONTAINER}" msb pull "${SANDBOX_IMAGE}"
+  fi
+else
+  echo "==> Reusing cached '${SANDBOX_IMAGE}' (--skip-pull)."
 fi
 
 echo "==> Listing existing sandboxes..."
@@ -76,6 +106,7 @@ docker exec "${CONTAINER}" msb remove -f "${NAMES[@]}"
 INTERNAL_TOKEN="$(docker exec "${CONTAINER}" printenv INTERNAL_SERVICE_TOKEN 2>/dev/null || true)"
 
 echo "==> Recreating ${#NAMES[@]} sandbox(es) now..."
+FAILURES=0
 for name in "${NAMES[@]}"; do
   status="$(docker exec "${CONTAINER}" curl -sS -m 120 -o /dev/null -w '%{http_code}' \
     -X POST "http://localhost:8020/sandboxes/${name}/exec" \
@@ -86,7 +117,13 @@ for name in "${NAMES[@]}"; do
     echo "    - ${name}: recreated (HTTP 200)"
   else
     echo "    - ${name}: FAILED (HTTP ${status})" >&2
+    FAILURES=$((FAILURES + 1))
   fi
 done
 
-echo "==> Done. All listed sandboxes are now running '${SANDBOX_IMAGE}'."
+if [ "${FAILURES}" -ne 0 ]; then
+  echo "Error: ${FAILURES} sandbox(es) failed to recreate." >&2
+  exit 1
+fi
+
+echo "==> Done. All listed sandboxes now use the current image and mount configuration."

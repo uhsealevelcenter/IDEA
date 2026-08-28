@@ -8,6 +8,7 @@ The settings use the upgraded PaperQA library's utility classes for full
 customization of LLM, parsing, prompts, and agent behavior.
 """
 
+import os
 from pathlib import Path
 from typing import Optional, Union
 
@@ -41,8 +42,18 @@ try:
 except ImportError:
     PDF_PARSER = None  # Will use default parser
 
-# Default LLM model - prefixed with openai/ for LiteLLM provider routing
-DEFAULT_LLM = "openai/gpt-5.4-2026-03-05"
+DEFAULT_LLM = os.getenv("PQA_LLM_MODEL", "gpt-5.6-terra")
+DEFAULT_EMBEDDING = os.getenv(
+    "PQA_EMBEDDING_MODEL", "text-embedding-3-small"
+)
+PQA_LITELLM_BASE_URL = os.getenv(
+    "PQA_LITELLM_BASE_URL", "http://litellm:8080/v1"
+)
+PQA_LITELLM_API_KEY = os.getenv(
+    "PQA_LITELLM_API_KEY",
+    os.getenv("LITELLM_VIRTUAL_KEY", ""),
+)
+PQA_END_USER_HEADER = "x-litellm-end-user-id"
 
 # Custom summary prompt that emphasizes page numbers for figures/tables
 CUSTOM_SUMMARY_JSON_SYSTEM = (
@@ -70,9 +81,10 @@ def create_pqa_settings(
     index_directory: Union[str, Path],
     llm: str = DEFAULT_LLM,
     summary_llm: Optional[str] = None,
-    embedding: str = "text-embedding-3-small",
+    embedding: str = DEFAULT_EMBEDDING,
     verbosity: int = 1,
     manifest_file: Optional[Union[str, Path]] = None,
+    end_user_id: Optional[str] = None,
 ) -> Settings:
     """
     Create a comprehensive PaperQA Settings object.
@@ -84,7 +96,7 @@ def create_pqa_settings(
     Parameters:
         paper_directory: Path to the directory containing papers
         index_directory: Path to the directory for storing indexes
-        llm: The LLM model to use (default: gpt-5.4-2026-03-05)
+        llm: The LLM model to use (default: gpt-5.6-terra)
         summary_llm: The LLM for summaries (default: same as llm)
         embedding: The embedding model to use (default: text-embedding-3-small)
         verbosity: Logging verbosity level (default: 1)
@@ -136,26 +148,45 @@ def create_pqa_settings(
     if PDF_PARSER is not None:
         parsing_kwargs["parse_pdf"] = PDF_PARSER
     
+    provider_llm = llm if "/" in llm else f"openai/{llm}"
+    request_headers = (
+        {PQA_END_USER_HEADER: end_user_id}
+        if end_user_id
+        else {}
+    )
+    llm_config = {
+        "model_list": [
+            {
+                "model_name": llm,
+                "litellm_params": {
+                    "model": provider_llm,
+                    "api_base": PQA_LITELLM_BASE_URL,
+                    "api_key": PQA_LITELLM_API_KEY,
+                    "temperature": 1,
+                    "max_tokens": 16384,
+                    "extra_headers": request_headers,
+                },
+            }
+        ],
+    }
+
     settings = Settings(
         # LLM Configuration
         llm=llm,
-        llm_config={
-            "model_list": [
-                {
-                    "model_name": llm,
-                    "litellm_params": {
-                        "model": llm,
-                        "temperature": 1,  # Required for gpt-5+ models
-                        "max_tokens": 16384,
-                    },
-                }
-            ],
-        },
+        llm_config=llm_config,
         summary_llm=summary_llm,
+        summary_llm_config=llm_config,
         
         # Embedding Configuration
         embedding=embedding,
-        embedding_config={},
+        embedding_config={
+            "pass_through_router": True,
+            "kwargs": {
+                "api_base": PQA_LITELLM_BASE_URL,
+                "api_key": PQA_LITELLM_API_KEY,
+                "extra_headers": request_headers,
+            },
+        },
         
         # General Settings
         temperature=1,  # Required for gpt-5+ models
@@ -200,16 +231,7 @@ def create_pqa_settings(
         # Agent Settings
         agent=AgentSettings(
             agent_llm=llm,
-            agent_llm_config={
-                "model_list": [
-                    {
-                        "model_name": llm,
-                        "litellm_params": {
-                            "model": llm,
-                        },
-                    }
-                ],
-            },
+            agent_llm_config=llm_config,
             agent_prompt=env_reset_prompt,
             agent_system_prompt=env_system_prompt,
             search_count=8,

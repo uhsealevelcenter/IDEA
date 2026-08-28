@@ -9,21 +9,89 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
+import re
 import time as _time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import nest_asyncio
 from langchain_core.tools import tool
 
-from ..pqa.pqa_multi_tenant import get_user_settings, load_docs_from_disk, save_docs_to_disk
+from ..pqa.pqa_multi_tenant import (
+    compute_index_revision,
+    get_user_settings,
+    load_docs_from_disk,
+    save_docs_to_disk,
+)
 
 nest_asyncio.apply()
 
-# In-memory Docs cache keyed by user_id -> {"docs": Docs, "revision": str}
+# In-memory Docs cache keyed by trusted library scope.
 _docs_cache: dict = {}
 
-STATIC_DIR_NAME = "static"
+PQA_MEDIA_ROOT = Path(
+    os.getenv("PQA_MEDIA_ROOT", "/app/data/.pqa/media")
+)
+
+_VISUAL_MEDIA_PATTERN = re.compile(
+    r"\b(?:figures?|tables?|diagrams?|images?|plots?|charts?|maps?|"
+    r"photographs?|illustrations?|panels?)\b|\bfigs?\.",
+    re.IGNORECASE,
+)
+_DIRECT_ATTACHMENT_PATTERN = re.compile(
+    r"\b(?:attached|attachment|attachments|uploaded|upload)\b|"
+    r"\bthis\s+(?:pdf|paper|document|file)\b|"
+    r"\bthe\s+(?:attached|uploaded)\s+(?:pdf|paper|document|file)\b",
+    re.IGNORECASE,
+)
+_MIXED_SOURCE_PATTERN = re.compile(
+    r"\b(?:compare|comparison|contrast|both|versus)\b|\bvs\.",
+    re.IGNORECASE,
+)
+
+
+def _select_knowledge_scope(
+    query: str,
+    combined_scope_id: str | None,
+    direct_scope_id: str | None,
+    direct_file_names: tuple[str, ...],
+) -> str | None:
+    """Route attachment-specific queries away from collection documents."""
+    if not direct_scope_id or _MIXED_SOURCE_PATTERN.search(query):
+        return combined_scope_id
+
+    normalized_query = query.casefold()
+    for filename in direct_file_names:
+        normalized_name = filename.casefold().strip()
+        if not normalized_name:
+            continue
+        if (
+            normalized_name in normalized_query
+            or Path(normalized_name).stem in normalized_query
+        ):
+            return direct_scope_id
+
+    if _DIRECT_ATTACHMENT_PATTERN.search(query):
+        return direct_scope_id
+    return combined_scope_id
+
+
+def _selected_media_context_ids(query: str, session: Any) -> set[str]:
+    """Return cited context IDs when the question or answer concerns media."""
+    answer_parts = [
+        getattr(session, attribute, "")
+        for attribute in ("raw_answer", "answer", "formatted_answer")
+    ]
+    media_text = " ".join(
+        part for part in (query, *answer_parts) if isinstance(part, str)
+    )
+    if not _VISUAL_MEDIA_PATTERN.search(media_text):
+        return set()
+
+    # PaperQA computes used_contexts from context IDs cited in raw_answer.
+    # An empty set is not evidence that every retrieved context was used.
+    return set(getattr(session, "used_contexts", set()) or ())
 
 
 def _save_base64_image(data_url: str, output_dir: Path, prefix: str = "kb_figure") -> Optional[Path]:
@@ -60,7 +128,13 @@ def _save_base64_image(data_url: str, output_dir: Path, prefix: str = "kb_figure
         return None
 
 
-async def _query_knowledge_base_async(query: str, user_id: str, session_id: Optional[str]) -> dict:
+async def _query_knowledge_base_async(
+    query: str,
+    scope_id: str,
+    session_id: Optional[str],
+    end_user_id: str,
+    publish_media: Callable[[Path], str] | None = None,
+) -> dict:
     global _docs_cache
     from paperqa import Docs
     from paperqa.agents.search import get_directory_index
@@ -68,7 +142,7 @@ async def _query_knowledge_base_async(query: str, user_id: str, session_id: Opti
     t_start = _time.perf_counter()
 
     print("[PQA] Step 1: Loading user settings...")
-    settings = get_user_settings(user_id)
+    settings = get_user_settings(scope_id, end_user_id=end_user_id)
     print(f"[PQA] Settings loaded. LLM: {settings.llm}, Embedding: {settings.embedding}")
 
     print("[PQA] Step 2: Building/loading index...")
@@ -81,15 +155,16 @@ async def _query_knowledge_base_async(query: str, user_id: str, session_id: Opti
         return {"answer": "No papers found in your Knowledge base. Please upload papers first.", "images": []}
     print(f"[PQA] Found {len(index_files)} indexed files.")
 
-    revision = hashlib.md5(str(sorted(index_files.keys())).encode()).hexdigest()
-    cache_key = str(user_id)
+    paper_directory = settings.agent.index.paper_directory
+    revision = compute_index_revision(index_files, paper_directory)
+    cache_key = str(scope_id)
     cached = _docs_cache.get(cache_key)
 
     if cached and cached["revision"] == revision:
         docs = cached["docs"]
         print("[PQA] Step 3: Reusing cached Docs object (in-memory cache hit).")
     else:
-        disk_docs = load_docs_from_disk(user_id, revision)
+        disk_docs = load_docs_from_disk(scope_id, revision)
 
         if disk_docs is not None:
             docs = disk_docs
@@ -99,8 +174,6 @@ async def _query_knowledge_base_async(query: str, user_id: str, session_id: Opti
             print("[PQA] Step 3: Building Docs object (no cache available)...")
             t_docs = _time.perf_counter()
             docs = Docs()
-            paper_directory = settings.agent.index.paper_directory
-
             for file_path in index_files.keys():
                 full_path = paper_directory / file_path
                 if full_path.exists():
@@ -108,7 +181,7 @@ async def _query_knowledge_base_async(query: str, user_id: str, session_id: Opti
                     await docs.aadd(full_path, settings=settings)
 
             _docs_cache[cache_key] = {"docs": docs, "revision": revision}
-            save_docs_to_disk(user_id, docs, revision)
+            save_docs_to_disk(scope_id, docs, revision)
             print(f"[PQA] Docs built and cached in {_time.perf_counter() - t_docs:.2f}s.")
 
     print(f"[PQA] Step 4: Querying with: '{query}'...")
@@ -116,19 +189,23 @@ async def _query_knowledge_base_async(query: str, user_id: str, session_id: Opti
     session = await docs.aquery(query=query, settings=settings)
     print(f"[PQA] Query complete in {_time.perf_counter() - t_query:.2f}s.")
 
-    print("[PQA] Step 5: Extracting images from contexts...")
-    static_dir = Path(STATIC_DIR_NAME)
+    print("[PQA] Step 5: Selecting cited images from contexts...")
+    static_dir = PQA_MEDIA_ROOT
     if session_id:
-        output_dir = static_dir / str(user_id) / session_id / "pqa_media"
+        session_key = hashlib.sha256(
+            session_id.encode("utf-8")
+        ).hexdigest()
+        output_dir = static_dir / scope_id / session_key
     else:
-        output_dir = static_dir / str(user_id) / "pqa_media"
+        output_dir = static_dir / scope_id
 
     saved_images = []
     seen_hashes: set = set()
-    used_context_ids = getattr(session, "used_contexts", set())
+    selected_context_ids = _selected_media_context_ids(query, session)
 
     for context in session.contexts:
-        is_used = context.id in used_context_ids if used_context_ids else True
+        if context.id not in selected_context_ids:
+            continue
 
         if not hasattr(context, "text") or not hasattr(context.text, "media"):
             continue
@@ -153,15 +230,18 @@ async def _query_knowledge_base_async(query: str, user_id: str, session_id: Opti
                     media_type = info.get("type", "image")
                     description = info.get("enriched_description", "")
 
-                    rel_path = saved_path.relative_to(static_dir)
+                    published_path = (
+                        publish_media(saved_path)
+                        if publish_media is not None
+                        else str(saved_path)
+                    )
 
                     saved_images.append({
-                        "path": str(saved_path),
-                        "relative_path": str(rel_path),
+                        "path": published_path,
                         "page": page_num,
                         "type": media_type,
                         "description": description,
-                        "used_in_answer": is_used,
+                        "used_in_answer": True,
                     })
                     print(f"[PQA] Saved: {saved_path.name} (page {page_num})")
             except Exception as e:
@@ -177,39 +257,64 @@ async def _query_knowledge_base_async(query: str, user_id: str, session_id: Opti
     }
 
 
-@tool
-def query_knowledge_base_tool(query: str, user_id: str, session_id: str = "") -> str:
-    """
-    Query the user's uploaded "Knowledge" documents using PaperQA2.
+def make_query_knowledge_base_tool(
+    scope_getter: Callable[[], str | None],
+    *,
+    session_id: str,
+    end_user_id: str,
+    publish_media: Callable[[Path], str] | None = None,
+    direct_scope_getter: Callable[[], str | None] | None = None,
+    direct_file_names_getter: (
+        Callable[[], tuple[str, ...]] | None
+    ) = None,
+):
+    """Create a PaperQA tool bound to trusted server-side identity."""
 
-    Use this when: reviewing scientific literature/documents in the
-    Knowledge base; the query involves specific scientific methods,
-    findings, or technical details; the answer requires citation from a
-    primary source; or the user asks about figures/tables/images from
-    papers. Enhance the user's query to be as detailed as possible.
+    @tool("query_knowledge_base")
+    def query_knowledge_base(query: str) -> str:
+        """Query the attached scientific literature using PaperQA2.
 
-    Access is limited to documents the user has uploaded via the
-    "Knowledge" interface.
+        Use this for literature review, methods, findings, citations, or
+        questions about figures and tables in the Assistant's attached
+        Knowledge collection or PDFs attached in this chat. Make the query
+        specific enough to retrieve strong primary-source evidence.
 
-    Args:
-        query: The question to ask about the papers.
-        user_id: The user's ID (used to locate their paper library).
-        session_id: Optional session ID, used to namespace saved figure
-            images.
+        Args:
+            query: The research question to ask about the attached papers.
+        """
+        scope_id = _select_knowledge_scope(
+            query,
+            scope_getter(),
+            direct_scope_getter() if direct_scope_getter else None,
+            (
+                direct_file_names_getter()
+                if direct_file_names_getter
+                else ()
+            ),
+        )
+        if not scope_id:
+            return json.dumps({
+                "answer": (
+                    "The PaperQA library could not be prepared for this "
+                    "request."
+                ),
+                "images": [],
+            })
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-    Returns:
-        A JSON string with "answer" (text with citations) and "images"
-        (list of dicts with path/page/description for extracted figures;
-        do not re-run OCR or extraction on these - use the description or
-        view the image directly if needed).
-    """
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(
+            _query_knowledge_base_async(
+                query,
+                scope_id,
+                session_id or None,
+                end_user_id,
+                publish_media,
+            )
+        )
+        return json.dumps(result, indent=2, default=str)
 
-    result = loop.run_until_complete(
-        _query_knowledge_base_async(query, user_id, session_id or None)
-    )
-    return json.dumps(result, indent=2, default=str)
+    return query_knowledge_base

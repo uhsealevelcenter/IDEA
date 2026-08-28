@@ -7,13 +7,16 @@ pexpect/microsandbox objects itself, so it can stay stateless with respect
 to terminal/sandbox execution.
 """
 
+import asyncio
 import hmac
 import os
+import json
+import tempfile
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import Response
-from pydantic import BaseModel
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 
 import terminal_registry as registry
 
@@ -47,6 +50,13 @@ def _stop_all_terminals_on_shutdown() -> None:
 # thing standing between "on the docker network" and "full code exec as
 # any user" if this service's host ports are ever exposed.
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+INPUT_SYNC_MAX_FILE_BYTES = int(
+    os.getenv("INPUT_SYNC_MAX_FILE_BYTES", str(1024 * 1024 * 1024))
+)
+INPUT_SYNC_SPOOL_MEMORY_BYTES = min(
+    INPUT_SYNC_MAX_FILE_BYTES,
+    8 * 1024 * 1024,
+)
 
 
 def require_internal_token(request: Request) -> None:
@@ -76,6 +86,20 @@ class WriteFileRequest(BaseModel):
 
 class RunPythonRequest(BaseModel):
     code: str
+    kernel_id: str = "default"
+    run_id: str = ""
+
+
+class CodexRunRequest(BaseModel):
+    task: str
+    cwd: str = "/workspace"
+    access: str = "read-only"
+    thread_id: str = ""
+    run_id: str = ""
+    model: str
+    base_url: str
+    api_key: str = Field(repr=False)
+    max_events: int = Field(default=100, ge=1, le=500)
 
 
 class GrepSearchRequest(BaseModel):
@@ -107,15 +131,23 @@ async def health_check():
 
 @app.post("/sandboxes/{sandbox_id}/exec", response_model=ExecResponse, dependencies=[Depends(require_internal_token)])
 async def exec_command(sandbox_id: str, request: ExecRequest):
-    success, output, elapsed_time = registry.run_command(request.command, sandbox_id=sandbox_id)
+    success, output, elapsed_time = await asyncio.to_thread(
+        registry.run_command,
+        request.command,
+        sandbox_id=sandbox_id,
+    )
     return {"success": success, "output": output, "elapsed_time": elapsed_time}
 
 
 @app.post("/sandboxes/{sandbox_id}/files", dependencies=[Depends(require_internal_token)])
 async def write_file(sandbox_id: str, request: WriteFileRequest):
     try:
-        registry.write_file(
-            request.filepath, request.content, sandbox_id=sandbox_id, append=request.append
+        await asyncio.to_thread(
+            registry.write_file,
+            request.filepath,
+            request.content,
+            sandbox_id=sandbox_id,
+            append=request.append,
         )
         return {"ok": True}
     except PermissionError:
@@ -124,6 +156,84 @@ async def write_file(sandbox_id: str, request: WriteFileRequest):
         raise HTTPException(status_code=400, detail=f"{request.filepath} is a directory, not a file")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write {request.filepath}: {e}")
+
+
+@app.put("/sandboxes/{sandbox_id}/files/content", dependencies=[Depends(require_internal_token)])
+async def write_file_content(
+    sandbox_id: str,
+    request: Request,
+    filepath: str,
+    expected_size: Optional[int] = None,
+):
+    """Stream an arbitrary binary file into a user's sandbox atomically."""
+    if expected_size is not None and expected_size < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="expected_size must be non-negative",
+        )
+    if (
+        expected_size is not None
+        and expected_size > INPUT_SYNC_MAX_FILE_BYTES
+    ):
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "Input file exceeds the configured "
+                f"{INPUT_SYNC_MAX_FILE_BYTES}-byte limit"
+            ),
+        )
+    uploaded = 0
+    spool = tempfile.SpooledTemporaryFile(
+        max_size=INPUT_SYNC_SPOOL_MEMORY_BYTES,
+        mode="w+b",
+    )
+    try:
+        async for chunk in request.stream():
+            uploaded += len(chunk)
+            if uploaded > INPUT_SYNC_MAX_FILE_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "Input file exceeds the configured "
+                        f"{INPUT_SYNC_MAX_FILE_BYTES}-byte limit"
+                    ),
+                )
+            spool.write(chunk)
+        if expected_size is not None and uploaded != expected_size:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Input file size mismatch: expected {expected_size} "
+                    f"bytes, received {uploaded}"
+                ),
+            )
+        spool.seek(0)
+        await asyncio.to_thread(
+            registry.write_file_bytes,
+            filepath,
+            spool,
+            sandbox_id,
+        )
+        return {"ok": True, "size": uploaded}
+    except HTTPException:
+        raise
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission denied: Cannot write to {filepath}",
+        )
+    except IsADirectoryError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{filepath} is a directory, not a file",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to write {filepath}: {e}",
+        )
+    finally:
+        spool.close()
 
 
 @app.post("/sandboxes/{sandbox_id}/run-python", dependencies=[Depends(require_internal_token)])
@@ -135,14 +245,89 @@ async def run_python(sandbox_id: str, request: RunPythonRequest):
     console chunk, not an HTTP error), so the langgraph caller doesn't
     need special-case exception handling for this endpoint.
     """
-    return registry.run_python(request.code, sandbox_id=sandbox_id)
+    # registry.run_python blocks until the in-VM kernel finishes.  Keep that
+    # wait off uvicorn's event loop so this service can accept the matching
+    # /interrupt request while Python is still running.
+    return await asyncio.to_thread(
+        registry.run_python,
+        request.code,
+        sandbox_id=sandbox_id,
+        kernel_id=request.kernel_id,
+        run_id=request.run_id,
+    )
+
+
+@app.post(
+    "/sandboxes/{sandbox_id}/run-python/stream",
+    dependencies=[Depends(require_internal_token)],
+)
+async def run_python_stream(sandbox_id: str, request: RunPythonRequest):
+    """Stream persistent-kernel chunks as newline-delimited JSON."""
+    chunks = registry.run_python_stream(
+        request.code,
+        sandbox_id=sandbox_id,
+        kernel_id=request.kernel_id,
+        run_id=request.run_id,
+    )
+    return StreamingResponse(
+        (json.dumps(chunk, separators=(",", ":")) + "\n" for chunk in chunks),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post(
+    "/sandboxes/{sandbox_id}/codex/runs",
+    dependencies=[Depends(require_internal_token)],
+)
+async def run_codex(sandbox_id: str, request: CodexRunRequest):
+    """Run a Codex turn inside this user's isolated microVM."""
+    if request.access not in {"read-only", "workspace-write"}:
+        raise HTTPException(status_code=400, detail="Unsupported Codex access mode")
+    return await asyncio.to_thread(
+        registry.run_codex,
+        request.model_dump(),
+        sandbox_id,
+    )
+
+
+@app.post(
+    "/sandboxes/{sandbox_id}/runs/{run_id}/interrupt",
+    dependencies=[Depends(require_internal_token)],
+)
+async def interrupt_run(sandbox_id: str, run_id: str):
+    """Interrupt this run's active Python kernel or Codex turn."""
+    # The registry crosses the synchronous microsandbox SDK bridge.  Running
+    # it in a worker also prevents a slow guest interrupt from blocking health
+    # checks and unrelated sandbox requests.
+    interrupted = await asyncio.to_thread(
+        registry.interrupt_run,
+        sandbox_id,
+        run_id,
+    )
+    return {"ok": True, "interrupted": interrupted}
+
+
+@app.get(
+    "/sandboxes/{sandbox_id}/runs/{run_id}",
+    dependencies=[Depends(require_internal_token)],
+)
+async def get_run_status(sandbox_id: str, run_id: str):
+    """Report confirmed cancellation/recovery progress for one Python run."""
+    status = registry.get_python_run_status(run_id, sandbox_id=sandbox_id)
+    status["sandbox_id"] = sandbox_id
+    return status
 
 
 @app.post("/sandboxes/{sandbox_id}/grep", dependencies=[Depends(require_internal_token)])
 async def grep_search(sandbox_id: str, request: GrepSearchRequest):
     """Search file contents in sandbox_id's VM - see terminal_registry.grep_search / interpreter_kernel/."""
     try:
-        return registry.grep_search(sandbox_id, **request.model_dump(exclude_none=True))
+        return await asyncio.to_thread(
+            registry.grep_search,
+            sandbox_id,
+            **request.model_dump(exclude_none=True),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -151,7 +336,11 @@ async def grep_search(sandbox_id: str, request: GrepSearchRequest):
 async def glob_search(sandbox_id: str, request: GlobSearchRequest):
     """Search files by name in sandbox_id's VM - see terminal_registry.glob_search / interpreter_kernel/."""
     try:
-        return registry.glob_search(sandbox_id, **request.model_dump(exclude_none=True))
+        return await asyncio.to_thread(
+            registry.glob_search,
+            sandbox_id,
+            **request.model_dump(exclude_none=True),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -159,7 +348,11 @@ async def glob_search(sandbox_id: str, request: GlobSearchRequest):
 @app.get("/sandboxes/{sandbox_id}/files/content", dependencies=[Depends(require_internal_token)])
 async def read_file_content(sandbox_id: str, filepath: str):
     try:
-        data = registry.read_file_bytes(filepath, sandbox_id=sandbox_id)
+        data = await asyncio.to_thread(
+            registry.read_file_bytes,
+            filepath,
+            sandbox_id=sandbox_id,
+        )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {filepath}")
     except Exception as e:
@@ -169,20 +362,25 @@ async def read_file_content(sandbox_id: str, filepath: str):
 
 @app.get("/sandboxes/{sandbox_id}/files/exists", dependencies=[Depends(require_internal_token)])
 async def check_file_exists(sandbox_id: str, filepath: str):
-    return {"exists": registry.file_exists(filepath, sandbox_id=sandbox_id)}
+    exists = await asyncio.to_thread(
+        registry.file_exists,
+        filepath,
+        sandbox_id=sandbox_id,
+    )
+    return {"exists": exists}
 
 
 @app.post("/sandboxes/{sandbox_id}/stop", dependencies=[Depends(require_internal_token)])
 async def stop_sandbox(sandbox_id: str):
     """Gracefully stop (state-preserving) this sandbox - resumable later."""
-    stopped = registry.stop_terminal(sandbox_id)
+    stopped = await asyncio.to_thread(registry.stop_terminal, sandbox_id)
     return {"ok": True, "stopped": stopped}
 
 
 @app.post("/sandboxes/{sandbox_id}/destroy", dependencies=[Depends(require_internal_token)])
 async def destroy_sandbox(sandbox_id: str):
     """Permanently delete this sandbox - NOT resumable."""
-    destroyed = registry.destroy_terminal(sandbox_id)
+    destroyed = await asyncio.to_thread(registry.destroy_terminal, sandbox_id)
     return {"ok": True, "destroyed": destroyed}
 
 

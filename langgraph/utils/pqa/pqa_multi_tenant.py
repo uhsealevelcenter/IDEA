@@ -138,9 +138,19 @@ def _docs_revision_path(user_id: Any) -> Path:
     return _docs_cache_dir(user_id) / "revision.txt"
 
 
-def _compute_revision(index_files: dict) -> str:
-    """Compute a stable revision fingerprint from the set of indexed file names."""
-    return hashlib.md5(str(sorted(index_files.keys())).encode()).hexdigest()
+def compute_index_revision(index_files: dict, paper_directory: Path) -> str:
+    """Fingerprint indexed names and bytes so same-ID edits invalidate Docs."""
+    digest = hashlib.sha256()
+    for file_path in sorted(index_files):
+        digest.update(str(file_path).encode("utf-8"))
+        full_path = paper_directory / file_path
+        if not full_path.is_file():
+            digest.update(b"<missing>")
+            continue
+        with full_path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
 
 
 def save_docs_to_disk(user_id: Any, docs: Any, revision: str) -> None:
@@ -239,7 +249,10 @@ def ensure_user_pqa_settings(user_id: Any) -> Path:
     return user_settings_path
 
 
-def get_user_settings(user_id: Any) -> Settings:
+def get_user_settings(
+    user_id: Any,
+    end_user_id: str | None = None,
+) -> Settings:
     """Build a PaperQA Settings object for the user.
     
     This uses the comprehensive Python-based settings from my_pqa_settings.py
@@ -265,6 +278,7 @@ def get_user_settings(user_id: Any) -> Settings:
         paper_directory=user_papers_dir,
         index_directory=user_index_dir,
         manifest_file=user_manifest,
+        end_user_id=end_user_id,
     )
     
     return settings
@@ -329,7 +343,9 @@ async def _build_and_cache_docs(
         clear_docs_cache(user_id)
         return
 
-    revision = _compute_revision(index_files)
+    revision = compute_index_revision(
+        index_files, settings.agent.index.paper_directory
+    )
 
     # Check if already up-to-date on disk
     existing = load_docs_from_disk(user_id, revision)

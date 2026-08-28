@@ -104,7 +104,7 @@ _languages_lock = threading.Lock()
 # per-sandbox_id lock (terminal_registry.py), so this is defense-in-depth,
 # not the primary guarantee: a JupyterLanguage instance's run()/output
 # capture is not safe to call concurrently from two requests at once.
-_exec_lock = threading.Lock()
+_exec_locks: dict[str, threading.Lock] = {}
 
 _LANGUAGE_CLASSES = {
     "python": PythonLanguage,
@@ -112,18 +112,66 @@ _LANGUAGE_CLASSES = {
 }
 
 
-def _get_language(name: str):
+def _new_language(name: str):
+    lang_class = _LANGUAGE_CLASSES[name]
+    if lang_class.__init__.__code__.co_argcount > 1:
+        return lang_class(_StubComputer())
+    return lang_class()
+
+
+def _get_language(name: str, kernel_id: str = "default"):
+    key = (name, kernel_id)
     with _languages_lock:
-        if name not in _languages:
-            lang_class = _LANGUAGE_CLASSES[name]
-            # Mirrors terminal.py's own dynamic check: only Jupyter-backed
-            # Python needs a `computer` reference; Shell's __init__ takes
-            # none.
-            if lang_class.__init__.__code__.co_argcount > 1:
-                _languages[name] = lang_class(_StubComputer())
-            else:
-                _languages[name] = lang_class()
-        return _languages[name]
+        existing = _languages.get(key)
+        if (
+            name == "python"
+            and existing is not None
+            and not existing.is_alive()
+        ):
+            # An OOM-killed/dead child must never poison later executions.
+            # Retire the stale runner; the replacement below starts a fresh
+            # ipykernel while preserving the microVM filesystem.
+            existing.terminate()
+            _languages.pop(key, None)
+        if key not in _languages:
+            _languages[key] = _new_language(name)
+            _exec_locks.setdefault(kernel_id, threading.Lock())
+        return _languages[key]
+
+
+def _kernel_status(kernel_id: str) -> dict:
+    with _languages_lock:
+        runner = _languages.get(("python", kernel_id))
+    return {
+        "kernel_id": kernel_id,
+        "exists": runner is not None,
+        "alive": bool(runner and runner.is_alive()),
+        # The request/stream lock is only a transport serialization detail.
+        # The Jupyter runner's idle event is set exclusively by an IPython
+        # idle message (or kernel termination), so it remains authoritative
+        # even if an HTTP client disconnects while a cell is still running.
+        "executing": bool(runner and not runner.is_execution_idle()),
+    }
+
+
+def _restart_kernel(kernel_id: str) -> dict:
+    """Force-retire one kernel without touching the user's filesystem."""
+    with _languages_lock:
+        runner = _languages.pop(("python", kernel_id), None)
+        # A handler for the retired runner may be wedged while holding the
+        # old lock.  The replacement runner is a distinct process/object, so
+        # give it a distinct lock as well instead of poisoning future calls.
+        _exec_locks[kernel_id] = threading.Lock()
+    if runner is not None:
+        runner.finish_flag = True
+        runner.terminate()
+    return {
+        "kernel_id": kernel_id,
+        "restarted": True,
+        # Creation is lazy so a stuck handler can unwind and release its
+        # execution lock before the replacement accepts work.
+        "replacement": "pending",
+    }
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -137,7 +185,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/run":
+        if self.path not in {
+            "/run", "/run-stream", "/interrupt", "/kernel-status",
+            "/restart-kernel",
+        }:
             self._json(404, {"error": "not found"})
             return
 
@@ -148,6 +199,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid JSON body"})
             return
 
+        kernel_id = str(body.get("kernel_id") or "default")
+        if not kernel_id.replace("_", "").isalnum() or len(kernel_id) > 96:
+            self._json(400, {"error": "invalid kernel_id"})
+            return
+        if self.path == "/interrupt":
+            with _languages_lock:
+                runner = _languages.get(("python", kernel_id))
+            if runner is None:
+                self._json(200, {"interrupted": False})
+                return
+            runner.interrupt_and_drain()
+            self._json(200, {"interrupted": True})
+            return
+        if self.path == "/kernel-status":
+            self._json(200, _kernel_status(kernel_id))
+            return
+        if self.path == "/restart-kernel":
+            self._json(200, _restart_kernel(kernel_id))
+            return
+
         language = body.get("language", "python")
         code = body.get("code", "")
 
@@ -155,17 +226,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(400, {"error": f"unsupported language: {language}"})
             return
 
+        runner = _get_language(language, kernel_id)
+        if self.path == "/run-stream":
+            self._stream_run(runner, code, kernel_id)
+            return
+
         chunks = []
-        with _exec_lock:
+        with _exec_locks[kernel_id]:
             try:
-                runner = _get_language(language)
                 for chunk in runner.run(code):
                     if chunk.get("format") != "active_line":
                         chunks.append(chunk)
             except Exception as e:
-                chunks.append({"type": "console", "format": "output", "content": f"Kernel error: {e}"})
+                chunks.append({"type": "console", "format": "error", "content": f"Kernel error: {e}"})
 
         self._json(200, {"chunks": chunks})
+
+    def _stream_run(self, runner, code: str, kernel_id: str) -> None:
+        """Send each kernel chunk immediately as one NDJSON record."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        try:
+            with _exec_locks[kernel_id]:
+                try:
+                    for chunk in runner.run(code):
+                        if chunk.get("format") != "active_line":
+                            self._ndjson({"event": "chunk", "chunk": chunk})
+                except Exception as exc:
+                    self._ndjson({
+                        "event": "chunk",
+                        "chunk": {
+                            "type": "console",
+                            "format": "error",
+                            "content": f"Kernel error: {exc}",
+                        },
+                    })
+            self._ndjson({"event": "end"})
+        except (BrokenPipeError, ConnectionResetError):
+            # The caller owns run-scoped interruption. A disconnected stream
+            # must not crash the daemon or corrupt the persistent kernel.
+            pass
+
+    def _ndjson(self, payload: dict) -> None:
+        self.wfile.write(json.dumps(payload).encode("utf-8") + b"\n")
+        self.wfile.flush()
 
     def _json(self, status: int, payload: dict):
         data = json.dumps(payload).encode("utf-8")
@@ -183,7 +292,7 @@ class _ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 def main():
     # Warm the Python kernel at boot so the first real /run call isn't
     # slowed down by ipykernel startup.
-    _get_language("python")
+    _get_language("python", "default")
     with _ThreadingServer((HOST, PORT), Handler) as httpd:
         httpd.serve_forever()
 

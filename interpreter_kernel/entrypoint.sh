@@ -32,7 +32,7 @@ OT_PID=$!
 # Give fix_home/the firewall setup a moment; our daemon only needs
 # /home/user and gosu to exist, not Open Terminal to be serving yet.
 sleep 1
-gosu user python3 /opt/oi_kernel/daemon.py &
+gosu user /opt/idea-venv/bin/python /opt/oi_kernel/daemon.py &
 KERNEL_PID=$!
 
 # If either process dies, stop the other rather than limping along with

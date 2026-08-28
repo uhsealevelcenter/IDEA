@@ -14,6 +14,7 @@ to work for the existing shell-command execution path.
 import http.client
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -62,30 +63,147 @@ def ensure_daemon(timeout: float = 60.0) -> None:
     raise RuntimeError("OI kernel daemon did not become healthy in time")
 
 
-def run(code_path: str) -> dict:
+def _post(path: str, body: dict) -> dict:
     ensure_daemon()
-    with open(code_path, "r", encoding="utf-8") as f:
-        code = f.read()
-
-    body = json.dumps({"language": "python", "code": code}).encode("utf-8")
-    # timeout=None: block indefinitely, matching the generous per-command
-    # ceiling already used elsewhere in this stack (sandbox_service's own
-    # 1800s default) - long-running analysis code shouldn't be cut off here.
+    encoded = json.dumps(body).encode("utf-8")
     conn = http.client.HTTPConnection(HOST, PORT, timeout=None)
     try:
-        conn.request("POST", "/run", body=body, headers={"Content-Type": "application/json"})
+        conn.request("POST", path, body=encoded, headers={"Content-Type": "application/json"})
         resp = conn.getresponse()
         return json.loads(resp.read())
     finally:
         conn.close()
 
 
+def _interrupt_daemon(kernel_id: str) -> bool:
+    """Interrupt an already-started daemon without recursively starting it."""
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=5)
+    try:
+        encoded = json.dumps({"kernel_id": kernel_id}).encode("utf-8")
+        conn.request(
+            "POST", "/interrupt", body=encoded,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read())
+        return bool(payload.get("interrupted"))
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def _kernel_control(path: str, kernel_id: str, timeout: float = 8.0) -> dict:
+    """Call a daemon control endpoint without ever waiting indefinitely."""
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=timeout)
+    try:
+        encoded = json.dumps({"kernel_id": kernel_id}).encode("utf-8")
+        conn.request(
+            "POST", path, body=encoded,
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        payload = json.loads(response.read())
+        if response.status != 200:
+            raise RuntimeError(f"kernel control returned HTTP {response.status}")
+        return payload
+    finally:
+        conn.close()
+
+
+def run(code_path: str, kernel_id: str = "default", run_id: str = "") -> dict:
+    with open(code_path, "r", encoding="utf-8") as f:
+        code = f.read()
+    return _post("/run", {
+        "language": "python", "code": code,
+        "kernel_id": kernel_id, "run_id": run_id,
+    })
+
+
+def run_stream(code_path: str, kernel_id: str = "default", run_id: str = "") -> None:
+    """Forward the daemon's NDJSON stream to stdout without buffering it."""
+    with open(code_path, "r", encoding="utf-8") as f:
+        code = f.read()
+    cancel_requested = False
+    request_started = False
+
+    def _handle_interrupt(_signum, _frame) -> None:
+        nonlocal cancel_requested
+        cancel_requested = True
+        # Once the HTTP run has been submitted, forward SIGINT to the
+        # persistent kernel instead of terminating this bridge process.
+        if request_started:
+            _interrupt_daemon(kernel_id)
+
+    previous_sigint = signal.signal(signal.SIGINT, _handle_interrupt)
+    encoded = json.dumps({
+        "language": "python", "code": code,
+        "kernel_id": kernel_id, "run_id": run_id,
+    }).encode("utf-8")
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=None)
+    try:
+        ensure_daemon()
+        if cancel_requested:
+            return
+        request_started = True
+        conn.request(
+            "POST", "/run-stream", body=encoded,
+            headers={"Content-Type": "application/json"},
+        )
+        # Covers SIGINT arriving after request_started was set but before the
+        # daemon had registered the runner. The first forwarding attempt may
+        # correctly have returned False in that narrow interval.
+        if cancel_requested:
+            _interrupt_daemon(kernel_id)
+        resp = conn.getresponse()
+        if resp.status != 200:
+            raise RuntimeError(f"OI kernel daemon returned HTTP {resp.status}: {resp.read()!r}")
+        while True:
+            line = resp.readline()
+            if not line:
+                break
+            sys.stdout.buffer.write(line)
+            sys.stdout.buffer.flush()
+    finally:
+        conn.close()
+        signal.signal(signal.SIGINT, previous_sigint)
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--ensure-daemon":
         ensure_daemon()
         print(json.dumps({"ok": True}))
-    elif len(sys.argv) == 3 and sys.argv[1] == "--run-file":
-        print(json.dumps(run(sys.argv[2])))
+    elif "--run-file" in sys.argv or "--run-stream-file" in sys.argv:
+        option = "--run-stream-file" if "--run-stream-file" in sys.argv else "--run-file"
+        code_path = sys.argv[sys.argv.index(option) + 1]
+        kernel_id = (
+            sys.argv[sys.argv.index("--kernel-id") + 1]
+            if "--kernel-id" in sys.argv else "default"
+        )
+        run_id = (
+            sys.argv[sys.argv.index("--run-id") + 1]
+            if "--run-id" in sys.argv else ""
+        )
+        if option == "--run-stream-file":
+            run_stream(code_path, kernel_id, run_id)
+        else:
+            print(json.dumps(run(code_path, kernel_id, run_id)))
+    elif "--interrupt" in sys.argv:
+        kernel_id = (
+            sys.argv[sys.argv.index("--kernel-id") + 1]
+            if "--kernel-id" in sys.argv else "default"
+        )
+        print(json.dumps(_kernel_control("/interrupt", kernel_id)))
+    elif "--kernel-status" in sys.argv or "--restart-kernel" in sys.argv:
+        kernel_id = (
+            sys.argv[sys.argv.index("--kernel-id") + 1]
+            if "--kernel-id" in sys.argv else "default"
+        )
+        endpoint = (
+            "/restart-kernel"
+            if "--restart-kernel" in sys.argv else "/kernel-status"
+        )
+        print(json.dumps(_kernel_control(endpoint, kernel_id)))
     else:
-        print(json.dumps({"error": "usage: client.py --ensure-daemon | --run-file <path>"}))
+        print(json.dumps({"error": "usage: client.py --ensure-daemon | --run-file <path> | --run-stream-file <path> | --interrupt | --kernel-status | --restart-kernel"}))
         sys.exit(1)

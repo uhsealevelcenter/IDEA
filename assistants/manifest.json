@@ -1,0 +1,117 @@
+{
+  "base_model_id": "idea-terminal-agent",
+  "base_model_name": "IDEA Agent",
+  "base_model_logo": "assets/idea.png",
+  "default_assistant_id": "welcome-assistant",
+  "welcome_suggestion_assistant_ids": ["cindra"],
+  "default_suggestion_prompts": [
+    {
+      "title": ["Explore IDEA", "See what it can do"],
+      "content": "Give me a concise tour of IDEA's main capabilities and suggest a good first task to try."
+    },
+    {
+      "title": ["Analyze data", "Start with an upload"],
+      "content": "Show me how to upload a scientific dataset and ask IDEA to inspect, summarize, and visualize it."
+    },
+    {
+      "title": ["Plot a climate index", "Try a reproducible demo"],
+      "content": "Demonstrate IDEA by retrieving and plotting the Oceanic Niño Index, then briefly explain the result."
+    },
+    {
+      "title": ["Search literature", "Use a Literature collection"],
+      "content": "Explain how to add scientific papers as a Literature collection and ask evidence-based questions about them."
+    },
+    {
+      "title": ["Build an Assistant", "Create your own IDEA"],
+      "content": "Walk me through creating a custom Assistant with specialized instructions and suggested prompts."
+    },
+    {
+      "title": ["Work reproducibly", "Code, files, and outputs"],
+      "content": "Explain how IDEA uses its Python kernel, workspace files, and downloadable outputs to keep an analysis reproducible."
+    }
+  ],
+  "assistants": [
+    {
+      "id": "welcome-assistant",
+      "name": "Welcome Assistant",
+      "description": "Introduces IDEA, explains its capabilities, and helps users get started.",
+      "paperqa_enabled": true,
+      "prompt": "prompts/welcome.md",
+      "prompt_ends_with_newline": false,
+      "logo": "assets/idea.png",
+      "tags": ["IDEA", "Getting Started"]
+    },
+    {
+      "id": "sea",
+      "name": "SEA",
+      "description": "Analyzes UHSLC sea-level, tide, datum, benchmark, and coastal-flooding data.",
+      "paperqa_enabled": true,
+      "prompt": "prompts/sea.md",
+      "prompt_ends_with_newline": true,
+      "logo": "assets/uhslc.png",
+      "tags": ["IDEA", "Sea Level", "UHSLC"],
+      "suggestion_prompts": [
+        {
+          "title": ["Plot sea level", "Honolulu station 057"],
+          "content": "Plot the last six months of hourly sea level for Honolulu (station 057) relative to Station Zero."
+        },
+        {
+          "title": ["Estimate a trend", "Use the full daily record"],
+          "content": "Estimate and plot the annualized sea-level trend for Honolulu (station 057) using the full daily Fast Delivery record."
+        },
+        {
+          "title": ["Explain datums", "MSL, MHHW, and HAT"],
+          "content": "Retrieve the datum table for Honolulu (station 057) and explain the relationships among MSL, MHHW, HAT, and Station Zero."
+        },
+        {
+          "title": ["Check recent water levels", "Observation versus prediction"],
+          "content": "Compare recent RAPID observations and tide predictions for Honolulu (station 057), and summarize the residuals."
+        },
+        {
+          "title": ["Explore benchmarks", "Map station monuments"],
+          "content": "Map and summarize the tide-gauge benchmarks associated with Honolulu station 057, including available photographs."
+        },
+        {
+          "title": ["Assess flooding", "Compare with tidal datums"],
+          "content": "Assess recent coastal flooding potential at Honolulu station 057 by comparing consistent-unit water levels with MHHW and HAT."
+        }
+      ]
+    },
+    {
+      "id": "mars-assistant",
+      "name": "Mars Assistant",
+      "description": "Explores NASA InSight atmospheric observations, Mars time, imagery, and mission science.",
+      "paperqa_enabled": true,
+      "prompt": "prompts/mars.md",
+      "prompt_ends_with_newline": false,
+      "logo": "assets/mars.png",
+      "tags": ["IDEA", "Mars", "InSight"],
+      "suggestion_prompts": [
+        {
+          "title": ["Plot pressure", "Explore InSight sol 100"],
+          "content": "Load InSight pressure observations for sol 100, validate the data, and plot pressure with both sol and UTC context."
+        },
+        {
+          "title": ["Explore temperature", "Summarize a Martian day"],
+          "content": "Analyze the TWINS air-temperature observations for sol 200 and summarize the diurnal temperature cycle."
+        },
+        {
+          "title": ["Convert Mars time", "Relate sols to UTC"],
+          "content": "Convert InSight sol 675 to its approximate UTC date and explain the Martian-sol conversion."
+        },
+        {
+          "title": ["Compare pressure", "Look across multiple sols"],
+          "content": "Compare validated InSight pressure patterns for sols 100, 200, and 300 using a consistent time resolution."
+        },
+        {
+          "title": ["Inspect an image", "View the InSight landing site"],
+          "content": "Display and scientifically describe one of the sample InSight surface images from sol 675."
+        },
+        {
+          "title": ["Review the mission", "Atmospheric science overview"],
+          "content": "Give me a concise overview of the InSight mission's atmospheric instruments, datasets, and promising analysis questions."
+        }
+      ]
+    }
+  ]
+}

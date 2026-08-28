@@ -10,8 +10,10 @@ is allowed to live - the langgraph service that calls into this over HTTP
 """
 
 import os
+import signal
 import threading
 import time
+import uuid
 import pexpect
 
 from msb_sandbox import MicrosandboxTerminal, microsandbox_available
@@ -20,6 +22,18 @@ from msb_sandbox import MicrosandboxTerminal, microsandbox_available
 # otherwise falls back to a plain local shell. Override with "local" or
 # "microsandbox" to force a specific backend (e.g. local dev on a Mac with no KVM).
 SANDBOX_BACKEND = os.getenv("SANDBOX_BACKEND", "auto")
+PYTHON_INTERRUPT_GRACE_SECONDS = float(
+    os.getenv("SANDBOX_PYTHON_INTERRUPT_GRACE_SECONDS", "7")
+)
+PYTHON_KERNEL_RECOVERY_GRACE_SECONDS = float(
+    os.getenv("SANDBOX_PYTHON_KERNEL_RECOVERY_GRACE_SECONDS", "5")
+)
+PYTHON_EXECUTION_TIMEOUT_SECONDS = float(
+    os.getenv("SANDBOX_PYTHON_EXECUTION_TIMEOUT_SECONDS", "1800")
+)
+PYTHON_RUN_STATUS_TTL_SECONDS = float(
+    os.getenv("SANDBOX_PYTHON_RUN_STATUS_TTL_SECONDS", "3600")
+)
 
 
 class PersistentTerminal:
@@ -193,6 +207,26 @@ class PersistentTerminal:
 _terminals: dict = {}
 _terminal_locks: dict = {}
 _registry_lock = threading.Lock()
+_active_python_runs: dict[str, tuple] = {}
+_cancelled_python_runs: set[str] = set()
+_python_run_completion: dict[str, threading.Event] = {}
+_python_run_recovery: dict[str, dict] = {}
+_python_recovery_started: set[str] = set()
+_active_codex_runs: dict[str, tuple[str, object]] = {}
+
+
+def _prune_python_run_state_locked(now: float) -> None:
+    """Bound retained recovery metadata without touching active runs."""
+    expired = [
+        run_id for run_id, status in _python_run_recovery.items()
+        if run_id not in _active_python_runs
+        and now - float(status.get("updated_at") or now)
+        > PYTHON_RUN_STATUS_TTL_SECONDS
+    ]
+    for run_id in expired:
+        _python_run_recovery.pop(run_id, None)
+        _python_run_completion.pop(run_id, None)
+        _python_recovery_started.discard(run_id)
 
 
 def _use_microsandbox() -> bool:
@@ -303,7 +337,39 @@ def write_file(filepath: str, content: str, sandbox_id: str, append: bool = Fals
                 f.write(content)
 
 
-def run_python(code: str, sandbox_id: str) -> dict:
+def write_file_bytes(filepath: str, source, sandbox_id: str) -> None:
+    """Atomically stream raw bytes into sandbox_id's private filesystem."""
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if isinstance(terminal, MicrosandboxTerminal):
+            terminal.write_file_bytes(filepath, source)
+            return
+
+        dirpath = os.path.dirname(filepath)
+        if dirpath:
+            os.makedirs(dirpath, exist_ok=True)
+        temporary_path = f"{filepath}.idea-upload-{uuid.uuid4().hex}"
+        try:
+            with open(temporary_path, "wb") as output:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+            os.replace(temporary_path, filepath)
+        finally:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+
+
+def run_python(
+    code: str,
+    sandbox_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+) -> dict:
     """
     Execute Python code in sandbox_id's persistent kernel (microsandbox
     backend only - see MicrosandboxTerminal.run_python). The local pexpect
@@ -314,11 +380,19 @@ def run_python(code: str, sandbox_id: str) -> dict:
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
         if isinstance(terminal, MicrosandboxTerminal):
-            return terminal.run_python(code)
+            if run_id:
+                with _registry_lock:
+                    _active_python_runs[run_id] = (sandbox_id, kernel_id, terminal)
+            try:
+                return terminal.run_python(code, kernel_id=kernel_id, run_id=run_id)
+            finally:
+                if run_id:
+                    with _registry_lock:
+                        _active_python_runs.pop(run_id, None)
         return {
             "chunks": [{
                 "type": "console",
-                "format": "output",
+                "format": "error",
                 "content": (
                     "✗ Persistent Python kernel requires the microsandbox "
                     "backend (SANDBOX_BACKEND=microsandbox|auto with a "
@@ -327,6 +401,318 @@ def run_python(code: str, sandbox_id: str) -> dict:
                 ),
             }]
         }
+
+
+def _set_python_recovery_state(run_id: str, state: str, **details) -> None:
+    with _registry_lock:
+        _prune_python_run_state_locked(time.time())
+        current = dict(_python_run_recovery.get(run_id) or {})
+        current.update({"run_id": run_id, "state": state, **details})
+        current["updated_at"] = time.time()
+        _python_run_recovery[run_id] = current
+
+
+def get_python_run_status(run_id: str, sandbox_id: str = "") -> dict:
+    with _registry_lock:
+        _prune_python_run_state_locked(time.time())
+        active = run_id in _active_python_runs
+        status = dict(_python_run_recovery.get(run_id) or {})
+        recorded_sandbox = str(status.get("sandbox_id") or "")
+        if sandbox_id and recorded_sandbox and recorded_sandbox != sandbox_id:
+            status = {}
+            active = False
+    if not status:
+        status = {"run_id": run_id, "state": "running" if active else "unknown"}
+    status["active"] = active
+    return status
+
+
+def _recover_python_run(run_id: str, reason: str) -> None:
+    """Escalate outside the execution lock until this run releases it."""
+    with _registry_lock:
+        completion = _python_run_completion.get(run_id)
+        active = _active_python_runs.get(run_id)
+    if completion is None:
+        return
+
+    _set_python_recovery_state(run_id, "interrupt_requested", reason=reason)
+    if active and len(active) > 2 and isinstance(active[2], MicrosandboxTerminal):
+        signal_sent = active[2].signal_python_run(run_id, signal.SIGINT)
+        _set_python_recovery_state(
+            run_id,
+            "interrupt_sent" if signal_sent else "interrupt_unavailable",
+            reason=reason,
+        )
+
+    transport_completed = completion.wait(PYTHON_INTERRUPT_GRACE_SECONDS)
+    if transport_completed and active and len(active) > 2 and isinstance(
+        active[2], MicrosandboxTerminal
+    ):
+        kernel_status = active[2].python_kernel_status(str(active[1]))
+        if (
+            kernel_status is not None
+            and kernel_status.get("alive") is True
+            and kernel_status.get("executing") is False
+        ):
+            _set_python_recovery_state(
+                run_id, "terminated", reason=reason, kernel_preserved=True,
+                kernel_status=kernel_status,
+            )
+            return
+        # A closed client/HTTP stream is not proof that the submitted cell
+        # stopped. Missing, dead, or still-executing status must fail safe to
+        # kernel replacement while retaining the microVM filesystem.
+        _set_python_recovery_state(
+            run_id, "interrupt_unconfirmed", reason=reason,
+            kernel_status=kernel_status,
+        )
+    elif transport_completed:
+        _set_python_recovery_state(
+            run_id, "terminated", reason=reason, kernel_preserved=True
+        )
+        return
+
+    with _registry_lock:
+        # The transport may already have unwound and removed its registry
+        # entry even though the guest kernel is still executing. Retain the
+        # original terminal reference for precisely that escalation case.
+        active = _active_python_runs.get(run_id) or active
+    if not active or len(active) < 3 or not isinstance(
+        active[2], MicrosandboxTerminal
+    ):
+        # Cancellation during VM creation is remembered; submission checks the
+        # marker before running Python and will complete without escalation.
+        _set_python_recovery_state(run_id, "interrupt_pending", reason=reason)
+        return
+
+    sandbox_id, kernel_id, terminal = active[:3]
+    _set_python_recovery_state(
+        run_id, "kernel_restarting", reason=reason, kernel_preserved=False
+    )
+    kernel_restarted = terminal.restart_python_kernel(kernel_id)
+    terminal.signal_python_run(run_id, signal.SIGTERM)
+    terminal.signal_python_run(run_id, signal.SIGKILL)
+    # Some runtimes serialize guest shell requests. Once the stale bridge is
+    # gone, give the kernel-only recovery endpoint one final bounded attempt
+    # before escalating to a whole-VM stop/resume.
+    if not kernel_restarted:
+        kernel_restarted = terminal.restart_python_kernel(kernel_id)
+    if kernel_restarted:
+        _set_python_recovery_state(
+            run_id, "kernel_restarted", reason=reason,
+            kernel_preserved=False, filesystem_preserved=True,
+        )
+        if completion.wait(PYTHON_KERNEL_RECOVERY_GRACE_SECONDS):
+            return
+
+    _set_python_recovery_state(
+        run_id, "sandbox_restarting", reason=reason,
+        kernel_preserved=False, filesystem_preserved=True,
+    )
+    sandbox_restarted = terminal.recover_sandbox(run_id)
+    if sandbox_restarted:
+        # The old stream may still own the old Lock object even though its VM
+        # and guest processes are gone. Rotate the registry lock only after a
+        # successful stop/resume so new work cannot be blocked by that orphan.
+        with _registry_lock:
+            _terminal_locks[sandbox_id] = threading.Lock()
+        _set_python_recovery_state(
+            run_id, "sandbox_restarted", reason=reason,
+            kernel_preserved=False, filesystem_preserved=True,
+        )
+    else:
+        _set_python_recovery_state(
+            run_id, "recovery_failed", reason=reason,
+            kernel_preserved=False, filesystem_preserved=True,
+        )
+
+
+def _start_python_recovery(run_id: str, reason: str) -> bool:
+    with _registry_lock:
+        if run_id in _python_recovery_started:
+            return False
+        if run_id not in _python_run_completion:
+            return False
+        _python_recovery_started.add(run_id)
+
+    def _worker() -> None:
+        try:
+            _recover_python_run(run_id, reason)
+        finally:
+            with _registry_lock:
+                _python_recovery_started.discard(run_id)
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name=f"python-recovery-{run_id[:12]}",
+    ).start()
+    return True
+
+
+def _python_execution_watchdog(run_id: str) -> None:
+    with _registry_lock:
+        completion = _python_run_completion.get(run_id)
+    if completion is None or PYTHON_EXECUTION_TIMEOUT_SECONDS <= 0:
+        return
+    if completion.wait(PYTHON_EXECUTION_TIMEOUT_SECONDS):
+        return
+    with _registry_lock:
+        _cancelled_python_runs.add(run_id)
+    _start_python_recovery(run_id, "execution_timeout")
+
+
+def run_python_stream(
+    code: str,
+    sandbox_id: str,
+    kernel_id: str = "default",
+    run_id: str = "",
+):
+    """Yield Python chunks while retaining the per-sandbox execution lock."""
+    # Register before _get_terminal(): creating/resuming a microVM and warming
+    # its kernel can take tens of seconds. Stop must be remembered during that
+    # window instead of returning False and allowing Python to start afterward.
+    if run_id:
+        with _registry_lock:
+            _active_python_runs[run_id] = (sandbox_id, kernel_id, None, "stream")
+            _python_run_completion[run_id] = threading.Event()
+            _python_recovery_started.discard(run_id)
+            _python_run_recovery[run_id] = {
+                "run_id": run_id,
+                "sandbox_id": sandbox_id,
+                "state": "starting",
+                "updated_at": time.time(),
+            }
+        threading.Thread(
+            target=_python_execution_watchdog,
+            args=(run_id,),
+            daemon=True,
+            name=f"python-deadline-{run_id[:12]}",
+        ).start()
+    try:
+        terminal = _get_terminal(sandbox_id)
+        with _get_lock(sandbox_id):
+            if not isinstance(terminal, MicrosandboxTerminal):
+                yield {
+                    "type": "console", "format": "error",
+                    "content": "✗ Streaming Python requires the microsandbox backend.",
+                }
+                return
+            if run_id:
+                with _registry_lock:
+                    _active_python_runs[run_id] = (
+                        sandbox_id, kernel_id, terminal, "stream"
+                    )
+                    cancelled = run_id in _cancelled_python_runs
+                if cancelled:
+                    return
+                _set_python_recovery_state(run_id, "running")
+            yield from terminal.run_python_stream(
+                code,
+                kernel_id=kernel_id,
+                run_id=run_id,
+                cancelled=(
+                    lambda: _python_run_cancelled(run_id)
+                    if run_id else False
+                ),
+            )
+            if run_id:
+                recovery = get_python_run_status(run_id)
+                if recovery.get("state") in {
+                    "kernel_restarted", "sandbox_restarted"
+                }:
+                    yield {
+                        "type": "console",
+                        "format": "error",
+                        "error_type": recovery["state"],
+                        "kernel_lost": True,
+                        "content": (
+                            "Python did not stop cleanly, so IDEA replaced "
+                            "the Python kernel. Workspace files were preserved, "
+                            "but Python variables were cleared."
+                            if recovery["state"] == "kernel_restarted" else
+                            "Python and its control process stopped responding, "
+                            "so IDEA restarted the sandbox. Workspace files were "
+                            "preserved, but Python variables were cleared."
+                        ),
+                    }
+    finally:
+        if run_id:
+            with _registry_lock:
+                completion = _python_run_completion.get(run_id)
+                if completion is not None:
+                    completion.set()
+                _active_python_runs.pop(run_id, None)
+                _cancelled_python_runs.discard(run_id)
+                current = _python_run_recovery.get(run_id) or {}
+                if current.get("state") in {"starting", "running"}:
+                    current.update({"state": "released", "updated_at": time.time()})
+                    _python_run_recovery[run_id] = current
+
+
+def _python_run_cancelled(run_id: str) -> bool:
+    with _registry_lock:
+        return run_id in _cancelled_python_runs
+
+
+def run_codex(request: dict, sandbox_id: str) -> dict:
+    """Execute Codex inside the user's microVM; never fall back to the host."""
+    terminal = _get_terminal(sandbox_id)
+    if not isinstance(terminal, MicrosandboxTerminal):
+        return {
+            "ok": False,
+            "status": "failed",
+            "error": (
+                "Codex delegation requires the microsandbox backend and an "
+                "IDEA guest image containing the Codex runner."
+            ),
+            "events": [],
+        }
+    run_id = str(request.get("run_id", ""))
+    with _get_lock(sandbox_id):
+        if run_id:
+            with _registry_lock:
+                _active_codex_runs[run_id] = (sandbox_id, terminal)
+        try:
+            return terminal.run_codex(request)
+        finally:
+            if run_id:
+                with _registry_lock:
+                    _active_codex_runs.pop(run_id, None)
+
+
+def interrupt_run(sandbox_id: str, run_id: str) -> bool:
+    """Interrupt without taking the sandbox execution lock held by the run."""
+    streaming = False
+    with _registry_lock:
+        active_codex = _active_codex_runs.get(run_id)
+        active = _active_python_runs.get(run_id)
+        # Check and record streaming cancellation in one critical section.
+        # Otherwise a run could finish between lookup and insertion, leaving
+        # a stale cancellation marker for an already-completed run ID.
+        if (
+            active
+            and active[0] == sandbox_id
+            and len(active) > 3
+            and active[3] == "stream"
+        ):
+            _cancelled_python_runs.add(run_id)
+            streaming = True
+    if streaming:
+        # Return promptly to the UI while a supervisor confirms termination
+        # and escalates only if the cooperative interrupt does not finish.
+        _start_python_recovery(run_id, "user_requested")
+        return True
+    if active_codex and active_codex[0] == sandbox_id:
+        return active_codex[1].interrupt_codex(run_id)
+    if not active or active[0] != sandbox_id:
+        return False
+    _, kernel_id, terminal = active[:3]
+    if terminal is None:
+        return False
+    if not isinstance(terminal, MicrosandboxTerminal):
+        return False
+    return terminal.interrupt_python(kernel_id)
 
 
 def grep_search(sandbox_id: str, **kwargs) -> dict:
