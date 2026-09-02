@@ -18,9 +18,12 @@ source "$OPENRC_FILE"
 DATE="$(date +%F)"
 DUMP_FILE="$STAGING_DIR/idea-db-$DATE.dump"
 APPDATA_FILE="$STAGING_DIR/idea-appdata-$DATE.tgz"
+# Open WebUI is one backup in two objects - a restore needs BOTH of these
+OPENWEBUI_FILES_FILE="$STAGING_DIR/idea-openwebui-files-$DATE.tgz"
+OPENWEBUI_DB_FILE="$STAGING_DIR/idea-openwebui-db-$DATE.db"
 
 cleanup() {
-  rm -f "$DUMP_FILE" "$APPDATA_FILE"
+  rm -f "$DUMP_FILE" "$APPDATA_FILE" "$OPENWEBUI_FILES_FILE" "$OPENWEBUI_DB_FILE"
 }
 trap cleanup EXIT
 
@@ -40,7 +43,36 @@ docker run --rm \
 openstack object create "$SWIFT_CONTAINER" "$DUMP_FILE" --name "idea-db-$DATE.dump"
 openstack object create "$SWIFT_CONTAINER" "$APPDATA_FILE" --name "idea-appdata-$DATE.tgz"
 
-echo "Backup uploaded: idea-db-$DATE.dump, idea-appdata-$DATE.tgz"
+# Open WebUI volume
+# Backup created using SQLite native backup API, per
+# docs.openwebui.com/tutorials/maintenance/backups (via Python - no sqlite3 CLI in the image)
+docker compose exec -T openwebui sh -c '
+set -e
+python - <<PY
+import sqlite3
+src = sqlite3.connect("/app/backend/data/webui.db")
+dst = sqlite3.connect("/tmp/webui-backup.db")
+with dst:
+    src.backup(dst)
+dst.close()
+src.close()
+PY
+cat /tmp/webui-backup.db
+rm -f /tmp/webui-backup.db
+' > "$OPENWEBUI_DB_FILE"
+
+OPENWEBUI_VOLUME="$(docker volume ls --format '{{.Name}}' | grep -E '_openwebui_data$')"
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$OPENWEBUI_VOLUME":/data:ro \
+  -v "$STAGING_DIR":/backup \
+  alpine tar czf "/backup/idea-openwebui-files-$DATE.tgz" \
+    -C /data --exclude='./webui.db*' --exclude='./cache' .
+
+openstack object create "$SWIFT_CONTAINER" "$OPENWEBUI_DB_FILE" --name "idea-openwebui-db-$DATE.db"
+openstack object create "$SWIFT_CONTAINER" "$OPENWEBUI_FILES_FILE" --name "idea-openwebui-files-$DATE.tgz"
+
+echo "Backup uploaded: idea-db-$DATE.dump, idea-appdata-$DATE.tgz, idea-openwebui-db-$DATE.db, idea-openwebui-files-$DATE.tgz"
 
 # Enforce retention
 CUTOFF="$(date -d "-$RETENTION_DAYS days" +%F 2>/dev/null || date -v -"${RETENTION_DAYS}"d +%F)"
