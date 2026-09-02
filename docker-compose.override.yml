@@ -49,6 +49,7 @@ services:
       - "0.0.0.0:80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-locations.conf:/etc/nginx/snippets/locations.conf:ro
       - ./frontend:/app/frontend:ro,delegated  # Added delegated for better performance
       - ./static:/static:ro  # <--- add this so Nginx sees the same folder
     depends_on:
