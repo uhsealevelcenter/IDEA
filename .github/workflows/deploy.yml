@@ -177,6 +177,16 @@ jobs:
             # Remove the credential from the VM now that all pulls are done;
             # the token also expires when the run ends regardless.
             docker logout ghcr.io
+
+            # Drop this repo's stale images, keeping the running one + 2 rollback targets.
+            # GHCR has been configured to keep more
+            echo "==> Pruning old app images (keeping the 3 most recent)"
+            docker images --format '{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}' ghcr.io/uhsealevelcenter/idea \
+              | sort -r | tail -n +4 | cut -f2 \
+              | xargs -r docker rmi 2>/dev/null || true
+
+            # Cap build cache at 20GB
+            docker builder prune -f -a --keep-storage=20GB || true
           REMOTE
 
       - name: Smoke check
