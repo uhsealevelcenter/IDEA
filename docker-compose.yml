@@ -168,6 +168,11 @@ services:
       - PYTHONUNBUFFERED=1
       # "auto" | "microsandbox" | "local" - see sandbox_service/terminal_registry.py
       - SANDBOX_BACKEND=${SANDBOX_BACKEND:-auto}
+      # Per-microVM local-development limits. The production overlay raises
+      # these defaults; explicit .env values override either profile.
+      - SANDBOX_CPUS=${SANDBOX_CPUS:-1}
+      - SANDBOX_MEMORY_MB=${SANDBOX_MEMORY_MB:-1024}
+      - SANDBOX_DISK_MB=${SANDBOX_DISK_MB:-4096}
       # OCI image booted for each new microsandbox VM - see msb_sandbox.py.
       # Published build of interpreter_kernel/ (see that directory's
       # README for how it's built/pushed) - gives sandboxes the persistent
@@ -344,6 +349,10 @@ services:
     environment:
       - WEBUI_NAME=Open WebUI # Per license, Open WebUI NAME and LOGO must remain in their original, prominent locations throughout the application and user interface.
       - ENABLE_OLLAMA_API=false
+      # Allow account requests by default, but require an administrator to
+      # approve each new account before it receives normal user access.
+      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-pending}
       # IDEA executes Python through its own authenticated, persistent
       # LangGraph sandbox kernel. Open WebUI's native code-block Run button
       # and Code Interpreter use a separate Pyodide/Jupyter environment that

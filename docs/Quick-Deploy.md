@@ -35,7 +35,8 @@ or changing defaults.
    `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_SALT`, and
    `LANGFUSE_ENCRYPTION_KEY`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
    host, keep the default `IDEA_CODEX_ENABLED=true` when the published guest
-   image is selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`, `ENABLE_SIGNUP`,
+   image is selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`,
+   `SANDBOX_CPUS`, `SANDBOX_MEMORY_MB`, `SANDBOX_DISK_MB`, `ENABLE_SIGNUP`,
    `CORS_ORIGINS`, registry credentials, and the model names. Blank dedicated
    Codex endpoint/key values currently reuse the external `OPENAI_*` values.
 
@@ -109,9 +110,10 @@ or changing defaults.
    variables beforehand to skip this manual step entirely).
 
 9. In **Admin Panel > Functions > IDEA Agent > Valves**, set
-   `INTERNAL_SERVICE_TOKEN` to the same value used in `.env`, then disable
-   public signup if required and restart the services after any `.env`
-   changes:
+   `INTERNAL_SERVICE_TOKEN` to the same value used in `.env`. Signup is
+   enabled by default and new accounts enter the pending approval queue;
+   override `ENABLE_SIGNUP=false` only if required. Restart the services
+   after any `.env` changes:
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.prod.yml \

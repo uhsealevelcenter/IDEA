@@ -21,7 +21,7 @@ async def ensure_missing(name: str) -> None:
     raise RuntimeError(f"refusing to replace existing sandbox {name!r}")
 
 
-def validate(image: str, name: str) -> None:
+def validate(image: str, name: str, disk_mb: int = 4096) -> None:
     if not re.fullmatch(r"idea-image-smoke-[A-Za-z0-9_-]+", name):
         raise ValueError("test sandbox name must start with 'idea-image-smoke-'")
     asyncio.run(ensure_missing(name))
@@ -34,6 +34,7 @@ def validate(image: str, name: str) -> None:
             image=image,
             cpus=2,
             memory=4096,
+            disk_mb=disk_mb,
             idle_timeout=None,
             max_duration=None,
             shared_data_host_path="",
@@ -49,6 +50,20 @@ def validate(image: str, name: str) -> None:
         )
         if "42" not in json.dumps(payload):
             raise RuntimeError(f"persistent kernel did not return 42: {payload}")
+
+        success, root_size, _ = terminal.run(
+            "df -BM --output=size / | tail -n 1"
+        )
+        match = re.search(r"(\d+)M", root_size)
+        if not success or match is None:
+            raise RuntimeError(f"could not inspect guest root capacity: {root_size}")
+        # ext4 metadata and reserved blocks make the reported filesystem
+        # slightly smaller than the configured sparse upper-disk capacity.
+        if int(match.group(1)) < int(disk_mb * 0.9):
+            raise RuntimeError(
+                f"guest root capacity is smaller than requested: {root_size} "
+                f"for {disk_mb} MiB"
+            )
 
         # Open Terminal is intentionally started lazily by this call because
         # detached microsandbox guests do not execute OCI entrypoints.
@@ -75,8 +90,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", default="idea/oi-kernel:research-local")
     parser.add_argument("--name", default="idea-image-smoke-local")
+    parser.add_argument("--disk-mb", type=int, default=4096)
     args = parser.parse_args()
-    validate(args.image, args.name)
+    validate(args.image, args.name, args.disk_mb)
 
 
 if __name__ == "__main__":

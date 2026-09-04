@@ -267,11 +267,12 @@ the canonical template.
   ```
   Paste the output as `WEBUI_SECRET_KEY=...` in `.env`.
 
-- **`ENABLE_SIGNUP`** - `true`/`false`, no generation needed. Controls
-  whether Open WebUI's own sign-up page accepts new accounts. Leave `true`
-  for the first deploy (the first account created becomes admin - see
-  "Running it" above), then set to `false` afterward to stop further
-  self-service sign-ups if this instance isn't meant to be open to anyone.
+- **`ENABLE_SIGNUP`** - `true`/`false`, no generation needed. Defaults to
+  `true`, allowing Open WebUI's sign-up page to accept account requests.
+- **`DEFAULT_USER_ROLE`** - defaults to `pending`, placing new accounts in
+  the administrator approval queue rather than granting normal user access.
+  Set `ENABLE_SIGNUP=false` only when an instance should stop accepting new
+  account requests.
 
 - **`OPENWEBUI_BASE_URL`** - no generation needed for the default setup.
   This is `langgraph`'s address for reaching `openwebui` over the Docker
