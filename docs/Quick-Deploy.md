@@ -35,7 +35,8 @@ or changing defaults.
    `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_SALT`, and
    `LANGFUSE_ENCRYPTION_KEY`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
    host, keep the default `IDEA_CODEX_ENABLED=true` when the published guest
-   image is selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`, `ENABLE_SIGNUP`,
+   image is selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`,
+   `SANDBOX_CPUS`, `SANDBOX_MEMORY_MB`, `SANDBOX_DISK_MB`, `ENABLE_SIGNUP`,
    `CORS_ORIGINS`, registry credentials, and the model names. Blank dedicated
    Codex endpoint/key values currently reuse the external `OPENAI_*` values.
 

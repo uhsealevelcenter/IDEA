@@ -30,9 +30,29 @@ from typing import Callable, Optional
 # that function instead since fcntl doesn't exist on non-POSIX platforms.
 _KVM_GET_API_VERSION = 0xAE00
 
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer environment setting with a clear error."""
+    raw_value = os.getenv(name, str(default)).strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{name} must be a positive integer, got {raw_value!r}"
+        ) from exc
+    if value <= 0:
+        raise ValueError(
+            f"{name} must be a positive integer, got {raw_value!r}"
+        )
+    return value
+
+
 DEFAULT_IMAGE = os.getenv("SANDBOX_IMAGE", "python")
-DEFAULT_CPUS = int(os.getenv("SANDBOX_CPUS", "1"))
-DEFAULT_MEMORY_MB = int(os.getenv("SANDBOX_MEMORY_MB", "1024"))
+DEFAULT_CPUS = _positive_int_env("SANDBOX_CPUS", 1)
+DEFAULT_MEMORY_MB = _positive_int_env("SANDBOX_MEMORY_MB", 1024)
+DEFAULT_DISK_MB = _positive_int_env("SANDBOX_DISK_MB", 4096)
 # Optional absolute directory inside the sandbox-service container which is
 # exposed read-only at /app/data in every microVM. docker-compose.yml mounts
 # the administrator-managed idea_shared_data volume here. Leaving it unset
@@ -162,6 +182,7 @@ class MicrosandboxTerminal:
         image: str = DEFAULT_IMAGE,
         cpus: int = DEFAULT_CPUS,
         memory: int = DEFAULT_MEMORY_MB,
+        disk_mb: int = DEFAULT_DISK_MB,
         idle_timeout: Optional[int] = DEFAULT_IDLE_TIMEOUT,
         max_duration: Optional[int] = DEFAULT_MAX_DURATION,
         shared_data_host_path: str = DEFAULT_SHARED_DATA_HOST_PATH,
@@ -170,6 +191,7 @@ class MicrosandboxTerminal:
         self.image = image
         self.cpus = cpus
         self.memory = memory
+        self.disk_mb = disk_mb
         self.idle_timeout = idle_timeout
         self.max_duration = max_duration
         self.shared_data_host_path = shared_data_host_path
@@ -247,7 +269,7 @@ class MicrosandboxTerminal:
             return self._run(coro_factory, timeout=timeout)
 
     def _connect_or_create(self):
-        from microsandbox import Sandbox
+        from microsandbox import Image, Sandbox
         from microsandbox.errors import SandboxNotFoundError
 
         async def _get_sandbox():
@@ -266,7 +288,10 @@ class MicrosandboxTerminal:
 
             if handle is None:
                 create_kwargs = dict(
-                    image=self.image,
+                    image=Image.oci(
+                        self.image,
+                        upper_size_mib=self.disk_mb,
+                    ),
                     cpus=self.cpus,
                     memory=self.memory,
                     detached=True,

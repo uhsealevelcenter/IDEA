@@ -168,6 +168,11 @@ services:
       - PYTHONUNBUFFERED=1
       # "auto" | "microsandbox" | "local" - see sandbox_service/terminal_registry.py
       - SANDBOX_BACKEND=${SANDBOX_BACKEND:-auto}
+      # Per-microVM local-development limits. The production overlay raises
+      # these defaults; explicit .env values override either profile.
+      - SANDBOX_CPUS=${SANDBOX_CPUS:-1}
+      - SANDBOX_MEMORY_MB=${SANDBOX_MEMORY_MB:-1024}
+      - SANDBOX_DISK_MB=${SANDBOX_DISK_MB:-4096}
       # OCI image booted for each new microsandbox VM - see msb_sandbox.py.
       # Published build of interpreter_kernel/ (see that directory's
       # README for how it's built/pushed) - gives sandboxes the persistent

@@ -11,6 +11,14 @@ version: '3.8'
 # details.
 
 services:
+  sandbox:
+    # Per-microVM production defaults for the current 8-CPU, 30-GB RAM,
+    # 250-GB disk hosts. Explicit .env values can still override them.
+    environment:
+      - SANDBOX_CPUS=${SANDBOX_CPUS:-2}
+      - SANDBOX_MEMORY_MB=${SANDBOX_MEMORY_MB:-4096}
+      - SANDBOX_DISK_MB=${SANDBOX_DISK_MB:-10240}
+
   nginx:
     # Pinned by digest (was floating :alpine).
     image: nginx@sha256:1a8724a52d432501548a8d8681bb1554c2d09778f8b9ed0882fc3442549980b7
