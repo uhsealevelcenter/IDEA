@@ -1,0 +1,141 @@
+# LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
+# `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
+# endpoint. IDEA_AGENT_MODEL selects Sol or Terra for primary chat;
+# gpt-5.6-luna is available to Open WebUI for background task generation.
+
+model_list:
+
+    # Keep both primary aliases available. Switching IDEA_AGENT_MODEL between
+  # gpt-5.6-terra and gpt-5.6-sol then requires no proxy-config edit.
+  - model_name: gpt-5.5
+    litellm_params:
+      model: openai/gpt-5.5
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
+  # Keep both primary aliases available. Switching IDEA_AGENT_MODEL between
+  # gpt-5.6-terra and gpt-5.6-sol then requires no proxy-config edit.
+  - model_name: gpt-5.6-terra
+    litellm_params:
+      model: openai/gpt-5.6-terra
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
+  - model_name: gpt-5.6-sol
+    litellm_params:
+      # "openai/" provider (not "azure/") since OPENAI_BASE_URL is the
+      # unified Azure AI Foundry OpenAI-compatible endpoint (e.g.
+      # https://<resource>.services.ai.azure.com/openai/v1), not the
+      # legacy Azure OpenAI SDK endpoint that needs api_version/deployment
+      # IDs - same convention langgraph's ChatOpenAI usage relies on.
+      model: openai/gpt-5.6-sol
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
+  - model_name: gpt-5.6-luna
+    litellm_params:
+      model: openai/gpt-5.6-luna
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: embedding
+
+general_settings:
+  # Admin/virtual-key auth for this proxy - see example.env's
+  # LITELLM_MASTER_KEY (distinct from INTERNAL_SERVICE_TOKEN, which guards
+  # langgraph<->sandbox instead).
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+  # Dedicated `litellm` Postgres role + schema on the existing `db`
+  # service's database - see litellm/init_litellm_db.sql and
+  # docker-compose.yml's `litellm` service (LITELLM_DATABASE_URL is
+  # assembled there from LITELLM_DB_PASSWORD, since env_file values in
+  # .env are not variable-expanded).
+  database_url: os.environ/LITELLM_DATABASE_URL
+
+  # Don't re-display the master key through API surfaces (e.g. GET
+  # /user/info) after initial setup.
+  disable_master_key_return: true
+
+  # If the DB is unreachable, do not fall back to "best effort" traffic
+  # without normal DB-backed checks - keep virtual-key validation and
+  # spend tracking intact rather than risking untracked LLM calls.
+  allow_requests_on_db_unavailable: false
+
+  # Persist prompts/completions in the spend-logs table (DB).
+  # TODO(vision-privacy): redact or omit image data-URI payloads from spend
+  # logs before treating uploaded-image vision as suitable for sensitive
+  # deployments. This follow-up is intentionally deferred; see
+  # langgraph/IMPLEMENTATION_STATUS.md.
+  store_prompts_in_spend_logs: true
+
+  proxy_batch_write_at: 60 # Batch-write spend updates every 60s.
+  database_connection_pool_limit: 10 # Per worker process; total = limit x workers x instances.
+
+  # --- Abuse / capacity guardrails ---
+  # Generous enough for normal LLM traffic, but catches runaway
+  # requests/misconfigurations before they consume excess proxy memory or
+  # provider tokens. Adjust to actual workload if this ever gets busy.
+  max_response_size_mb: 32
+  max_parallel_requests: 50
+  global_max_parallel_requests: 250
+
+litellm_settings:
+  set_verbose: false # Disable debug logging in production.
+  json_logs: true # Structured (JSON) logs.
+  # Send every request/response (langgraph's TerminalAgent, PaperQA, and Open
+  # WebUI's background-task model all route through this proxy - see
+  # docker-compose.yml's `litellm` service) to the self-hosted `langfuse`
+  # service below as a trace. Reads LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY
+  # / LANGFUSE_HOST from this process's environment (env_file in
+  # docker-compose.yml) - see example.env's Langfuse section. A failure to
+  # reach Langfuse only logs a warning here; it never blocks or fails the
+  # underlying LLM call.
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+  # Bound one provider attempt inside the proxy. LangGraph has a separate,
+  # longer 180-second outer request ceiling so it can classify/report proxy
+  # timeouts and safely retry only before any streamed output.
+  request_timeout: 60
+  # The router fallback below should run immediately when the primary is
+  # throttled. Retrying the same deployment first caused a silent ~30-second
+  # wait in the UI before another 429 response.
+  num_retries: 0
+
+  # Cache responses in the existing `redis` service (see
+  # docker-compose.yml) - same instance langgraph_service.py already uses
+  # for conversation history. No password since that instance has none.
+  cache: true
+  cache_params:
+    type: redis
+    host: os.environ/REDIS_HOST
+    port: os.environ/REDIS_PORT
+    ttl: 3600 # 1 hour
+
+  # Redact virtual-key/team identifiers from logging callbacks (not
+  # applicable here yet, but harmless to leave on); does not affect
+  # store_prompts_in_spend_logs above.
+  redact_user_api_key_info: true
+
+router_settings:
+  # The background-task deployment is also a capable chat/tool model. Use it
+  # when the primary deployment is throttled instead of retrying for minutes.
+  fallbacks:
+    - gpt-5.6-terra:
+        - gpt-5.6-luna
+    - gpt-5.6-sol:
+        - gpt-5.6-luna

@@ -1,0 +1,32 @@
+schema_version = 1
+
+[[datasets]]
+name = "metadata"
+relative_path = "metadata/fd_metadata.geojson"
+kind = "geojson"
+required = true
+
+[[datasets]]
+name = "benchmarks"
+relative_path = "benchmarks/all_benchmarks.json"
+kind = "geojson"
+required = true
+
+[[datasets]]
+name = "altimetry"
+relative_path = "altimetry/cmems_altimetry_regrid.nc"
+kind = "netcdf"
+required = true
+source_url = "https://uhslc.soest.hawaii.edu/mwidlans/dev/SEA/SEAdata/cmems_altimetry_regrid.nc"
+required_variables = [
+  "absolute_dynamic_topography_monthly_anomaly",
+  "absolute_dynamic_topography_monthly_climatology",
+  "absolute_dynamic_topography_fullfield_wDACinc",
+]
+
+[[datasets]]
+name = "insight"
+relative_path = "InSight"
+kind = "directory"
+required = true
+required_globs = ["*.csv"]

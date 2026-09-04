@@ -1,64 +1,78 @@
 version: '3.8'
 
 services:
-  web:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-    container_name: idea_container
-    expose:
-      - "8001"
-    env_file:
-      - .env
-    volumes:
-      - .:/app
-      - ./static:/static
-    environment:
-      - PYTHONUNBUFFERED=1
-      - LOCAL_DEV=1
-      - PQA_HOME=/app/data
-      - PROMPT_DIRECTORY=/app/data/prompts
-    command: uvicorn app:app --reload --reload-exclude mcp_tools.py --host 0.0.0.0 --port 8001
-    depends_on:
-      - redis
-  
   db:
     restart: "no"
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5434:5432" # direct DB access for dev, but localhost-only on a public VM
   
-  frontend:
-      image: python:3.11-alpine
-      ports:
-        - "8000:8000"  # Changed from expose to ports for direct access if needed
-      volumes:
-        - ./frontend:/app/frontend:delegated  # Added delegated for better performance
-      working_dir: /app/frontend
-      command: python -m http.server 8000
-      environment:
-        - PYTHONUNBUFFERED=1
-      depends_on:
-        - web
-
   nginx:
-    image: nginx:alpine
+    # Pinned by digest (was floating :alpine) - currently resolves to
+    # nginx 1.31.2. Re-pin deliberately when you want to move forward.
+    image: nginx@sha256:1a8724a52d432501548a8d8681bb1554c2d09778f8b9ed0882fc3442549980b7
     ports:
       - "0.0.0.0:80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-locations.conf:/etc/nginx/snippets/locations.conf:ro
       - ./frontend:/app/frontend:ro,delegated  # Added delegated for better performance
       - ./static:/static:ro  # <--- add this so Nginx sees the same folder
     depends_on:
-      - web
-      - frontend
+      - openwebui
       
   redis:
-    image: redis:alpine
+    # Pinned by digest (was floating :alpine) - currently resolves to
+    # Redis 8.8.0. Re-pin deliberately when you want to move forward.
+    image: redis@sha256:9eb6a7ba3d344e1958c7e1589fa3dee90373a934e8159c634562a91d622759a0
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6380:6379" # localhost-only so Redis isn't public (containers reach it over the docker network)
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
+
+  langgraph:
+    # Dev-only direct access for debugging (curl localhost:8010, etc.) -
+    # not present in the base docker-compose.yml so production_start.sh
+    # (which does not merge this override file) never publishes this port.
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./langgraph:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SANDBOX_SERVICE_URL=http://sandbox:8020
+    command: uvicorn langgraph_service:app --host 0.0.0.0 --port 8010
+
+  sandbox:
+    # See the matching comment on `langgraph` above. No `command:` override
+    # here (unlike langgraph) - the base image's CMD (["./entrypoint.sh"])
+    # must run so it can configure microsandbox's GHCR registry auth (see
+    # sandbox_service/entrypoint.sh) before it execs the same uvicorn command.
+    ports:
+      - "8020:8020"
+    volumes:
+      - ./sandbox_service:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  litellm:
+    # Dev-only direct access for debugging (curl localhost:8030/health,
+    # the admin UI at /ui, etc.) - not present in the base
+    # docker-compose.yml so production_start.sh never publishes this port.
+    # Host port 8030 (not the container's own 8080) to avoid clashing with
+    # unrelated services already bound to 8080 on this host.
+    ports:
+      - "8030:8080"
+
+  langfuse:
+    # Dev-only direct access to the Langfuse UI (traces, and the one-time
+    # project-creation step that yields LANGFUSE_PUBLIC_KEY/SECRET_KEY - see
+    # example.env). Not present in the base docker-compose.yml, matching the
+    # other dev-only port publishes above.
+    ports:
+      - "3050:3000"
 
 volumes:
   redis_data:

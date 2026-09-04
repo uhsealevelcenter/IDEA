@@ -26,6 +26,7 @@ coverage.xml
 
 # FastAPI
 .env
+.env.old
 
 # IDEs and editors
 .idea/
@@ -158,8 +159,10 @@ cython_debug/
 
 *.pkl
 *.json
+!assistants/manifest.json
 *.csv
 *.png
+!assistants/assets/*.png
 
 /static/
 
@@ -212,3 +215,12 @@ local_scripts/
 .codex/
 !.codex/config.toml
 !.codex/AGENTS.md
+
+.ideaenv
+
+/langgraph/output
+/langgraph/tmp
+
+# SSH keys - never commit
+.ssh/
+/data
