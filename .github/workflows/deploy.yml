@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [dev, staging, prod, next-dev]
+    branches: [dev, staging, next-dev, main]
   # Manual trigger for redeploys / rollbacks without a new commit.
   workflow_dispatch:
     inputs:
@@ -31,8 +31,8 @@ jobs:
           case "${GITHUB_REF_NAME}" in
             dev)      echo "environment=dev"      >> "$GITHUB_OUTPUT" ;;
             staging)  echo "environment=staging"  >> "$GITHUB_OUTPUT" ;;
-            prod)     echo "environment=prod"     >> "$GITHUB_OUTPUT" ;;
             next-dev) echo "environment=next-dev" >> "$GITHUB_OUTPUT" ;;
+            main)     echo "environment=prod"     >> "$GITHUB_OUTPUT" ;;
             *)
               echo "::error::Branch '${GITHUB_REF_NAME}' is not mapped to an environment."
               exit 1
