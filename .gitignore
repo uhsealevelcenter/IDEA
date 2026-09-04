@@ -223,3 +223,4 @@ local_scripts/
 
 # SSH keys - never commit
 .ssh/
+/data
