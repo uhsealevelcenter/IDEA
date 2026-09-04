@@ -349,6 +349,10 @@ services:
     environment:
       - WEBUI_NAME=Open WebUI # Per license, Open WebUI NAME and LOGO must remain in their original, prominent locations throughout the application and user interface.
       - ENABLE_OLLAMA_API=false
+      # Allow account requests by default, but require an administrator to
+      # approve each new account before it receives normal user access.
+      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-pending}
       # IDEA executes Python through its own authenticated, persistent
       # LangGraph sandbox kernel. Open WebUI's native code-block Run button
       # and Code Interpreter use a separate Pyodide/Jupyter environment that
