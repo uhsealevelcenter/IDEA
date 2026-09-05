@@ -339,7 +339,12 @@ services:
     # openwebui/functions/idea_pipe.py still works) whenever moving forward.
     # v0.11.0-idea.0.8 (Git f308fa516): improves shared-conversation and PDF
     # branding/export behavior and isolates unbalanced tool-output fences.
-    image: ghcr.io/uhsealevelcenter/idea-open-webui:0.11.0-idea.0.8@sha256:93b8bfeff1aedd7f9c529ebe4001715b3764a9e79df10740b932605f322f8472
+    # Derived from that same pinned release; adds the missing open_chats
+    # permissions field so the Admin UI can save Chats Open Sharing.
+    build:
+      context: ./openwebui
+      dockerfile: Dockerfile
+    image: idea-openwebui:0.11.0-idea.0.8-open-sharing-fix
     container_name: idea_openwebui
     restart: unless-stopped
     ports:
