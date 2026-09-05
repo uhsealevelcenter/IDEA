@@ -358,3 +358,18 @@ for the underlying agent/sandbox architecture this depends on.
 - Still not handled by the Pipe function: mapping Open WebUI's
   guest/pending-approval users to this repo's own guest-model/guest-scrutiny
   policies beyond the basic `is_guest` flag.
+
+## Open chat sharing compatibility fix
+
+The pinned `0.11.0-idea.0.8` release exposes **Chats Open Sharing** in the UI,
+but omits `open_chats` from the backend `SharingPermissions` schema. Saving
+Default Permissions silently drops that field, so the toggle reopens as off.
+`openwebui/Dockerfile` derives from the same pinned release and adds only
+`open_chats: bool = False`. The Compose service builds this image locally.
+Review/remove the patch when upgrading to a release that includes the field.
+
+Enable **Allow Chat Share** and **Chats Open Sharing** in saved default or
+group permissions. Users must then explicitly select **Open** for each chat
+share link to allow reading without sign-in. Enabling the permission alone
+does not publish any existing conversations. **Public** is limited to
+signed-in users. Environment defaults do not replace saved permissions.
