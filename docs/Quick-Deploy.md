@@ -134,6 +134,37 @@ answer a prompt, run Python, read an uploaded file and image, use PaperQA on
 an attached PDF, delegate one read-only and one workspace-write task to Codex,
 and return a downloadable artifact whose link still works on a later turn.
 
+## Production HTTPS
+
+The production overlay serves `https://app.ideaxiom.org/` using the existing
+certificate tree in `certbot/conf`, which is excluded from Git. Keep the
+hostname, port 443, and TLS mounts configured in the tracked nginx and
+Compose files: deployment uses `git reset --hard` and discards local edits.
+The production overlay requires a valid certificate before nginx can start.
+
+After proxy changes, validate and recreate only nginx:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  run --rm --no-deps nginx nginx -t
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  up -d --no-deps --force-recreate nginx
+curl --fail --show-error https://app.ideaxiom.org/
+```
+
+The production host runs the following entry in the deployment user's crontab
+(time is UTC); preserve other jobs when installing it on a replacement host:
+
+```cron
+17 3 * * * /bin/bash /home/exouser/IDEA/scripts/renew-production-cert.sh >> /home/exouser/idea-cert-renewal.log 2>&1
+```
+
+The script runs Certbot with the port-80 ACME webroot and reloads nginx after
+successful renewal checks. It requires Docker access and the Certbot image.
+The production deploy workflow verifies the public HTTPS endpoint;
+other environments may set `HEALTHCHECK_URL` and otherwise use HTTP at
+`VM_HOST`. Workflow changes take effect only after they reach GitHub.
+
 ## Update or Roll Back
 
 Fetch and check out the target ref, rerun the database setup, rebuild the
