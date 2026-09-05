@@ -63,7 +63,6 @@ SHARED_DATA_REQUIRED_PATHS = (
     "metadata/fd_metadata.geojson",
     "benchmarks/all_benchmarks.json",
     "altimetry/cmems_altimetry_regrid.nc",
-    "InSight",
 )
 
 # Path to client.py *inside* the VM image - see ../interpreter_kernel/.

@@ -102,6 +102,20 @@ or changing defaults.
      ./assistants/deploy_assistants_openwebui.py
    ```
 
+   For an existing installation with a different Pipe function ID, set
+   `IDEA_PIPE_FUNCTION_ID` in `.env` before registration. Production currently
+   uses `idea_terminal_agent_langgraph`; preserving this ID keeps existing
+   chat model references valid. Enable only the intended Pipe instance.
+
+   The default Assistant manifest also updates suggestions on existing
+   CINDRA Assistants. On hosts without those Assistants, deploy the official
+   set explicitly:
+
+   ```bash
+   ./assistants/deploy_assistants_openwebui.py \
+     --only welcome-assistant --only sea --only mars-assistant
+   ```
+
 8. Open the Langfuse UI (internal-only unless routed through your reverse
    proxy - see the root [`README.md`](../README.md)'s "LLM Observability
    (Langfuse)" section), create an org/project, and generate an API key pair
