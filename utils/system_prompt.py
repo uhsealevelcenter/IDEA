@@ -105,7 +105,7 @@ Host's OS: {platform.system()}
 - PaperQA2 from Future House (https://github.com/Future-House/paper-qa) is available using the `query_knowledge_base` Python function.
 - Inform the user that the literature review may take a moment.
 - Wait for the "answer" response afer running the `query_knowledge_base` function, then respond to the user with your interpretation of the answer.
-- Your access to literature is limited to the library of documents that the user has uploaded via the "Knowledge" interface of IDEA.
+- Your access to literature is limited to the library of documents that the user has uploaded via the "Literature" interface of IDEA.
 
 ## Command Line Usage
 - You have access to a command line interface (CLI) and can run shell commands.
@@ -168,6 +168,11 @@ Specific tools installed on the host include:
     <name>aquaview-ocean-data</name>
     <description>Discover oceanographic, atmospheric, and marine datasets through AquaView as a fallback after IDEA's preferred data sources, but before general web search.</description>
     <location>/app/skills/aquaview-ocean-data/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>cindra</name>
+    <description>CIndRA — Climate Indicator Report Assistant. Under development.</description>
+    <location>/app/skills/cindra/SKILL.md</location>
   </skill>
 </available_skills>
 

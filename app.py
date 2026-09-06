@@ -79,6 +79,12 @@ from core.db import engine
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
 from utils.pqa_multi_tenant import delete_user_pqa_state, ensure_user_pqa_settings
 from utils.email import send_password_reset_email
+from utils.context_usage import (
+    CONTEXT_LEVEL_NORMAL,
+    CONTEXT_LEVEL_STOP,
+    build_context_usage_state,
+    context_usage_message,
+)
 from core.mcp_manager import mcp_manager
 
 #import interpreter.core.llm.llm as llm_mod
@@ -107,13 +113,46 @@ logger = logging.getLogger(__name__)
 LONG_CONTEXT_TOKEN_THRESHOLD = int(
     os.getenv("IDEA_LONG_CONTEXT_TOKEN_THRESHOLD", "272000")
 )
+LOCAL_DEV = os.getenv("LOCAL_DEV", "0").strip().lower() in {"1", "true", "yes"}
+CONTEXT_WARNING_PERCENT = float(
+    os.getenv(
+        "IDEA_CONTEXT_WARNING_PERCENT",
+        "5" if LOCAL_DEV else "75",
+    )
+)
+CONTEXT_STOP_PERCENT = float(
+    os.getenv(
+        "IDEA_CONTEXT_STOP_PERCENT",
+        "10" if LOCAL_DEV else "90",
+    )
+)
+if not 0 < CONTEXT_WARNING_PERCENT < CONTEXT_STOP_PERCENT <= 100:
+    raise RuntimeError(
+        "IDEA context usage thresholds must satisfy "
+        "0 < IDEA_CONTEXT_WARNING_PERCENT < IDEA_CONTEXT_STOP_PERCENT <= 100"
+    )
+
+# Production compaction threshold is set to 50% of the long context threshold by default.
 COMPACTION_INPUT_TOKEN_THRESHOLD = int(
     os.getenv(
         "IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD",
         str(int(LONG_CONTEXT_TOKEN_THRESHOLD * 0.5)),
     )
 )
-# For local compaction-flow testing, set IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD=10000.
+
+# # For local compaction-flow testing, set IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD=20000.
+# # IMPORTANT: For production, raise the compaction threshold enough that one compacted multimodal state cannot immediately retrigger compaction.
+# IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD=30000
+# COMPACTION_INPUT_TOKEN_THRESHOLD = IDEA_COMPACTION_INPUT_TOKEN_THRESHOLD
+
+# Compaction mode (https://developers.openai.com/api/docs/guides/compaction)
+COMPACTION_MODE = os.getenv("IDEA_COMPACTION_MODE", "server").strip().lower()
+VALID_COMPACTION_MODES = {"server", "standalone", "off"}
+if COMPACTION_MODE not in VALID_COMPACTION_MODES:
+    raise RuntimeError(
+        "IDEA_COMPACTION_MODE must be one of: server, standalone, off"
+    )
+
 MAX_INPUT_TOKEN_THRESHOLD = int(
     os.getenv(
         "IDEA_MAX_INPUT_TOKEN_THRESHOLD",
@@ -819,9 +858,13 @@ interpreter_locks: Dict[str, threading.Lock] = {}
 chat_run_threads: Dict[str, threading.Thread] = {}
 CHAT_RUN_TTL_SECONDS = int(os.getenv("IDEA_CHAT_RUN_TTL_SECONDS", "86400"))
 CHAT_RUN_MAX_POLL_EVENTS = int(os.getenv("IDEA_CHAT_RUN_MAX_POLL_EVENTS", "200"))
+CHAT_MESSAGE_CHECKPOINT_SECONDS = float(
+    os.getenv("IDEA_CHAT_MESSAGE_CHECKPOINT_SECONDS", "30")
+)
 CHAT_RUN_PREFIX = "chat_run:"
 CHAT_RUN_EVENTS_PREFIX = "chat_run_events:"
 CHAT_RUN_SEQ_PREFIX = "chat_run_seq:"
+CONTEXT_USAGE_PREFIX = "context_usage:"
 
 
 def get_interpreter_lock(session_key: str) -> threading.Lock:
@@ -912,6 +955,84 @@ def _chat_run_seq_key(run_id: str) -> str:
     return f"{CHAT_RUN_SEQ_PREFIX}{run_id}"
 
 
+def _context_usage_key(session_key: str) -> str:
+    return f"{CONTEXT_USAGE_PREFIX}{session_key}"
+
+
+def _get_context_usage_state(session_key: str) -> dict[str, Any] | None:
+    raw_state = redis_client.get(_context_usage_key(session_key))
+    if not raw_state:
+        return None
+    try:
+        return json.loads(raw_state)
+    except Exception:
+        logger.warning("Ignoring invalid context usage state for session %s", session_key)
+        return None
+
+
+def _record_response_usage(
+    session_key: str,
+    interpreter: OpenInterpreter,
+) -> tuple[dict[str, Any] | None, str | None]:
+    usage = getattr(getattr(interpreter, "llm", None), "last_response_usage", None)
+    if not isinstance(usage, dict) or usage.get("input_tokens") is None:
+        return None, None
+
+    previous_state = _get_context_usage_state(session_key) or {}
+    state = build_context_usage_state(
+        usage,
+        LONG_CONTEXT_TOKEN_THRESHOLD,
+        CONTEXT_WARNING_PERCENT,
+        CONTEXT_STOP_PERCENT,
+    )
+    state["updated_at"] = datetime.utcnow().isoformat()
+    redis_client.set(_context_usage_key(session_key), json.dumps(state, default=str))
+
+    logger.info(
+        "Recorded exact OpenAI context usage session=%s response_id=%s "
+        "input_tokens=%s level=%s warning_tokens=%s stop_tokens=%s",
+        session_key,
+        state.get("response_id"),
+        state.get("input_tokens"),
+        state.get("level"),
+        state.get("warning_tokens"),
+        state.get("stop_tokens"),
+    )
+
+    notice = None
+    if (
+        state.get("level") != CONTEXT_LEVEL_NORMAL
+        and state.get("level") != previous_state.get("level")
+    ):
+        notice = context_usage_message(state)
+    return state, notice
+
+
+def _context_usage_chunk(state: dict[str, Any], message: str) -> dict[str, Any]:
+    return {
+        "role": "system",
+        "type": "message",
+        "format": "context_usage",
+        "level": state.get("level"),
+        "content": message,
+        "usage": state,
+    }
+
+
+def _enforce_context_stop(session_key: str) -> None:
+    state = _get_context_usage_state(session_key)
+    if not state or state.get("level") != CONTEXT_LEVEL_STOP:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "context_input_limit_reached",
+            "message": context_usage_message(state),
+            "usage": state,
+        },
+    )
+
+
 def _set_chat_run_status(run_id: str, status: dict[str, Any]) -> None:
     redis_client.set(
         _chat_run_key(run_id),
@@ -976,7 +1097,13 @@ def _is_persistable_interpreter_chunk(chunk: Any) -> bool:
         return False
     if chunk.get("start") or chunk.get("end") or chunk.get("error"):
         return False
-    if chunk.get("format") in {"active_line", "execution_status", "tool_status", "compaction_status"}:
+    if chunk.get("format") in {
+        "active_line",
+        "execution_status",
+        "tool_status",
+        "compaction_status",
+        "context_usage",
+    }:
         return False
     return bool(chunk.get("content") or chunk.get("type") in {"image", "file"})
 
@@ -1819,6 +1946,16 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         interpreter.llm.context_window = GPT55_CONTEXT_WINDOW # GPT-5.5 max context window
         interpreter.llm.max_input_tokens = MAX_INPUT_TOKEN_THRESHOLD # Keep request input below long-context pricing guardrail
         interpreter.llm.max_tokens = MAX_COMPLETION_TOKENS # Responses max_output_tokens
+        # Server-side and standalone compaction are mutually exclusive.
+        if COMPACTION_MODE == "server":
+            interpreter.llm.context_management = [
+                {
+                    "type": "compaction",
+                    "compact_threshold": COMPACTION_INPUT_TOKEN_THRESHOLD,
+                }
+            ]
+        else:
+            interpreter.llm.context_management = None
 
         # # Intelligence models (e.g., GPT4.1)
         # interpreter.llm.temperature = 0.2 # Temperature (0-2, float) --> fairly deterministic
@@ -1896,6 +2033,7 @@ def clear_session(session_key: str):
         # Clear Redis keys
         redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_key}")
         redis_client.delete(f"messages:{session_key}")
+        redis_client.delete(_context_usage_key(session_key))
 
         # Remove session directory and all its contents (user_id/session_id structure)
         try:
@@ -2092,7 +2230,10 @@ async def _run_chat_job_async(
             interpreter,
             [*interpreter.messages, messages[-1]],
         )
-        should_compact_runtime = estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
+        should_compact_runtime = (
+            COMPACTION_MODE == "standalone"
+            and estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
+        )
 
         tool_runs = []
         try:
@@ -2188,10 +2329,16 @@ async def _run_chat_job_async(
                     },
                 )
 
+        interpreter.llm.last_response_usage = None
+        last_message_checkpoint = time()
         for result in interpreter.chat(messages[-1], stream=True):
             chunk = result if isinstance(result, dict) else {"role": "assistant", "type": "message", "content": str(result)}
-            if _is_persistable_interpreter_chunk(chunk):
+            checkpoint_due = (
+                time() - last_message_checkpoint >= CHAT_MESSAGE_CHECKPOINT_SECONDS
+            )
+            if _is_persistable_interpreter_chunk(chunk) and checkpoint_due:
                 _persist_interpreter_messages(session_key, interpreter)
+                last_message_checkpoint = time()
             _append_chat_run_event(run_id, chunk)
 
         _ensure_all_tool_calls_have_outputs(
@@ -2199,9 +2346,16 @@ async def _run_chat_job_async(
             "Tool execution completed without captured output.",
         )
         _persist_interpreter_messages(session_key, interpreter)
+        usage_state, usage_notice = _record_response_usage(session_key, interpreter)
+        if usage_notice:
+            _append_chat_run_event(
+                run_id,
+                _context_usage_chunk(usage_state, usage_notice),
+            )
         _update_chat_run_status(
             run_id,
             status="completed",
+            usage=usage_state,
             completed_at=datetime.utcnow().isoformat(),
             updated_at=datetime.utcnow().isoformat(),
         )
@@ -2259,6 +2413,8 @@ async def start_chat_run_endpoint(request: Request, token: str = Depends(get_aut
     user = get_current_user(token)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    session_key = make_session_key(user.id, session_id)
+    _enforce_context_stop(session_key)
 
     run_id = uuid.uuid4().hex
     status = {
@@ -2269,9 +2425,16 @@ async def start_chat_run_endpoint(request: Request, token: str = Depends(get_aut
         "created_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat(),
     }
-    _set_chat_run_status(run_id, status)
-    redis_client.delete(_chat_run_events_key(run_id))
-    redis_client.delete(_chat_run_seq_key(run_id))
+    try:
+        _set_chat_run_status(run_id, status)
+        redis_client.delete(_chat_run_events_key(run_id))
+        redis_client.delete(_chat_run_seq_key(run_id))
+    except redis.RedisError as exc:
+        logger.error("Redis unavailable while starting chat run: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Chat service storage is temporarily unavailable. Please try again.",
+        ) from exc
 
     thread = threading.Thread(
         target=_run_chat_job_thread,
@@ -2343,6 +2506,7 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         session_key = make_session_key(user.id, session_id)
+        _enforce_context_stop(session_key)
 
         session_lock = get_interpreter_lock(session_key)
         await asyncio.to_thread(session_lock.acquire)
@@ -2417,7 +2581,10 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             interpreter,
             [*interpreter.messages, messages[-1]],
         )
-        should_compact_runtime = estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
+        should_compact_runtime = (
+            COMPACTION_MODE == "standalone"
+            and estimated_input_tokens >= COMPACTION_INPUT_TOKEN_THRESHOLD
+        )
 
         # MCP tools are now available via mcp_tools.py (generated at startup and when connections change)
         # No need to regenerate on every chat request
@@ -2518,9 +2685,18 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
+                interpreter.llm.last_response_usage = None
                 for result in interpreter.chat(messages[-1], stream=True):
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
+                usage_state, usage_notice = _record_response_usage(
+                    session_key,
+                    interpreter,
+                )
+                if usage_notice:
+                    yield (
+                        f"data: {json.dumps(_context_usage_chunk(usage_state, usage_notice))}\n\n"
+                    )
             except GeneratorExit:
                 try:
                     interpreter.interrupt(timeout=1.5)
@@ -2565,6 +2741,10 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+    except HTTPException:
+        if lock_acquired and session_lock:
+            session_lock.release()
+        raise
     except Exception as e:
         if lock_acquired and session_lock:
             session_lock.release()
@@ -2586,6 +2766,26 @@ def history_endpoint(request: Request, token: str = Depends(get_auth_token)):
     if stored_messages:
         return json.loads(stored_messages)
     return []
+
+
+@app.get("/context-usage")
+def context_usage_endpoint(
+    request: Request,
+    token: str = Depends(get_auth_token),
+):
+    session_id = request.headers.get("x-session-id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="x-session-id header is required")
+    user = get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    session_key = make_session_key(user.id, session_id)
+    return {
+        "usage": _get_context_usage_state(session_key),
+        "long_context_input_threshold": LONG_CONTEXT_TOKEN_THRESHOLD,
+        "warning_percent": CONTEXT_WARNING_PERCENT,
+        "stop_percent": CONTEXT_STOP_PERCENT,
+    }
 
 
 @app.post("/clear")
@@ -2772,6 +2972,9 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
         redis_client.set(
             f"messages:{session_key}", json.dumps(interpreter_messages)
         )
+        # A loaded transcript starts a new provider-side Responses chain, so usage
+        # from the previously active conversation must not block it.
+        redis_client.delete(_context_usage_key(session_key))
         
         # Clear any existing interpreter instance so it gets recreated with new messages
         if session_key in interpreter_instances:

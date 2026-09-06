@@ -43,6 +43,8 @@ let outputApplyAllEnabled = false;
 let outputVisibilityAllMode = null;
 let activeExecutionCodeId = null;
 let isExecutionRunning = false;
+let contextUsageLevel = 'normal';
+let contextConversationBlocked = false;
 
 const THEME_STORAGE_KEY = 'idea-theme';
 const THINKING_PAUSE_DELAY_MS = 1400;
@@ -715,6 +717,7 @@ const newMessagesButton = document.getElementById('newMessagesButton');
 const messageInput = document.getElementById('messageInput');
 const progressBar = document.getElementById('uploadProgress');
 const progressElement = progressBar ? progressBar.querySelector('.progress') : null;
+const defaultMessageInputPlaceholder = messageInput?.placeholder || 'Type your message...';
 
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
@@ -1134,6 +1137,79 @@ function getChatRunsEndpoint() {
     return endpoints.chat.replace(/\/chat\/?$/, '/chat-runs').replace(/\/$/, '');
 }
 
+function getContextUsageEndpoint() {
+    const endpoints = config.getEndpoints();
+    if (endpoints.contextUsage) {
+        return endpoints.contextUsage;
+    }
+    return getChatRunsEndpoint().replace(/\/chat-runs\/?$/, '/context-usage');
+}
+
+function resetContextUsageState() {
+    contextUsageLevel = 'normal';
+    contextConversationBlocked = false;
+    if (messageInput) {
+        messageInput.disabled = false;
+        messageInput.placeholder = defaultMessageInputPlaceholder;
+    }
+    if (sendButton && !isGenerating) {
+        sendButton.disabled = false;
+    }
+}
+
+function applyContextUsageNotice(payload, { display = true } = {}) {
+    const usage = payload?.usage || payload || {};
+    const level = payload?.level || usage.level || 'normal';
+
+    if (level === 'normal') {
+        resetContextUsageState();
+        return;
+    }
+
+    contextUsageLevel = level;
+    contextConversationBlocked = level === 'stop';
+    const message = payload?.content || payload?.message;
+    if (display && message) {
+        appendSystemMessage(
+            `${level === 'stop' ? '**Conversation limit reached:**' : '**Conversation size notice:**'} ${message}`,
+            { persist: false }
+        );
+    }
+
+    if (contextConversationBlocked) {
+        if (messageInput) {
+            messageInput.disabled = true;
+            messageInput.placeholder = 'Start a new conversation to continue.';
+        }
+        if (sendButton) {
+            sendButton.disabled = true;
+        }
+    }
+}
+
+async function refreshContextUsageState() {
+    try {
+        const response = await fetch(getContextUsageEndpoint(), {
+            method: 'GET',
+            headers: {
+                'X-Session-Id': sessionId,
+                ...getAuthHeaders()
+            }
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (payload?.usage?.level && payload.usage.level !== 'normal') {
+            applyContextUsageNotice(payload.usage);
+        } else {
+            resetContextUsageState();
+        }
+    } catch (error) {
+        console.warn('Unable to refresh conversation context usage:', error);
+    }
+}
+
+window.resetContextUsageState = resetContextUsageState;
+
 function delay(ms, signal = null) {
     return new Promise((resolve, reject) => {
         if (signal?.aborted) {
@@ -1162,9 +1238,29 @@ async function startChatRun(params, signal) {
         signal,
     });
 
+    const contentType = response.headers.get('content-type') || '';
+    const isJson = contentType.toLowerCase().includes('application/json');
+    if (!isJson) {
+        throw new Error(
+            `Chat service returned an invalid response (status ${response.status}). Please try again.`
+        );
+    }
+
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || response.statusText || "Unable to start chat run.");
+        const detail = error.detail;
+        if (detail?.code === 'context_input_limit_reached') {
+            applyContextUsageNotice({
+                level: 'stop',
+                content: detail.message,
+                usage: detail.usage,
+            });
+        }
+        throw new Error(
+            (typeof detail === 'string' ? detail : detail?.message)
+            || response.statusText
+            || "Unable to start chat run."
+        );
     }
 
     return response.json();
@@ -1260,6 +1356,13 @@ function serializeMessagesForRequest(messageList = []) {
 
 // Modify sendRequest to use better error handling
 async function sendRequest(msgOverride=null) {
+    if (contextConversationBlocked) {
+        appendSystemMessage(
+            'This conversation has reached its input limit. Start a new conversation to continue.',
+            { persist: false }
+        );
+        return;
+    }
     const attachmentsToSend = pendingUploads.map(att => ({ ...att }));
     const rawInput = msgOverride !== null ? msgOverride : messageInput.value;
     const trimmedInput = rawInput ? rawInput.trim() : '';
@@ -1345,8 +1448,11 @@ async function sendRequest(msgOverride=null) {
 // Function to reset send and stop buttons
 function resetButtons() {
     removeWorkingIndicator();
-    sendButton.disabled = false;
+    sendButton.disabled = contextConversationBlocked;
     stopButton.disabled = true;
+    if (messageInput) {
+        messageInput.disabled = contextConversationBlocked;
+    }
     controller = null;
     isGenerating = false;
     if (stopRequested || isActiveLineRunning || isExecutionRunning) {
@@ -1449,6 +1555,11 @@ function processChunk(chunk) {
     chunk = normalizeIncomingChunk(chunk);
     return new Promise((resolve) => {
         removeWorkingIndicator();
+        if (chunk.format === 'context_usage') {
+            applyContextUsageNotice(chunk);
+            resolve({ scheduleThinking: false });
+            return;
+        }
         if (chunk.format === 'execution_status') {
             handleExecutionStatusChunk(chunk.content);
             resolve({ scheduleThinking: false });
@@ -1987,6 +2098,7 @@ async function clearChatHistory() {
         chatDisplay.innerHTML = '';
         promptIdeasVisible = false;
         resetStdoutState();
+        resetContextUsageState();
         
         // Clear uploaded files list in UI
         pendingUploads = [];
@@ -2848,6 +2960,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         console.error("Failed to fetch history:", error);
         showPromptIdeas();
     }
+    await refreshContextUsageState();
 });
 
 // This function sets all links to open in a new tab

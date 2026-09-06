@@ -260,6 +260,7 @@ def run_tool_calling_llm(llm, request_params):
     assistant_text = ""
     saw_code_argument = False
     emitted_code_chunk = False
+    compaction_announced = False
 
     for chunk in llm.completions(**request_params):
         # If this is a Responses adapter delta without 'choices', skip
@@ -274,6 +275,26 @@ def run_tool_calling_llm(llm, request_params):
                 break
             if finish == "error":
                 raise RuntimeError("Model returned an error finish.")
+            continue
+
+        if delta.get("compaction"):
+            compaction = delta["compaction"]
+            status = compaction.get("status") if isinstance(compaction, dict) else None
+            if status == "started" and not compaction_announced:
+                compaction_announced = True
+                yield {
+                    "type": "message",
+                    "format": "compaction_status",
+                    "content": "Compacting conversation",
+                }
+            elif status == "completed" and not compaction_announced:
+                # Compatibility fallback for providers that omit the added event.
+                compaction_announced = True
+                yield {
+                    "type": "message",
+                    "format": "compaction_status",
+                    "content": "Conversation compacted",
+                }
             continue
 
         # Chat Completions-style tool_calls → function_call (kept for judge/code streaming)
