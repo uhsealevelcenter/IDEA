@@ -25,6 +25,7 @@ class LangGraphPaperQAPrepareTests(unittest.TestCase):
         runtime.outputs_dir = "/outputs"
         runtime.outputs_before = None
         runtime.event_callback = Mock()
+        runtime.attached_files_context = Mock(return_value="")
 
         with (
             patch(

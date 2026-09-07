@@ -228,6 +228,8 @@ class DeployAssistantsTests(unittest.TestCase):
             )
 
             self.assertTrue(payload["meta"]["paperqa_enabled"])
+            self.assertTrue(payload["meta"]["capabilities"]["raw_file_access"])
+            self.assertFalse(payload["meta"]["capabilities"]["file_context"])
             self.assertEqual(
                 payload["meta"]["capabilities"],
                 managed_capabilities,
@@ -391,6 +393,8 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertEqual(path, "/api/v1/models/create")
         self.assertEqual(payload["name"], "IDEA Agent")
         self.assertFalse(payload["meta"]["hidden"])
+        self.assertTrue(payload["meta"]["capabilities"]["raw_file_access"])
+        self.assertFalse(payload["meta"]["capabilities"]["file_context"])
         self.assertNotIn("assistant_base_model", payload["meta"])
         self.assertEqual(
             payload["meta"]["profile_image_url"],

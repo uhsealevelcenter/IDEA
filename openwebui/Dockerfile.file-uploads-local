@@ -1,0 +1,6 @@
+# Build the normal openwebui service first to retain its Open Sharing patch.
+FROM idea-openwebui:0.11.0-idea.0.8-open-sharing-fix
+
+# Build context: the sibling IDEA-open-webui checkout, after npm run build.
+COPY build /app/build
+COPY backend/open_webui/utils/middleware.py /app/backend/open_webui/utils/middleware.py

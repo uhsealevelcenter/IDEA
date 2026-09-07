@@ -43,6 +43,8 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 OFFICIAL_ASSISTANT_CAPABILITIES = {
     "vision": True,
     "file_upload": True,
+    "raw_file_access": True,
+    "file_context": False,
     "web_search": False,
     "image_generation": False,
     "code_interpreter": False,
@@ -268,10 +270,8 @@ def official_assistant_payload(
     )
     capabilities = dict(meta.get("capabilities") or {})
     capabilities.update(OFFICIAL_ASSISTANT_CAPABILITIES)
-    if definition.get("paperqa_enabled"):
-        # The collection descriptors still reach the Pipe in legacy mode, but
-        # Open WebUI must not inject its own RAG context for the same PDFs.
-        capabilities["file_context"] = False
+    # IDEA reads original attachments in its sandbox; PaperQA owns literature
+    # retrieval. Neither path needs Open WebUI's extracted text or vectors.
     meta["capabilities"] = capabilities
     meta["defaultFeatureIds"] = list(
         OFFICIAL_ASSISTANT_DEFAULT_FEATURE_IDS
@@ -309,6 +309,12 @@ def configure_assistant_base_model(
     # directly in chat and in the stock Open WebUI Assistant base-model
     # picker without requiring a custom frontend publication.
     meta["hidden"] = False
+    meta["capabilities"] = {
+        **(meta.get("capabilities") or {}),
+        "file_upload": True,
+        "raw_file_access": True,
+        "file_context": False,
+    }
     meta["profile_image_url"] = profile_image_url
     meta.pop("assistant_base_model", None)
     payload = {

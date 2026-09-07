@@ -298,7 +298,9 @@ any individual step.
    service needs (Postgres passwords, `LANGGRAPH_AES_KEY`,
    `LITELLM_MASTER_KEY`, etc. - see "Configure Environment Variables" above)
    and put them in `.env`.
-2. **Build the images.** Building/starting the `openwebui` service requires
+2. **Build the images.** For the raw attachment upload fix, see the
+   [local build and testing guide](docs/File-Uploads-Local-Test.md).
+   Building/starting the `openwebui` service requires
    pull access to the custom, IDEA-maintained
    `ghcr.io/uhsealevelcenter/idea-open-webui` base image referenced in
    `openwebui/Dockerfile` - this is a private GHCR package, so request access

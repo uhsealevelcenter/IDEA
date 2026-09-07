@@ -1,0 +1,8 @@
+# Override the source checkout's normal exclusion of its compiled frontend.
+**
+!build
+!build/**
+!backend
+!backend/open_webui
+!backend/open_webui/utils
+!backend/open_webui/utils/middleware.py
