@@ -87,14 +87,12 @@ authorization checks remain in force. Open WebUI's RAG extension allowlist is
 processing-specific and, as with its existing raw-upload API, does not apply
 to `process=false` uploads.
 
-## Publish after local validation
+## Published integration
 
-Publish the tested IDEA-open-webui customization using its existing image
-workflow. Update IDEA's `openwebui/Dockerfile` base tag and digest and the local
-image label in Compose. Preserve the Open Sharing patch unless the new base
-already includes it. Open the IDEA PR against `next-dev` with the tested image
-reference and manual results. The local override is only for testing; the
-normal deployment continues to use the pinned published image.
+The tested customization is published as `v0.11.0-idea.0.9`. The normal IDEA
+wrapper pins its immutable GHCR digest and retains the Open Sharing patch. The
+local override remains available for testing uncommitted Open WebUI changes;
+routine testing should use the normal pinned image.
 
 To return to the current pinned image locally:
 

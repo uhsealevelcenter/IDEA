@@ -2,7 +2,7 @@
 
 ## Work started in `debug/ui-langgraph-general`
 
-1. Open WebUI is updated to the `v0.11.0-idea.0.8` customization release.
+1. Open WebUI is updated to the `v0.11.0-idea.0.9` customization release.
    Compose pins its published multi-platform OCI index digest.
 2. Every model-visible tool observation now has a hard configurable byte
    ceiling, including the newest observation. The bound is applied before

@@ -450,7 +450,7 @@ with exact Open WebUI file URLs after finalization. Passive preview-safe
 extensions use the canonical `/api/v1/files/.../content` route so shared-chat
 pages can rewrite them to their share-scoped authorization endpoint. Active
 HTML uses the authenticated, sandboxed `/idea-file-preview/...` route in the
-owner's chat. The current IDEA Open WebUI `v0.11.0-idea.0.8` image rewrites that link on shared
+owner's chat. The current IDEA Open WebUI `v0.11.0-idea.0.9` image rewrites that link on shared
 pages to an authorized share-scoped HTML response with the same sandbox
 restrictions, allowing the webpage to open in a new tab. Other types use the
 download endpoint. URL-encoded paths are normalized, Markdown labels are

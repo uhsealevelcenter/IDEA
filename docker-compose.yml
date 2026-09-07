@@ -337,14 +337,14 @@ services:
     # deployment via a routine `docker compose pull`). Swap this exact
     # release deliberately (and re-verify
     # openwebui/functions/idea_pipe.py still works) whenever moving forward.
-    # v0.11.0-idea.0.8 (Git f308fa516): improves shared-conversation and PDF
-    # branding/export behavior and isolates unbalanced tool-output fences.
+    # v0.11.0-idea.0.9 (Git 30407d13d): adds raw file access for IDEA chat
+    # uploads while retaining generic-model and Knowledge processing.
     # Derived from that same pinned release; adds the missing open_chats
     # permissions field so the Admin UI can save Chats Open Sharing.
     build:
       context: ./openwebui
       dockerfile: Dockerfile
-    image: idea-openwebui:0.11.0-idea.0.8-open-sharing-fix
+    image: idea-openwebui:0.11.0-idea.0.9-open-sharing-fix
     container_name: idea_openwebui
     restart: unless-stopped
     ports:

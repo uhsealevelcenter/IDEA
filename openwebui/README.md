@@ -186,7 +186,7 @@ use Open WebUI's canonical `/api/v1/files/.../content` URL so the IDEA Open
 WebUI customization can authorize them from shared conversations. Generated
 HTML remains on nginx's authenticated `/idea-file-preview/` route and is
 served with a sandbox Content Security Policy. On shared pages, the current
-IDEA Open WebUI `v0.11.0-idea.0.8` image rewrites that HTML link to an
+IDEA Open WebUI `v0.11.0-idea.0.9` image rewrites that HTML link to an
 authorized share-scoped endpoint with the same sandbox restrictions, so
 viewers can open the webpage in a new tab. Other formats retain the normal
 download behavior.
@@ -361,7 +361,7 @@ for the underlying agent/sandbox architecture this depends on.
 
 ## Open chat sharing compatibility fix
 
-The pinned `0.11.0-idea.0.8` release exposes **Chats Open Sharing** in the UI,
+The pinned `0.11.0-idea.0.9` release exposes **Chats Open Sharing** in the UI,
 but omits `open_chats` from the backend `SharingPermissions` schema. Saving
 Default Permissions silently drops that field, so the toggle reopens as off.
 `openwebui/Dockerfile` derives from the same pinned release and adds only
