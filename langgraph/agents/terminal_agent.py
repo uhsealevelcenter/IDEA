@@ -275,6 +275,7 @@ class TerminalAgent:
         self.paperqa_scope_id: str | None = None
         self.paperqa_direct_scope_id: str | None = None
         self.paperqa_direct_file_names: tuple[str, ...] = ()
+        self.paperqa_warnings: tuple[str, ...] = ()
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
         
         # The sandbox/shell is keyed by user_id (stable across page reloads
@@ -355,6 +356,7 @@ class TerminalAgent:
                 direct_file_names_getter=(
                     lambda: self.paperqa_direct_file_names
                 ),
+                warnings_getter=lambda: self.paperqa_warnings,
             )
         self.all_tools = [
             self.run_terminal_tool,
@@ -492,6 +494,7 @@ class TerminalAgent:
         self.paperqa_scope_id = library.scope_id
         self.paperqa_direct_scope_id = library.direct_scope_id
         self.paperqa_direct_file_names = library.direct_file_names
+        self.paperqa_warnings = library.warnings
         return self.paperqa_scope_id
 
     def _model_image_part(self, filepath: str) -> dict:

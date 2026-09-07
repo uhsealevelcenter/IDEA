@@ -103,7 +103,9 @@ services:
       - PQA_EMBEDDING_MODEL=${PQA_EMBEDDING_MODEL:-text-embedding-3-small}
       - PQA_LITELLM_BASE_URL=${PQA_LITELLM_BASE_URL:-http://litellm:8080/v1}
       - PQA_SYNC_TIMEOUT_SECONDS=${PQA_SYNC_TIMEOUT_SECONDS:-300}
-      - PQA_MAX_PDF_BYTES=${PQA_MAX_PDF_BYTES:-1073741824}
+      - PQA_CONVERSION_TIMEOUT_SECONDS=${PQA_CONVERSION_TIMEOUT_SECONDS:-120}
+      - PQA_MAX_DOCUMENT_BYTES=${PQA_MAX_DOCUMENT_BYTES:-${PQA_MAX_PDF_BYTES:-1073741824}}
+      - PQA_MAX_CONVERTED_PDF_BYTES=${PQA_MAX_CONVERTED_PDF_BYTES:-1073741824}
       # Skill content is never silently truncated. A skill above this limit
       # fails explicitly so an administrator can shorten or split it.
       - MAX_SKILL_BYTES=${MAX_SKILL_BYTES:-100000}

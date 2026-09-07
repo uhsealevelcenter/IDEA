@@ -26,7 +26,7 @@ IDEA is action-oriented. It can execute code, inspect data, and produce artifact
 - **Mapping:** Interactive maps (folium) and static maps (matplotlib/cartopy).
 - **Domain workflows:** Sea level and tide-gauge analysis, station lookup, extremes, trends, and climate index context (e.g., El Niño-Southern Oscillation).
 - **Reproducible outputs:** Saved plots, tables, and derived datasets with traceable steps.
-- **Literature RAG:** Optional literature review using [PaperQA2](https://github.com/Future-House/paper-qa), with locally indexed PDFs for retrieval-augmented answers (via user uploads to their Knowledge base in IDEA or a limited archive of journal articles in SEA).
+- **Literature RAG:** Optional literature review using [PaperQA2](https://github.com/Future-House/paper-qa), with locally indexed PDF, DOCX, DOC, ODT, and RTF documents for retrieval-augmented answers (via user uploads to their Knowledge base in IDEA or a limited archive of journal articles in SEA). Office documents are normalized to PDF before indexing.
 
 <p align="center">
   <img src="https://uhslc.soest.hawaii.edu/research/SEAinfo/EngineeringSchematic_details.png" alt="IDEAschematic_details" width="600" />

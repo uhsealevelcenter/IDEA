@@ -267,6 +267,7 @@ def make_query_knowledge_base_tool(
     direct_file_names_getter: (
         Callable[[], tuple[str, ...]] | None
     ) = None,
+    warnings_getter: Callable[[], tuple[str, ...]] | None = None,
 ):
     """Create a PaperQA tool bound to trusted server-side identity."""
 
@@ -276,8 +277,10 @@ def make_query_knowledge_base_tool(
 
         Use this for literature review, methods, findings, citations, or
         questions about figures and tables in the Assistant's attached
-        Knowledge collection or PDFs attached in this chat. Make the query
-        specific enough to retrieve strong primary-source evidence.
+        Knowledge collection or supported literature documents attached in
+        this chat. Make the query specific enough to retrieve strong
+        primary-source evidence. Disclose any synchronization warnings in
+        the result to the user.
 
         Args:
             query: The research question to ask about the attached papers.
@@ -315,6 +318,14 @@ def make_query_knowledge_base_tool(
                 publish_media,
             )
         )
+        warnings = list(warnings_getter() if warnings_getter else ())
+        result["warnings"] = warnings
+        if warnings and str(result.get("answer", "")).startswith(
+            "No papers found"
+        ):
+            result["answer"] = (
+                f"{result['answer']} " + " ".join(warnings)
+            )
         return json.dumps(result, indent=2, default=str)
 
     return query_knowledge_base

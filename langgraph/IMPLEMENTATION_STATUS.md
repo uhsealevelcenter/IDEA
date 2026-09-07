@@ -21,7 +21,7 @@ endpoint, but it is not the normal IDEA request path.
 | Sandbox execution | Complete for Linux/KVM | A singleton authenticated sandbox service owns per-user microsandbox VMs, persistent files, kernel processes, and execution locks. |
 | Python and images | Complete | Source streams before execution; kernel state is persistent by configured scope; plots are persisted, displayed, and supplied to model vision. |
 | Attachments and artifacts | Complete | Inputs are re-authorized and copied into the private workspace; `/outputs` artifacts are uploaded under the current user's Open WebUI credential. |
-| Skills and PaperQA | Complete | Built-in and Workspace skills are supported; authorized non-guests can query Assistant knowledge and direct PDF attachments. |
+| Skills and PaperQA | Complete | Built-in and Workspace skills are supported; authorized non-guests can query Assistant knowledge and direct PDF, DOCX, DOC, ODT, and RTF attachments. Office documents are normalized to PDF before indexing. |
 | Model routing | Complete | `IDEA_AGENT_MODEL`, `IDEA_TOOL_MODEL`, Codex, and PaperQA default to Terra, while Open WebUI tasks stay on Luna. Primary chat uses LiteLLM with end-user attribution and telemetry. |
 | Tool-observation limit | Complete | Every live `ToolMessage`, including the newest, is capped before checkpointing and again before model inference. A whole-prompt preflight and full Python-output archive reference remain follow-ups. |
 | Codex delegation | Developer rollout complete | Codex runs inside the same VM, supports read-only/workspace-write, resumes threads, and participates in Stop. It currently reuses external `OPENAI_*` credentials when dedicated values are blank. |

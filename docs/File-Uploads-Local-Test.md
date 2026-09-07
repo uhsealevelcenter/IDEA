@@ -7,9 +7,11 @@ The `fix/file-uploads` branches in IDEA and IDEA-open-webui work together.
 IDEA advertises `raw_file_access` on its official assistants and base model.
 The customized frontend stores chat attachments with `process=false` and returns
 as soon as storage succeeds, without requesting a processing-status stream.
-The backend also skips native RAG context for raw-file models. PaperQA's PDF
-synchronization and `query_knowledge_base` are unchanged. Knowledge-library
-uploads still use their existing processing path.
+The backend also skips native RAG context for raw-file models. PaperQA lazily
+synchronizes PDF, DOCX, DOC, ODT, and RTF literature documents when
+`query_knowledge_base` is first invoked. Office documents are converted to PDF
+inside LangGraph before PaperQA indexes them. Knowledge-library uploads still
+use their existing processing path.
 
 ## Build and start locally
 
@@ -69,10 +71,12 @@ cancel processing already started by an earlier upload.
    and read a few values with the appropriate library. Compare one hash with
    local `sha256sum`. Check Open WebUI logs for unexpected extraction or
    sentence embedding during upload.
-3. Attach a PDF and ask a question using `query_knowledge_base`. Then query an
-   existing Knowledge collection. Both should retain PaperQA answers/citations.
-   PaperQA may still perform its own indexing when queried; raw upload does
-   not disable that behavior.
+3. Attach a PDF and a Word document and ask questions using
+   `query_knowledge_base`. Then query an existing mixed PDF/Word Knowledge
+   collection. All supported documents should return PaperQA answers/citations;
+   unsupported or failed documents should appear as explicit warnings. PaperQA
+   may still perform its own indexing when queried; raw upload does not disable
+   that behavior.
 4. Check an image and an upload failure (for example, a file above the configured
    size limit). A failed upload should show an error and remove its pending card.
 5. If generic models are available, select one and confirm its upload still

@@ -306,9 +306,13 @@ the canonical template.
 - **`PQA_LLM_MODEL`** / **`PQA_EMBEDDING_MODEL`** - PaperQA model aliases;
   default to `gpt-5.6-terra` and `text-embedding-3-small`.
 
-- **`PQA_SYNC_TIMEOUT_SECONDS`** / **`PQA_MAX_PDF_BYTES`** - authenticated
-  collection/direct-PDF synchronization deadline and per-PDF size limit;
-  default to 300 seconds and 1 GiB.
+- **`PQA_SYNC_TIMEOUT_SECONDS`** / **`PQA_CONVERSION_TIMEOUT_SECONDS`** -
+  authenticated collection/direct-document synchronization deadline and
+  per-office-document conversion limit; default to 300 and 120 seconds.
+
+- **`PQA_MAX_DOCUMENT_BYTES`** / **`PQA_MAX_CONVERTED_PDF_BYTES`** - maximum
+  downloaded source and normalized PDF sizes; both default to 1 GiB.
+  `PQA_MAX_PDF_BYTES` remains a legacy fallback for the source limit.
 
 - **`MAX_SKILL_BYTES`** - maximum size of one complete built-in or Workspace
   skill returned to IDEA; defaults to 100,000 bytes. Larger skills fail

@@ -1,11 +1,14 @@
-"""Synchronize authorized Open WebUI PDFs into isolated PaperQA libraries."""
+"""Synchronize authorized Open WebUI documents into PaperQA libraries."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
+import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -28,14 +31,54 @@ LIBRARY_STATE_ROOT = PQA_ROOT / "libraries"
 PQA_SYNC_TIMEOUT_SECONDS = int(
     os.getenv("PQA_SYNC_TIMEOUT_SECONDS", "300")
 )
-PQA_MAX_PDF_BYTES = int(
-    os.getenv("PQA_MAX_PDF_BYTES", str(1024 * 1024 * 1024))
+PQA_MAX_DOCUMENT_BYTES = int(
+    os.getenv(
+        "PQA_MAX_DOCUMENT_BYTES",
+        os.getenv("PQA_MAX_PDF_BYTES", str(1024 * 1024 * 1024)),
+    )
+)
+PQA_MAX_CONVERTED_PDF_BYTES = int(
+    os.getenv(
+        "PQA_MAX_CONVERTED_PDF_BYTES",
+        str(PQA_MAX_DOCUMENT_BYTES),
+    )
+)
+PQA_CONVERSION_TIMEOUT_SECONDS = int(
+    os.getenv("PQA_CONVERSION_TIMEOUT_SECONDS", "120")
 )
 PQA_SYNC_CHUNK_BYTES = 1024 * 1024
 PQA_EMBEDDING_MODEL = os.getenv(
     "PQA_EMBEDDING_MODEL", "text-embedding-3-small"
 )
-PQA_INDEX_SCHEMA_VERSION = "1"
+PQA_INDEX_SCHEMA_VERSION = "2"
+PQA_DOCUMENT_REPRESENTATION_VERSION = "normalized-pdf-v2"
+LIBREOFFICE_BINARY = os.getenv("PQA_LIBREOFFICE_BINARY", "soffice")
+
+_FORMAT_MIME_TYPES = {
+    "pdf": frozenset({"application/pdf"}),
+    "docx": frozenset({
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }),
+    "doc": frozenset({"application/msword"}),
+    "odt": frozenset({"application/vnd.oasis.opendocument.text"}),
+    "rtf": frozenset({
+        "application/rtf",
+        "application/x-rtf",
+        "text/rtf",
+    }),
+}
+_MIME_FORMATS = {
+    mime_type: document_format
+    for document_format, mime_types in _FORMAT_MIME_TYPES.items()
+    for mime_type in mime_types
+}
+_GENERIC_MIME_TYPES = frozenset({
+    "",
+    "application/octet-stream",
+    "binary/octet-stream",
+})
+
+logger = logging.getLogger(__name__)
 _scope_locks: dict[str, threading.Lock] = {}
 _scope_locks_guard = threading.Lock()
 
@@ -50,6 +93,7 @@ class PaperQALibrary:
     paper_count: int
     direct_scope_id: str | None = None
     direct_file_names: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 def _opaque_id(prefix: str, *parts: Any) -> str:
@@ -162,15 +206,34 @@ def _file_metadata(
     )
 
 
-def _is_pdf(metadata: dict) -> bool:
+def _metadata_content_type(metadata: dict) -> str:
     meta = metadata.get("meta") or {}
     if not isinstance(meta, dict):
         meta = {}
-    content_type = str(meta.get("content_type") or "").lower()
-    filename = str(
-        meta.get("name") or metadata.get("filename") or ""
-    ).lower()
-    return content_type == "application/pdf" or filename.endswith(".pdf")
+    return (
+        str(meta.get("content_type") or "")
+        .partition(";")[0]
+        .strip()
+        .lower()
+    )
+
+
+def _document_format(metadata: dict) -> str | None:
+    """Return an allowlisted literature format without trusting a path."""
+    filename = _metadata_name(metadata)
+    suffix_format = Path(filename).suffix.lower().lstrip(".")
+    if suffix_format not in _FORMAT_MIME_TYPES:
+        suffix_format = ""
+
+    content_type = _metadata_content_type(metadata)
+    mime_format = _MIME_FORMATS.get(content_type)
+    if suffix_format:
+        if mime_format and mime_format != suffix_format:
+            return None
+        if content_type in _GENERIC_MIME_TYPES or mime_format:
+            return suffix_format
+        return None
+    return mime_format
 
 
 def _metadata_fingerprint(metadata: dict) -> str:
@@ -196,6 +259,18 @@ def _metadata_name(metadata: dict) -> str:
     return str(
         meta.get("name") or metadata.get("filename") or ""
     ).strip()
+
+
+def _metadata_size(metadata: dict) -> int | None:
+    meta = metadata.get("meta") or {}
+    if not isinstance(meta, dict):
+        return None
+    size = meta.get("size")
+    return (
+        size
+        if isinstance(size, int) and not isinstance(size, bool)
+        else None
+    )
 
 
 def _state_path(scope_id: str) -> Path:
@@ -224,7 +299,7 @@ def _write_state(scope_id: str, payload: dict) -> None:
     temporary.replace(destination)
 
 
-def _download_pdf(
+def _download_document(
     file_id: str,
     destination: Path,
     headers: dict[str, str],
@@ -255,10 +330,10 @@ def _download_pdf(
                 if not chunk:
                     continue
                 transferred += len(chunk)
-                if transferred > PQA_MAX_PDF_BYTES:
+                if transferred > PQA_MAX_DOCUMENT_BYTES:
                     raise RuntimeError(
-                        f"PDF {file_id!r} exceeds the "
-                        f"{PQA_MAX_PDF_BYTES}-byte PaperQA limit."
+                        "The document exceeds the "
+                        f"{PQA_MAX_DOCUMENT_BYTES}-byte PaperQA limit."
                     )
                 if time.monotonic() >= deadline:
                     raise RuntimeError(
@@ -273,6 +348,106 @@ def _download_pdf(
     return transferred, digest.hexdigest()
 
 
+def _validate_pdf(path: Path) -> int:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as source:
+            signature = source.read(5)
+    except OSError as exc:
+        raise RuntimeError("The generated PDF could not be read.") from exc
+    if not size or signature != b"%PDF-":
+        raise RuntimeError("Document processing did not produce a valid PDF.")
+    if size > PQA_MAX_CONVERTED_PDF_BYTES:
+        raise RuntimeError(
+            "The generated PDF exceeds the "
+            f"{PQA_MAX_CONVERTED_PDF_BYTES}-byte PaperQA limit."
+        )
+    return size
+
+
+def _file_sha256(path: Path, deadline: float) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(PQA_SYNC_CHUNK_BYTES), b""):
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "Timed out while synchronizing PaperQA documents."
+                )
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _convert_to_pdf(source: Path, output_dir: Path, deadline: float) -> Path:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError("Timed out while synchronizing PaperQA documents.")
+    profile_dir = output_dir / "profile"
+    profile_dir.mkdir()
+    timeout = min(float(PQA_CONVERSION_TIMEOUT_SECONDS), remaining)
+    command = [
+        LIBREOFFICE_BINARY,
+        "--headless",
+        "--nologo",
+        "--nodefault",
+        "--norestore",
+        "--safe-mode",
+        f"-env:UserInstallation={profile_dir.resolve().as_uri()}",
+        "--convert-to",
+        "pdf:writer_pdf_Export",
+        "--outdir",
+        str(output_dir),
+        str(source),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Document conversion timed out.") from exc
+    except OSError as exc:
+        raise RuntimeError("The document converter is unavailable.") from exc
+    if completed.returncode:
+        logger.warning(
+            "LibreOffice conversion failed with exit code %s",
+            completed.returncode,
+        )
+        raise RuntimeError("LibreOffice could not convert the document.")
+    return output_dir / f"{source.stem}.pdf"
+
+
+def _materialize_pdf(
+    file_id: str,
+    document_format: str,
+    destination: Path,
+    headers: dict[str, str],
+    deadline: float,
+) -> tuple[int, str, int, str]:
+    """Download one document and atomically install its normalized PDF."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".paperqa-convert-",
+        dir=destination.parent,
+    ) as temporary_directory:
+        temporary_root = Path(temporary_directory)
+        source = temporary_root / f"source.{document_format}"
+        source_size, source_hash = _download_document(
+            file_id, source, headers, deadline
+        )
+        if document_format == "pdf":
+            converted = source
+        else:
+            converted = _convert_to_pdf(source, temporary_root, deadline)
+        output_size = _validate_pdf(converted)
+        output_hash = _file_sha256(converted, deadline)
+        converted.replace(destination)
+    return source_size, source_hash, output_size, output_hash
+
+
 def _sync_scope(
     scope_id: str,
     file_ids: Iterable[str],
@@ -280,8 +455,8 @@ def _sync_scope(
     deadline: float,
     *,
     remove_stale: bool,
-) -> dict[str, dict]:
-    """Mirror authorized PDFs into one scope and return its file state."""
+) -> tuple[dict[str, dict], tuple[str, ...]]:
+    """Mirror authorized documents into one scope and return state/issues."""
     with _scope_lock(scope_id):
         return _sync_scope_unlocked(
             scope_id,
@@ -299,18 +474,37 @@ def _sync_scope_unlocked(
     deadline: float,
     *,
     remove_stale: bool,
-) -> dict[str, dict]:
+) -> tuple[dict[str, dict], tuple[str, ...]]:
     papers_dir = PAPERS_ROOT / scope_id
     papers_dir.mkdir(parents=True, exist_ok=True)
     previous = (_read_state(scope_id).get("files") or {})
     desired: dict[str, dict] = {}
+    attempted_ids = set(file_ids)
+    warnings: list[str] = []
 
-    for file_id in sorted(set(file_ids)):
+    for file_id in sorted(attempted_ids):
         metadata = _file_metadata(file_id, headers, deadline)
-        if not _is_pdf(metadata):
+        original_name = _metadata_name(metadata)
+        display_name = original_name or "Unnamed document"
+        document_format = _document_format(metadata)
+        if document_format is None:
+            warnings.append(
+                f"Skipped {display_name!r}: unsupported or conflicting "
+                "document type. Supported types are PDF, DOCX, DOC, ODT, "
+                "and RTF."
+            )
+            continue
+        advertised_size = _metadata_size(metadata)
+        if (
+            advertised_size is not None
+            and advertised_size > PQA_MAX_DOCUMENT_BYTES
+        ):
+            warnings.append(
+                f"Skipped {display_name!r}: the document exceeds the "
+                f"{PQA_MAX_DOCUMENT_BYTES}-byte PaperQA limit."
+            )
             continue
         fingerprint = _metadata_fingerprint(metadata)
-        original_name = _metadata_name(metadata)
         filename = f"{hashlib.sha256(file_id.encode()).hexdigest()}.pdf"
         destination = papers_dir / filename
         old = previous.get(file_id) if isinstance(previous, dict) else None
@@ -318,6 +512,8 @@ def _sync_scope_unlocked(
             isinstance(old, dict)
             and old.get("fingerprint") == fingerprint
             and old.get("filename") == filename
+            and old.get("representation_version")
+            == PQA_DOCUMENT_REPRESENTATION_VERSION
             and destination.is_file()
         ):
             desired[file_id] = {
@@ -326,35 +522,63 @@ def _sync_scope_unlocked(
             }
             continue
 
-        size, content_hash = _download_pdf(
-            file_id, destination, headers, deadline
-        )
+        try:
+            source_size, source_hash, output_size, output_hash = (
+                _materialize_pdf(
+                    file_id,
+                    document_format,
+                    destination,
+                    headers,
+                    deadline,
+                )
+            )
+        except Exception as exc:
+            if not isinstance(exc, RuntimeError):
+                logger.exception("Unexpected PaperQA document processing error")
+            reason = (
+                str(exc)
+                if isinstance(exc, RuntimeError)
+                else "Document processing failed."
+            )
+            warnings.append(
+                f"Skipped {display_name!r}: {reason}"
+            )
+            continue
         desired[file_id] = {
             "filename": filename,
             "fingerprint": fingerprint,
-            "sha256": content_hash,
-            "size": size,
+            "representation_version": PQA_DOCUMENT_REPRESENTATION_VERSION,
+            "source_format": document_format,
+            "content_type": _metadata_content_type(metadata),
+            "source_sha256": source_hash,
+            "source_size": source_size,
+            "sha256": output_hash,
+            "size": output_size,
             "name": original_name,
         }
 
-    if not remove_stale and isinstance(previous, dict):
+    if isinstance(previous, dict):
         for file_id, record in previous.items():
             if file_id in desired or not isinstance(record, dict):
                 continue
             filename = record.get("filename")
-            if isinstance(filename, str) and (papers_dir / filename).is_file():
+            existing = (
+                papers_dir / filename
+                if isinstance(filename, str)
+                else None
+            )
+            if (
+                not remove_stale
+                and file_id not in attempted_ids
+                and existing is not None
+                and existing.is_file()
+            ):
                 desired[file_id] = record
-
-    if remove_stale and isinstance(previous, dict):
-        for file_id, record in previous.items():
-            if file_id in desired or not isinstance(record, dict):
-                continue
-            filename = record.get("filename")
-            if isinstance(filename, str):
-                (papers_dir / filename).unlink(missing_ok=True)
+            elif existing is not None:
+                existing.unlink(missing_ok=True)
 
     _write_state(scope_id, {"files": desired})
-    return desired
+    return desired, tuple(warnings)
 
 
 def _materialize_combined_scope(
@@ -435,9 +659,9 @@ def prepare_paperqa_library(
     """Resolve, authorize, and synchronize a turn's PaperQA library.
 
     Collection scopes are persistent and mirrored to current membership.
-    Direct PDFs are additive within a chat scope. A combined scope is created
-    only for chats with direct PDFs, so collection-only chats reuse the same
-    per-user/per-Assistant/per-collection index.
+    Direct documents are additive within a chat scope. A combined scope is
+    created only for chats with direct documents, so collection-only chats
+    reuse the same per-user/per-Assistant/per-collection index.
     """
     if not authorization:
         raise RuntimeError(
@@ -464,7 +688,7 @@ def prepare_paperqa_library(
         assistant_id,
         collection_ids,
     )
-    collection_state = _sync_scope(
+    collection_state, collection_warnings = _sync_scope(
         collection_scope,
         collection_file_ids,
         headers,
@@ -477,7 +701,7 @@ def prepare_paperqa_library(
     )
     prior_chat_state = _read_state(chat_scope).get("files") or {}
     if direct_ids or prior_chat_state:
-        direct_state = _sync_scope(
+        direct_state, direct_warnings = _sync_scope(
             chat_scope,
             direct_ids,
             headers,
@@ -501,6 +725,9 @@ def prepare_paperqa_library(
                 for record in direct_state.values()
                 if isinstance(record, dict) and record.get("name")
             })),
+            warnings=tuple(dict.fromkeys(
+                collection_warnings + direct_warnings
+            )),
         )
 
     return PaperQALibrary(
@@ -510,4 +737,5 @@ def prepare_paperqa_library(
         paper_count=len(collection_state),
         direct_scope_id=None,
         direct_file_names=(),
+        warnings=collection_warnings,
     )

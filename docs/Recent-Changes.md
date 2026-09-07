@@ -74,7 +74,7 @@ major changes.
 8. Uploaded and sandbox images can now be supplied directly to the vision-capable IDEA agent, with configurable size and count limits.
 9. A centrally maintained shared scientific-data volume is mounted read-only in every user sandbox, and climate tools write full datasets and provenance directly into the user's workspace.
 10. IDEA now has unified skill discovery and loading for built-in and user Workspace skills, including validated hierarchical packages and the ported CIndRA skill suite.
-11. PaperQA2 is integrated with Open WebUI Assistant knowledge collections and direct PDF attachments, with cited visual contexts returned alongside literature answers.
+11. PaperQA2 is integrated with Open WebUI Assistant knowledge collections and direct PDF, DOCX, DOC, ODT, and RTF attachments. Office documents are normalized to PDF before indexing, conversion failures are reported explicitly, and cited visual contexts are returned alongside literature answers.
 12. Chat responses, tool progress, and output-finalization status now stream through Open WebUI so long-running work remains visible to the user.
 
 ## Major TODOs
