@@ -141,6 +141,17 @@ jobs:
             # Remove the credential from the VM now that all pulls are done;
             # the token also expires when the run ends regardless.
             docker logout ghcr.io
+
+            # Compose builds service images locally in this deployment. Remove
+            # dangling layers left by replaced builds without touching tagged
+            # images that may still be needed by other services or sandboxes.
+            echo "==> Pruning dangling images from Compose rebuilds"
+            docker image prune -f || true
+
+            # Keep BuildKit's cache useful while preventing unbounded VM disk
+            # growth between deployments.
+            echo "==> Capping Docker build cache at 20GB"
+            docker builder prune -f -a --keep-storage=20GB || true
           REMOTE
 
       - name: Smoke check
