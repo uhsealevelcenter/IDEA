@@ -42,6 +42,8 @@ The script also:
   to select it in the Assistant editor;
 - assigns the IDEA logo to the IDEA Agent's workspace metadata so its
   profile image endpoint does not fall back to the Open WebUI favicon;
+- configures new Assistants to accept uploads through IDEA's raw-file path,
+  while preserving unrelated administrator-defined model defaults;
 - enables private Assistant creation for verified non-admin users;
 - keeps user-to-user and public Assistant sharing disabled; and
 - selects Welcome Assistant as the default when no default has already been

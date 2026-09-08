@@ -55,6 +55,11 @@ OFFICIAL_ASSISTANT_CAPABILITIES = {
     "terminal": False,
     "usage": False,
 }
+NEW_ASSISTANT_FILE_CAPABILITIES = {
+    "file_upload": True,
+    "raw_file_access": True,
+    "file_context": False,
+}
 OFFICIAL_ASSISTANT_DEFAULT_FEATURE_IDS: list[str] = []
 OFFICIAL_ASSISTANT_BUILTIN_TOOLS = {
     "time": True,
@@ -492,6 +497,28 @@ def configure_default_assistant(
     return "updated"
 
 
+def configure_new_assistant_defaults(
+    client: OpenWebUIClient,
+    dry_run: bool,
+) -> str:
+    """Make future Assistants use IDEA's raw-file upload path by default."""
+    config = client.get("/api/v1/configs/models")
+    metadata = dict(config.get("DEFAULT_MODEL_METADATA") or {})
+    capabilities = dict(metadata.get("capabilities") or {})
+    updated_capabilities = {
+        **capabilities,
+        **NEW_ASSISTANT_FILE_CAPABILITIES,
+    }
+    if updated_capabilities == capabilities:
+        return "unchanged"
+
+    metadata["capabilities"] = updated_capabilities
+    config["DEFAULT_MODEL_METADATA"] = metadata
+    if not dry_run:
+        client.post("/api/v1/configs/models", config)
+    return "updated"
+
+
 def verify_assistants(
     client: OpenWebUIClient,
     manifest: dict[str, Any],
@@ -652,6 +679,10 @@ def main() -> int:
         "assistants": resolved_assistants,
     }
     configure_user_assistant_permissions(client, args.dry_run)
+    new_assistant_defaults_action = configure_new_assistant_defaults(
+        client,
+        args.dry_run,
+    )
     results = deploy_assistants(
         client,
         manifest_path,
@@ -696,6 +727,10 @@ def main() -> int:
         print(f"{prefix} {assistant_id}: {action}")
     for assistant_id, action in inherited_results.items():
         print(f"{prefix} {assistant_id} Welcome suggestions: {action}")
+    print(
+        f"{prefix} new Assistant raw-file defaults: "
+        f"{new_assistant_defaults_action}"
+    )
     print(f"{prefix} default Assistant: {default_action}")
     print(
         "Verified users may create private Assistants; public and user-to-user "

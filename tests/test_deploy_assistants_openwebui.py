@@ -474,6 +474,58 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertFalse(payload["sharing"]["public_models"])
         self.assertTrue(payload["chat"]["share"])
 
+    def test_new_assistant_defaults_enable_raw_file_access(self):
+        existing = {
+            "DEFAULT_MODELS": "welcome-assistant",
+            "DEFAULT_PINNED_MODELS": "",
+            "MODEL_ORDER_LIST": ["welcome-assistant"],
+            "DEFAULT_MODEL_METADATA": {
+                "capabilities": {
+                    "vision": False,
+                    "file_context": True,
+                },
+                "custom": "kept",
+            },
+            "DEFAULT_MODEL_PARAMS": {"temperature": 0.2},
+        }
+        client = FakeClient(
+            responses={"/api/v1/configs/models": existing}
+        )
+
+        action = deploy.configure_new_assistant_defaults(client, dry_run=False)
+
+        self.assertEqual(action, "updated")
+        path, payload = client.posts[0]
+        self.assertEqual(path, "/api/v1/configs/models")
+        self.assertEqual(payload["DEFAULT_MODELS"], "welcome-assistant")
+        self.assertEqual(payload["MODEL_ORDER_LIST"], ["welcome-assistant"])
+        self.assertEqual(payload["DEFAULT_MODEL_PARAMS"], {"temperature": 0.2})
+        self.assertEqual(payload["DEFAULT_MODEL_METADATA"]["custom"], "kept")
+        capabilities = payload["DEFAULT_MODEL_METADATA"]["capabilities"]
+        self.assertFalse(capabilities["vision"])
+        self.assertTrue(capabilities["file_upload"])
+        self.assertTrue(capabilities["raw_file_access"])
+        self.assertFalse(capabilities["file_context"])
+
+    def test_new_assistant_defaults_are_idempotent(self):
+        client = FakeClient(
+            responses={
+                "/api/v1/configs/models": {
+                    "DEFAULT_MODEL_METADATA": {
+                        "capabilities": {
+                            **deploy.NEW_ASSISTANT_FILE_CAPABILITIES,
+                            "vision": True,
+                        }
+                    }
+                }
+            }
+        )
+
+        action = deploy.configure_new_assistant_defaults(client, dry_run=False)
+
+        self.assertEqual(action, "unchanged")
+        self.assertEqual(client.posts, [])
+
     def test_seed_mode_preserves_an_existing_default(self):
         client = FakeClient(
             responses={
