@@ -197,3 +197,12 @@ The GitHub Actions workflow maps `next-dev` to the GitHub Environment of the
 same name. Automatic deployment still requires that environment's
 `DEPLOY_ENABLED=true`, SSH and app-directory values, deployment command,
 DNS/TLS route, and smoke-check URL to be configured.
+
+The `next-dev` environment must use `docker-compose.next-dev.yml`, which
+publishes nginx over HTTP without mounting the production certificate tree.
+The production environment must continue to use `docker-compose.prod.yml`.
+Set the `next-dev` GitHub Environment's `DEPLOY_CMD` variable to:
+
+```bash
+set -a && . ./.env && set +a && docker compose -f docker-compose.yml -f docker-compose.next-dev.yml up -d --build --remove-orphans && curl --retry 24 --retry-delay 5 --retry-all-errors -fsS http://localhost:3001/health >/dev/null && OPENWEBUI_BASE_URL=http://localhost:3001 ./openwebui/register_idea_pipe.sh && OPENWEBUI_BASE_URL=http://localhost:3001 ./openwebui/configure_openwebui.py && OPENWEBUI_BASE_URL=http://localhost:3001 ./assistants/deploy_assistants_openwebui.py && docker compose -f docker-compose.yml -f docker-compose.next-dev.yml restart nginx
+```
