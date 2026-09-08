@@ -13,7 +13,7 @@ import langgraph_service  # noqa: E402
 
 
 class ChatRunEventTests(unittest.TestCase):
-    def test_chat_requests_defer_to_the_configured_agent_model(self):
+    def test_chat_requests_default_to_the_standard_agent_variant(self):
         request = langgraph_service.ChatRunRequest(
             session_id="chat-1",
             user_id="user-1",
@@ -21,8 +21,33 @@ class ChatRunEventTests(unittest.TestCase):
             messages=[{"role": "user", "content": "hello"}],
         )
 
-        self.assertIsNone(request.model)
+        self.assertEqual(request.agent_variant, "standard")
         self.assertEqual(langgraph_service.IDEA_AGENT_MODEL, "gpt-5.6-terra")
+
+    def test_advanced_chat_run_resolves_model_and_reasoning_server_side(self):
+        async def exercise():
+            with (
+                patch.object(langgraph_service, "_set_chat_run_status"),
+                patch.object(langgraph_service.redis_client, "delete"),
+                patch.object(langgraph_service.threading, "Thread") as thread,
+            ):
+                thread.return_value.start.return_value = None
+                await langgraph_service.start_chat_run(
+                    langgraph_service.ChatRunRequest(
+                        session_id="chat-1",
+                        user_id="user-1",
+                        is_guest=False,
+                        messages=[{"role": "user", "content": "hello"}],
+                        agent_variant="advanced",
+                    )
+                )
+
+            kwargs = thread.call_args.kwargs["kwargs"]
+            self.assertEqual(kwargs["model"], "gpt-6-astra")
+            self.assertEqual(kwargs["reasoning_effort"], "low")
+            self.assertTrue(kwargs["use_responses_api"])
+
+        asyncio.run(exercise())
 
     def test_summarizes_only_current_run_model_usage(self):
         summary = langgraph_service._summarize_model_usage([

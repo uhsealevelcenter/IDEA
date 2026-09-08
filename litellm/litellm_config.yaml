@@ -1,7 +1,7 @@
 # LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
 # `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
-# endpoint. IDEA_AGENT_MODEL selects Sol or Terra for primary chat;
-# gpt-5.6-luna is available to Open WebUI for background task generation.
+# endpoint. IDEA_AGENT_MODEL selects the standard primary model;
+# gpt-6-astra backs the administrator-assignable Advanced variant.
 
 model_list:
 
@@ -45,6 +45,15 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
     model_info:
       mode: chat
+
+  - model_name: gpt-6-astra
+    litellm_params:
+      model: openai/gpt-6-astra
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      # Astra tool calling is routed through LiteLLM's /responses endpoint.
+      mode: responses
 
   - model_name: text-embedding-3-small
     litellm_params:

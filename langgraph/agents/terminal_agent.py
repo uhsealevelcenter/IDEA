@@ -106,10 +106,25 @@ def _prompt_cache_key(model: str, session_id: str) -> str:
 
 
 def _supports_prompt_caching(model: str) -> bool:
-    """Only the GPT-5.6 family (terra/sol/luna) supports explicit prompt-cache
-    breakpoints/options. Other aliases (e.g. gpt-5.5) 400 on these OpenAI
-    request fields, so callers must gate on this before attaching them."""
-    return str(model or "").strip().lower().startswith("gpt-5.6")
+    """Return whether IDEA may attach explicit prompt-cache request fields."""
+    normalized = str(model or "").strip().lower()
+    return normalized.startswith("gpt-5.6") or normalized == "gpt-6-astra"
+
+
+def _model_api_kwargs(
+    *,
+    use_responses_api: bool,
+    reasoning_effort: Optional[str],
+) -> Dict[str, Any]:
+    """Build endpoint-specific reasoning settings for ``ChatOpenAI``."""
+    kwargs: Dict[str, Any] = {"use_responses_api": use_responses_api}
+    if reasoning_effort is None:
+        return kwargs
+    if use_responses_api:
+        kwargs["reasoning"] = {"effort": reasoning_effort}
+    else:
+        kwargs["reasoning_effort"] = reasoning_effort
+    return kwargs
 
 
 def _cacheable_system_message(content: str, model: str) -> SystemMessage:
@@ -246,6 +261,8 @@ class TerminalAgent:
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         model: str = IDEA_AGENT_MODEL,
+        reasoning_effort: Optional[str] = None,
+        use_responses_api: bool = False,
         temperature: Optional[float] = None,
         max_iterations: int = 20,
         assistant_id: Optional[str] = None,
@@ -262,6 +279,8 @@ class TerminalAgent:
         # above is still keyed off user_id, not this.
         self.user_email = user_email
         self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.use_responses_api = use_responses_api
         self.temperature = temperature
         self.max_iterations = max_iterations
         self.model_request_timeout_seconds = IDEA_MODEL_REQUEST_TIMEOUT_SECONDS
@@ -414,6 +433,10 @@ class TerminalAgent:
         }
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
+        llm_kwargs.update(_model_api_kwargs(
+            use_responses_api=use_responses_api,
+            reasoning_effort=reasoning_effort,
+        ))
         # Forwarded through litellm to Langfuse (see
         # litellm/litellm_config.yaml's success_callback/failure_callback)
         # so every call groups into a per-conversation trace, itself
@@ -427,9 +450,9 @@ class TerminalAgent:
             },
         }
         if _supports_prompt_caching(model):
-            # GPT-5.6's implicit breakpoint includes the changing latest user
-            # or tool message. Route calls from this session together and use
-            # only the explicit stable-system-prompt breakpoint instead.
+            # Supported models' implicit breakpoint includes the changing
+            # latest user or tool message. Route calls from this session
+            # together and use only the stable-system-prompt breakpoint.
             llm_kwargs["model_kwargs"] = {
                 "prompt_cache_key": _prompt_cache_key(model, session_id),
             }

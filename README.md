@@ -58,7 +58,7 @@ IDEA is built to be customized. You can tailor behavior by adding domain instruc
 
 IDEA combines:
 
-- A conversational interface with a multimodal large language model (`gpt-5.6-terra` by default, configurable through `IDEA_AGENT_MODEL`)
+- A conversational interface with a standard model (`gpt-5.6-terra` by default, using Chat Completions) and an administrator-assignable Advanced variant (`gpt-6-astra` with low reasoning, using the Responses API)
 - Information and data context (provide custom "Instruction" manuals, "Knowledge" documents, and Data files)
 - Tool use for real actions (file I/O, code execution, plotting, and reporting)
 - Human-driven and reproducible science workflows (code reviews and "Conversation" sharing)
@@ -209,8 +209,9 @@ https://docs.openwebui.com/features/authentication-access/api-keys/
    ```bash
    ./assistants/deploy_assistants_openwebui.py
    ```
-   This seeds Welcome Assistant, SEA, and Mars Assistant on top of the visible
-   `idea-terminal-agent` base model. It enables private Assistant creation for
+   This seeds Welcome Assistant, SEA, and Mars Assistant on the standard
+   `idea-terminal-agent` base model and registers an admin-assignable Advanced
+   variant. It enables private Assistant creation for
    verified users without enabling user-to-user or public sharing. Normal seed
    mode preserves subsequent Admin UI edits; use `--reconcile` to restore the
    repository definitions. User-created Assistants are never modified.

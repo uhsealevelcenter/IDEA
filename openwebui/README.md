@@ -10,8 +10,8 @@ trusted attachment and PaperQA processing continues inside LangGraph.
 `functions/idea_pipe.py` is an Open WebUI [Pipe
 function](https://docs.openwebui.com/features/plugin/functions/pipe) that:
 
-1. Registers as a selectable model ("IDEA Agent") in Open WebUI's
-   model dropdown.
+1. Registers standard and Advanced IDEA base-model variants. The Advanced
+   variant is hidden from ordinary model pickers and assignable by admins.
 2. On each chat turn, POSTs to `langgraph_service.py`'s `/chat-runs` endpoint,
    then polls its durable sequence-numbered events. Open WebUI's `user.id`,
    `chat_id`, selected Assistant, visible branch, and response-message ID are
@@ -55,10 +55,12 @@ Open WebUI uses an external task model for auxiliary work such as titles,
 tags, follow-up suggestions, and search queries. IDEA keeps this separate
 from the user-facing Pipe model:
 
-- `IDEA Agent` remains the only visible chat model and continues
-  to use the centrally configured `IDEA_AGENT_MODEL` through LangGraph
-  (`gpt-5.6-terra` by default; `gpt-5.6-sol` remains available as an
-  explicit alternative).
+- `IDEA Agent` remains the default visible chat model and uses the centrally
+  configured `IDEA_AGENT_MODEL` (`gpt-5.6-terra` by default).
+- `IDEA Agent Advanced` uses `gpt-6-astra` with low reasoning through the
+  Responses API. It is publicly readable so assigned Assistants work for their
+  users, but its hidden metadata keeps it available only in the admin Assistant
+  base-model picker.
 - `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
   Open WebUI, and marked hidden so it remains available to backend tasks
   without appearing in the chat model selector.

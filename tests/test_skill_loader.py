@@ -745,6 +745,7 @@ class TerminalAgentSkillIntegrationTests(unittest.TestCase):
         agent = terminal_agent.TerminalAgent.__new__(
             terminal_agent.TerminalAgent
         )
+        agent.model = "gpt-5.6-terra"
         agent.sandbox_id = "test-user"
         agent._shown_image_hashes = set()
         agent.assistant_id = None
