@@ -47,6 +47,12 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertEqual(self.manifest["base_model_name"], "IDEA Agent")
         self.assertEqual(self.manifest["base_model_logo"], "assets/idea.png")
         self.assertEqual(
+            [item["id"] for item in self.manifest["base_models"]],
+            ["idea-terminal-agent", "idea-terminal-agent-advanced"],
+        )
+        self.assertTrue(self.manifest["base_models"][0]["default_for_assistants"])
+        self.assertTrue(self.manifest["base_models"][1]["hidden"])
+        self.assertEqual(
             self.manifest["welcome_suggestion_assistant_ids"],
             ["cindra"],
         )
@@ -228,6 +234,8 @@ class DeployAssistantsTests(unittest.TestCase):
             )
 
             self.assertTrue(payload["meta"]["paperqa_enabled"])
+            self.assertTrue(payload["meta"]["capabilities"]["raw_file_access"])
+            self.assertFalse(payload["meta"]["capabilities"]["file_context"])
             self.assertEqual(
                 payload["meta"]["capabilities"],
                 managed_capabilities,
@@ -391,6 +399,8 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertEqual(path, "/api/v1/models/create")
         self.assertEqual(payload["name"], "IDEA Agent")
         self.assertFalse(payload["meta"]["hidden"])
+        self.assertTrue(payload["meta"]["capabilities"]["raw_file_access"])
+        self.assertFalse(payload["meta"]["capabilities"]["file_context"])
         self.assertNotIn("assistant_base_model", payload["meta"])
         self.assertEqual(
             payload["meta"]["profile_image_url"],
@@ -420,6 +430,28 @@ class DeployAssistantsTests(unittest.TestCase):
         path, payload = client.posts[0]
         self.assertEqual(path, "/api/v1/models/model/update")
         self.assertEqual(payload["name"], "IDEA Agent")
+
+    def test_advanced_base_model_is_hidden_but_publicly_readable(self):
+        client = FakeClient()
+
+        deploy.configure_assistant_base_model(
+            client,
+            "idea-terminal-agent-advanced",
+            "IDEA Agent Advanced",
+            "data:image/png;base64,aWRlYQ==",
+            dry_run=False,
+            hidden=True,
+            default_for_assistants=False,
+            variant="advanced",
+        )
+
+        payload = client.posts[0][1]
+        self.assertTrue(payload["meta"]["hidden"])
+        self.assertFalse(payload["meta"]["default_for_assistants"])
+        self.assertEqual(payload["meta"]["idea_agent_variant"], "advanced")
+        self.assertIn(
+            deploy.public_read_grants([])[0], payload["access_grants"]
+        )
 
     def test_permissions_enable_private_assistant_creation_only(self):
         client = FakeClient(

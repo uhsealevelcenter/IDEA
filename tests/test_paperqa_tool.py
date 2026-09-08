@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from utils.tools.knowledge_base_tool import (  # noqa: E402
     _selected_media_context_ids,
     make_query_knowledge_base_tool,
 )
+from utils.tools import knowledge_base_tool  # noqa: E402
 
 
 class PaperQAToolTests(unittest.TestCase):
@@ -136,6 +138,30 @@ class PaperQAToolTests(unittest.TestCase):
 
         self.assertEqual(set(schema["properties"]), {"query"})
         self.assertEqual(schema["required"], ["query"])
+
+    def test_tool_returns_and_surfaces_preparation_warnings(self):
+        paperqa_tool = make_query_knowledge_base_tool(
+            lambda: "trusted-scope",
+            session_id="trusted-chat",
+            end_user_id="scientist@example.org",
+            warnings_getter=lambda: (
+                "Skipped 'notes.txt': unsupported document type.",
+            ),
+        )
+        result = {
+            "answer": "No papers found in your Knowledge base. Please upload papers first.",
+            "images": [],
+        }
+
+        with patch.object(
+            knowledge_base_tool,
+            "_query_knowledge_base_async",
+            new=AsyncMock(return_value=result),
+        ):
+            payload = paperqa_tool.invoke({"query": "Summarize the attachment"})
+
+        self.assertIn("notes.txt", payload)
+        self.assertIn('"warnings"', payload)
 
     def test_all_roles_and_embedding_use_the_litellm_proxy(self):
         with tempfile.TemporaryDirectory() as directory:

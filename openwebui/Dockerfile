@@ -1,5 +1,5 @@
 # Minimal compatibility fix on the pinned IDEA Open WebUI release.
-FROM ghcr.io/uhsealevelcenter/idea-open-webui:0.11.0-idea.0.8@sha256:93b8bfeff1aedd7f9c529ebe4001715b3764a9e79df10740b932605f322f8472
+FROM ghcr.io/uhsealevelcenter/idea-open-webui:0.11.0-idea.0.9@sha256:1ec23855573f3a146b8d18d70bf8248f242b202e46907ad39d3da8f9591e2a6e
 
 # The UI and chat access checks support Open sharing, but this release's
 # default-permissions request/response schema drops sharing.open_chats.

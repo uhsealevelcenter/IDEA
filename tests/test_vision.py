@@ -169,6 +169,7 @@ class InspectImageToolTests(unittest.TestCase):
             terminal_agent.TerminalAgent
         )
         agent.sandbox_id = "test-user"
+        agent.model = "gpt-5.6-terra"
         agent._shown_image_hashes = set()
         agent.assistant_id = None
         agent.assistant_system_prompt = None
@@ -409,12 +410,56 @@ class LangGraphKernelImageTests(unittest.TestCase):
         runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
         runtime.agent = Mock()
         runtime.agent.sandbox_id = "sandbox-1"
+        runtime.agent.model = "gpt-5.6-terra"
         runtime.agent.openwebui_authorization = None
         runtime.event_callback = Mock()
         runtime.outputs_dir = "/outputs"
         runtime.displayed_image_paths = set()
         runtime.early_synced_outputs = {}
         return runtime
+
+    def test_runtime_passes_reasoning_effort_to_terminal_agent(self):
+        with patch.object(terminal_agent, "TerminalAgent") as agent_class:
+            TerminalGraphRuntime(
+                user_id="user-1",
+                user_email="scientist@example.org",
+                session_id="session-1",
+                model="gpt-6-astra",
+                reasoning_effort="low",
+                use_responses_api=True,
+                assistant_id="advanced-assistant",
+                assistant_system_prompt=None,
+                attached_files=[],
+                openwebui_authorization=None,
+                is_guest=False,
+                paperqa_enabled=False,
+            )
+
+        self.assertEqual(
+            agent_class.call_args.kwargs["reasoning_effort"], "low"
+        )
+        self.assertTrue(agent_class.call_args.kwargs["use_responses_api"])
+
+    def test_astra_uses_responses_reasoning_shape(self):
+        self.assertEqual(
+            terminal_agent._model_api_kwargs(
+                use_responses_api=True,
+                reasoning_effort="low",
+            ),
+            {
+                "use_responses_api": True,
+                "reasoning": {"effort": "low"},
+            },
+        )
+
+    def test_standard_agent_retains_chat_completions_shape(self):
+        self.assertEqual(
+            terminal_agent._model_api_kwargs(
+                use_responses_api=False,
+                reasoning_effort=None,
+            ),
+            {"use_responses_api": False},
+        )
 
     @patch("tools.persistent_terminal.inspect_python_namespace")
     @patch("tools.persistent_terminal.run_python_stream")
@@ -510,6 +555,16 @@ class LangGraphKernelImageTests(unittest.TestCase):
         self.assertNotEqual(
             first,
             terminal_agent._prompt_cache_key("gpt-5.6-terra", "other-session"),
+        )
+
+    def test_astra_uses_the_same_prompt_cache_fields_as_gpt_5_6(self):
+        self.assertTrue(terminal_agent._supports_prompt_caching("gpt-6-astra"))
+        message = terminal_agent._cacheable_system_message(
+            "stable IDEA instructions", "gpt-6-astra"
+        )
+        self.assertEqual(
+            message.content[0]["prompt_cache_breakpoint"],
+            {"mode": "explicit"},
         )
 
     @patch("tools.persistent_terminal.run_python")

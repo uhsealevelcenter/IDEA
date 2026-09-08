@@ -1,0 +1,7 @@
+# Use with: docker compose -f docker-compose.yml -f docker-compose.file-uploads-local.yml
+services:
+  openwebui:
+    image: idea-openwebui:file-uploads-local
+    build:
+      context: ../../IDEA-open-webui
+      dockerfile: ../IDEA-next/IDEA/openwebui/Dockerfile.file-uploads-local

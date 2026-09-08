@@ -7,6 +7,7 @@ forward rather than back in those modules.
 """
 
 import os
+from dataclasses import dataclass
 
 # --- Sandbox service connection ---
 # Originally defined in: tools/persistent_terminal.py
@@ -25,6 +26,41 @@ IDEA_AGENT_MODEL = (
     os.getenv("IDEA_AGENT_MODEL", "gpt-5.6-terra").strip()
     or "gpt-5.6-terra"
 )
+IDEA_ADVANCED_AGENT_MODEL = (
+    os.getenv("IDEA_ADVANCED_AGENT_MODEL", "gpt-6-astra").strip()
+    or "gpt-6-astra"
+)
+IDEA_ADVANCED_REASONING_EFFORT = (
+    os.getenv("IDEA_ADVANCED_REASONING_EFFORT", "low").strip().lower()
+    or "low"
+)
+
+
+@dataclass(frozen=True)
+class IdeaAgentProfile:
+    model: str
+    reasoning_effort: str | None = None
+    use_responses_api: bool = False
+
+
+IDEA_AGENT_PROFILES = {
+    "standard": IdeaAgentProfile(model=IDEA_AGENT_MODEL),
+    "advanced": IdeaAgentProfile(
+        model=IDEA_ADVANCED_AGENT_MODEL,
+        reasoning_effort=IDEA_ADVANCED_REASONING_EFFORT,
+        use_responses_api=True,
+    ),
+}
+
+
+def resolve_idea_agent_profile(variant: str) -> IdeaAgentProfile:
+    """Resolve a trusted UI-facing variant to provider request settings."""
+    try:
+        return IDEA_AGENT_PROFILES[variant]
+    except KeyError as exc:
+        raise ValueError(f"Unknown IDEA agent variant: {variant!r}") from exc
+
+
 IDEA_TOOL_MODEL = (
     os.getenv("IDEA_TOOL_MODEL", "gpt-5.6-terra").strip()
     or "gpt-5.6-terra"

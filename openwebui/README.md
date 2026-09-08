@@ -10,8 +10,8 @@ trusted attachment and PaperQA processing continues inside LangGraph.
 `functions/idea_pipe.py` is an Open WebUI [Pipe
 function](https://docs.openwebui.com/features/plugin/functions/pipe) that:
 
-1. Registers as a selectable model ("IDEA Agent") in Open WebUI's
-   model dropdown.
+1. Registers standard and Advanced IDEA base-model variants. The Advanced
+   variant is hidden from ordinary model pickers and assignable by admins.
 2. On each chat turn, POSTs to `langgraph_service.py`'s `/chat-runs` endpoint,
    then polls its durable sequence-numbered events. Open WebUI's `user.id`,
    `chat_id`, selected Assistant, visible branch, and response-message ID are
@@ -55,10 +55,12 @@ Open WebUI uses an external task model for auxiliary work such as titles,
 tags, follow-up suggestions, and search queries. IDEA keeps this separate
 from the user-facing Pipe model:
 
-- `IDEA Agent` remains the only visible chat model and continues
-  to use the centrally configured `IDEA_AGENT_MODEL` through LangGraph
-  (`gpt-5.6-terra` by default; `gpt-5.6-sol` remains available as an
-  explicit alternative).
+- `IDEA Agent` remains the default visible chat model and uses the centrally
+  configured `IDEA_AGENT_MODEL` (`gpt-5.6-terra` by default).
+- `IDEA Agent Advanced` uses `gpt-6-astra` with low reasoning through the
+  Responses API. It is publicly readable so assigned Assistants work for their
+  users, but its hidden metadata keeps it available only in the admin Assistant
+  base-model picker.
 - `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
   Open WebUI, and marked hidden so it remains available to backend tasks
   without appearing in the chat model selector.
@@ -186,7 +188,7 @@ use Open WebUI's canonical `/api/v1/files/.../content` URL so the IDEA Open
 WebUI customization can authorize them from shared conversations. Generated
 HTML remains on nginx's authenticated `/idea-file-preview/` route and is
 served with a sandbox Content Security Policy. On shared pages, the current
-IDEA Open WebUI `v0.11.0-idea.0.8` image rewrites that HTML link to an
+IDEA Open WebUI `v0.11.0-idea.0.9` image rewrites that HTML link to an
 authorized share-scoped endpoint with the same sandbox restrictions, so
 viewers can open the webpage in a new tab. Other formats retain the normal
 download behavior.
@@ -306,9 +308,13 @@ the canonical template.
 - **`PQA_LLM_MODEL`** / **`PQA_EMBEDDING_MODEL`** - PaperQA model aliases;
   default to `gpt-5.6-terra` and `text-embedding-3-small`.
 
-- **`PQA_SYNC_TIMEOUT_SECONDS`** / **`PQA_MAX_PDF_BYTES`** - authenticated
-  collection/direct-PDF synchronization deadline and per-PDF size limit;
-  default to 300 seconds and 1 GiB.
+- **`PQA_SYNC_TIMEOUT_SECONDS`** / **`PQA_CONVERSION_TIMEOUT_SECONDS`** -
+  authenticated collection/direct-document synchronization deadline and
+  per-office-document conversion limit; default to 300 and 120 seconds.
+
+- **`PQA_MAX_DOCUMENT_BYTES`** / **`PQA_MAX_CONVERTED_PDF_BYTES`** - maximum
+  downloaded source and normalized PDF sizes; both default to 1 GiB.
+  `PQA_MAX_PDF_BYTES` remains a legacy fallback for the source limit.
 
 - **`MAX_SKILL_BYTES`** - maximum size of one complete built-in or Workspace
   skill returned to IDEA; defaults to 100,000 bytes. Larger skills fail
@@ -361,7 +367,7 @@ for the underlying agent/sandbox architecture this depends on.
 
 ## Open chat sharing compatibility fix
 
-The pinned `0.11.0-idea.0.8` release exposes **Chats Open Sharing** in the UI,
+The pinned `0.11.0-idea.0.9` release exposes **Chats Open Sharing** in the UI,
 but omits `open_chats` from the backend `SharingPermissions` schema. Saving
 Default Permissions silently drops that field, so the toggle reopens as off.
 `openwebui/Dockerfile` derives from the same pinned release and adds only

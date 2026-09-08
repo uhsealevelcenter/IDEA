@@ -53,6 +53,8 @@ class ConversationOrchestrator:
         is_guest: bool,
         db: Optional[Session] = None,
         model: str = IDEA_AGENT_MODEL,
+        reasoning_effort: Optional[str] = None,
+        use_responses_api: bool = False,
         temperature: Optional[float] = None,
         max_iterations: int = 20,
         user_email: Optional[str] = None,
@@ -71,6 +73,8 @@ class ConversationOrchestrator:
         self.is_guest = is_guest
         self.db = db
         self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.use_responses_api = use_responses_api
         self.temperature = temperature
         self.max_iterations = max_iterations
         self.assistant_id = assistant_id
@@ -150,6 +154,8 @@ class ConversationOrchestrator:
                 user_id=self.user_id,
                 user_email=self.user_email,
                 model=self.model,
+                reasoning_effort=self.reasoning_effort,
+                use_responses_api=self.use_responses_api,
                 temperature=self.temperature,
                 max_iterations=self.max_iterations,
                 assistant_id=self.assistant_id,
