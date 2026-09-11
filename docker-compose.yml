@@ -296,6 +296,8 @@ services:
     # `docker compose pull langfuse` periodically for patches instead.
     image: langfuse/langfuse:2
     container_name: idea_langfuse
+    ports:
+      - "3050:3000"
     restart: unless-stopped
     # No host port here either - dev-only exposure lives in
     # docker-compose.override.yml, matching langgraph/sandbox/litellm above.
