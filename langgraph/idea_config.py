@@ -26,13 +26,17 @@ IDEA_AGENT_MODEL = (
     os.getenv("IDEA_AGENT_MODEL", "gpt-5.6-terra").strip()
     or "gpt-5.6-terra"
 )
+IDEA_AGENT_REASONING_EFFORT = (
+    os.getenv("IDEA_AGENT_REASONING_EFFORT", "medium").strip().lower()
+    or "medium"
+)
 IDEA_ADVANCED_AGENT_MODEL = (
-    os.getenv("IDEA_ADVANCED_AGENT_MODEL", "gpt-6-astra").strip()
-    or "gpt-6-astra"
+    os.getenv("IDEA_ADVANCED_AGENT_MODEL", "gpt-5.6-sol").strip()
+    or "gpt-5.6-sol"
 )
 IDEA_ADVANCED_REASONING_EFFORT = (
-    os.getenv("IDEA_ADVANCED_REASONING_EFFORT", "low").strip().lower()
-    or "low"
+    os.getenv("IDEA_ADVANCED_REASONING_EFFORT", "medium").strip().lower()
+    or "medium"
 )
 
 
@@ -44,7 +48,10 @@ class IdeaAgentProfile:
 
 
 IDEA_AGENT_PROFILES = {
-    "standard": IdeaAgentProfile(model=IDEA_AGENT_MODEL),
+    "standard": IdeaAgentProfile(
+        model=IDEA_AGENT_MODEL,
+        reasoning_effort=IDEA_AGENT_REASONING_EFFORT,
+    ),
     "advanced": IdeaAgentProfile(
         model=IDEA_ADVANCED_AGENT_MODEL,
         reasoning_effort=IDEA_ADVANCED_REASONING_EFFORT,

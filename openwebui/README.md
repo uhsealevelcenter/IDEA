@@ -56,8 +56,9 @@ tags, follow-up suggestions, and search queries. IDEA keeps this separate
 from the user-facing Pipe model:
 
 - `IDEA Agent` remains the default visible chat model and uses the centrally
-  configured `IDEA_AGENT_MODEL` (`gpt-5.6-terra` by default).
-- `IDEA Agent Advanced` uses `gpt-6-astra` with low reasoning through the
+  configured `IDEA_AGENT_MODEL` (`gpt-5.6-terra` with medium reasoning by
+  default).
+- `IDEA Agent Advanced` uses `gpt-5.6-sol` with medium reasoning through the
   Responses API. It is publicly readable so assigned Assistants work for their
   users, but its hidden metadata keeps it available only in the admin Assistant
   base-model picker.
