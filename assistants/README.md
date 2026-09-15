@@ -78,9 +78,11 @@ official Assistants; seed mode continues to preserve existing UI edits.
 
 `welcome_suggestion_assistant_ids` is a narrow opt-in for existing Assistants
 that should receive Welcome's suggestions without becoming fully
-deployment-managed. CIndRA is currently listed. For these entries, deployment
-updates only `meta.suggestion_prompts` and preserves the Assistant's ownership,
-instructions, capabilities, access grants, active state, and all other fields.
+deployment-managed. The default manifest leaves this list empty so deployments
+do not depend on environment-specific Assistants. For any explicitly added
+entry, deployment updates only `meta.suggestion_prompts` and preserves the
+Assistant's ownership, instructions, capabilities, access grants, active state,
+and all other fields.
 
 `assets/uhslc.svg` preserves the source UHSLC mark on a black square
 background; `assets/uhslc.png` is its 512×512 deployment rendering.

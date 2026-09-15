@@ -675,9 +675,9 @@ settings remain intact.
 ### Suggested prompts
 
 `assistants/manifest.json` now defines exactly six default Welcome prompts
-and six domain prompts each for SEA and Mars. It also allowlists `cindra` to
-receive only Welcome suggestion metadata without making that Assistant
-deployment-managed.
+and six domain prompts each for SEA and Mars. Its optional external-Assistant
+allowlist is empty by default, so deploying IDEA does not require an
+environment-specific Assistant to exist.
 
 `assistants/deploy_assistants_openwebui.py` adds:
 

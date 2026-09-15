@@ -21,7 +21,7 @@
     }
   ],
   "default_assistant_id": "welcome-assistant",
-  "welcome_suggestion_assistant_ids": ["cindra"],
+  "welcome_suggestion_assistant_ids": [],
   "default_suggestion_prompts": [
     {
       "title": ["Explore IDEA", "See what it can do"],
