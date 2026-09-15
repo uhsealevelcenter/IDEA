@@ -20,6 +20,29 @@ SPEC.loader.exec_module(idea_pipe)
 
 
 class IdeaPipeAssistantTests(unittest.TestCase):
+    def test_registers_standard_and_advanced_models(self):
+        self.assertEqual(
+            idea_pipe.Pipe().pipes(),
+            [
+                {"id": "idea-terminal-agent", "name": "IDEA Agent"},
+                {
+                    "id": "idea-terminal-agent-advanced",
+                    "name": "IDEA Agent Advanced",
+                },
+            ],
+        )
+
+    def test_maps_only_known_base_models_to_agent_variants(self):
+        self.assertEqual(
+            idea_pipe._selected_agent_variant(
+                "custom_pipe_id.idea-terminal-agent-advanced"
+            ),
+            "advanced",
+        )
+        self.assertEqual(idea_pipe._selected_agent_variant(None), "standard")
+        with self.assertRaisesRegex(ValueError, "Unsupported IDEA base model"):
+            idea_pipe._selected_agent_variant("gpt-6-astra")
+
     @staticmethod
     def _chat_run_client(aiter_lines):
         """Adapt legacy SSE fixtures to the durable chat-run polling API."""
@@ -394,6 +417,7 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         self.assertEqual(payload["assistant_system_prompt"], "You are SEA.")
         self.assertEqual(payload["session_id"], "chat-123")
         self.assertNotIn("model", payload)
+        self.assertEqual(payload["agent_variant"], "standard")
         self.assertEqual(
             payload["response_message_id"], "assistant-response-1"
         )

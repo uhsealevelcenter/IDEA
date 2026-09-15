@@ -1,0 +1,22 @@
+# Next-dev overlay: production-like sandbox limits with HTTP-only nginx.
+# Production certificates and HTTPS configuration belong exclusively to
+# docker-compose.prod.yml.
+
+services:
+  sandbox:
+    environment:
+      - SANDBOX_CPUS=${SANDBOX_CPUS:-2}
+      - SANDBOX_MEMORY_MB=${SANDBOX_MEMORY_MB:-4096}
+      - SANDBOX_DISK_MB=${SANDBOX_DISK_MB:-10240}
+
+  nginx:
+    image: nginx@sha256:1a8724a52d432501548a8d8681bb1554c2d09778f8b9ed0882fc3442549980b7
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-locations.conf:/etc/nginx/snippets/locations.conf:ro
+      - ./static:/static:ro
+    depends_on:
+      - openwebui

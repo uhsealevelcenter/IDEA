@@ -102,6 +102,20 @@ or changing defaults.
      ./assistants/deploy_assistants_openwebui.py
    ```
 
+   For an existing installation with a different Pipe function ID, set
+   `IDEA_PIPE_FUNCTION_ID` in `.env` before registration. Production currently
+   uses `idea_terminal_agent_langgraph`; preserving this ID keeps existing
+   chat model references valid. Enable only the intended Pipe instance.
+
+   The default Assistant manifest also updates suggestions on existing
+   CINDRA Assistants. On hosts without those Assistants, deploy the official
+   set explicitly:
+
+   ```bash
+   ./assistants/deploy_assistants_openwebui.py \
+     --only welcome-assistant --only sea --only mars-assistant
+   ```
+
 8. Open the Langfuse UI (internal-only unless routed through your reverse
    proxy - see the root [`README.md`](../README.md)'s "LLM Observability
    (Langfuse)" section), create an org/project, and generate an API key pair
@@ -131,8 +145,39 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs \
 
 Log in through the public HTTPS URL and confirm that Welcome Assistant can
 answer a prompt, run Python, read an uploaded file and image, use PaperQA on
-an attached PDF, delegate one read-only and one workspace-write task to Codex,
+attached PDF and Word documents, delegate one read-only and one workspace-write task to Codex,
 and return a downloadable artifact whose link still works on a later turn.
+
+## Production HTTPS
+
+The production overlay serves `https://app.ideaxiom.org/` using the existing
+certificate tree in `certbot/conf`, which is excluded from Git. Keep the
+hostname, port 443, and TLS mounts configured in the tracked nginx and
+Compose files: deployment uses `git reset --hard` and discards local edits.
+The production overlay requires a valid certificate before nginx can start.
+
+After proxy changes, validate and recreate only nginx:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  run --rm --no-deps nginx nginx -t
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  up -d --no-deps --force-recreate nginx
+curl --fail --show-error https://app.ideaxiom.org/
+```
+
+The production host runs the following entry in the deployment user's crontab
+(time is UTC); preserve other jobs when installing it on a replacement host:
+
+```cron
+17 3 * * * /bin/bash /home/exouser/IDEA/scripts/renew-production-cert.sh >> /home/exouser/idea-cert-renewal.log 2>&1
+```
+
+The script runs Certbot with the port-80 ACME webroot and reloads nginx after
+successful renewal checks. It requires Docker access and the Certbot image.
+The production deploy workflow verifies the public HTTPS endpoint;
+other environments may set `HEALTHCHECK_URL` and otherwise use HTTP at
+`VM_HOST`. Workflow changes take effect only after they reach GitHub.
 
 ## Update or Roll Back
 
@@ -152,3 +197,12 @@ The GitHub Actions workflow maps `next-dev` to the GitHub Environment of the
 same name. Automatic deployment still requires that environment's
 `DEPLOY_ENABLED=true`, SSH and app-directory values, deployment command,
 DNS/TLS route, and smoke-check URL to be configured.
+
+The `next-dev` environment must use `docker-compose.next-dev.yml`, which
+publishes nginx over HTTP without mounting the production certificate tree.
+The production environment must continue to use `docker-compose.prod.yml`.
+Set the `next-dev` GitHub Environment's `DEPLOY_CMD` variable to:
+
+```bash
+set -a && . ./.env && set +a && docker compose -f docker-compose.yml -f docker-compose.next-dev.yml up -d --build --remove-orphans && curl --retry 24 --retry-delay 5 --retry-all-errors -fsS http://localhost:3001/health >/dev/null && OPENWEBUI_BASE_URL=http://localhost:3001 ./openwebui/register_idea_pipe.sh && OPENWEBUI_BASE_URL=http://localhost:3001 ./openwebui/configure_openwebui.py && OPENWEBUI_BASE_URL=http://localhost:3001 ./assistants/deploy_assistants_openwebui.py && docker compose -f docker-compose.yml -f docker-compose.next-dev.yml restart nginx
+```

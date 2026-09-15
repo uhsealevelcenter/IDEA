@@ -1,8 +1,9 @@
 # IDEA Assistants
 
 This directory contains IDEA's three deployment-managed Open WebUI
-Assistants. Each Assistant wraps the visible `idea-terminal-agent` base model
-with a domain-specific system prompt and user-facing metadata.
+Assistants. Each Assistant wraps an IDEA base model with a domain-specific
+system prompt and user-facing metadata. `IDEA Agent` is the default;
+administrators may assign the hidden `IDEA Agent Advanced` option.
 
 The three files under `prompts/` are derived from the `content=` strings
 seeded by legacy IDEA's `utils/prompt_manager.py` on the
@@ -11,10 +12,9 @@ changes needed for IDEA-next's read-only shared `/app/data` mount and private
 per-user `/workspace`. Tests pin their lengths and SHA-256 hashes to prevent
 other accidental modernization or formatting changes.
 
-The manifest uses the readable Pipe sub-model ID `idea-terminal-agent`.
-Open WebUI currently qualifies that model in its live catalog as
-`idea_terminal_agent.idea-terminal-agent`; the deployment script resolves and
-uses the qualified ID automatically.
+The manifest uses readable Pipe sub-model IDs. Open WebUI qualifies them in
+its live catalog with the function ID; the deployment script resolves and
+uses those qualified IDs automatically.
 
 Run from the repository root:
 
@@ -37,10 +37,13 @@ and uses the same Open WebUI administrator authentication flow as
 
 The script also:
 
-- keeps the IDEA Agent visible in both chat selection and the
-  Assistant editor's base-model picker;
+- keeps IDEA Agent visible and marks it as the default for new Assistants;
+- keeps IDEA Agent Advanced hidden from ordinary users while allowing admins
+  to select it in the Assistant editor;
 - assigns the IDEA logo to the IDEA Agent's workspace metadata so its
   profile image endpoint does not fall back to the Open WebUI favicon;
+- configures new Assistants to accept uploads through IDEA's raw-file path,
+  while preserving unrelated administrator-defined model defaults;
 - enables private Assistant creation for verified non-admin users;
 - keeps user-to-user and public Assistant sharing disabled; and
 - selects Welcome Assistant as the default when no default has already been

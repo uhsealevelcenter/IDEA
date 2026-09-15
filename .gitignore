@@ -224,3 +224,5 @@ local_scripts/
 # SSH keys - never commit
 .ssh/
 /data
+# Production TLS certificates, private keys, and ACME account material
+/certbot/

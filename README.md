@@ -26,7 +26,7 @@ IDEA is action-oriented. It can execute code, inspect data, and produce artifact
 - **Mapping:** Interactive maps (folium) and static maps (matplotlib/cartopy).
 - **Domain workflows:** Sea level and tide-gauge analysis, station lookup, extremes, trends, and climate index context (e.g., El Niño-Southern Oscillation).
 - **Reproducible outputs:** Saved plots, tables, and derived datasets with traceable steps.
-- **Literature RAG:** Optional literature review using [PaperQA2](https://github.com/Future-House/paper-qa), with locally indexed PDFs for retrieval-augmented answers (via user uploads to their Knowledge base in IDEA or a limited archive of journal articles in SEA).
+- **Literature RAG:** Optional literature review using [PaperQA2](https://github.com/Future-House/paper-qa), with locally indexed PDF, DOCX, DOC, ODT, and RTF documents for retrieval-augmented answers (via user uploads to their Knowledge base in IDEA or a limited archive of journal articles in SEA). Office documents are normalized to PDF before indexing.
 
 <p align="center">
   <img src="https://uhslc.soest.hawaii.edu/research/SEAinfo/EngineeringSchematic_details.png" alt="IDEAschematic_details" width="600" />
@@ -58,7 +58,7 @@ IDEA is built to be customized. You can tailor behavior by adding domain instruc
 
 IDEA combines:
 
-- A conversational interface with a multimodal large language model (`gpt-5.6-terra` by default, configurable through `IDEA_AGENT_MODEL`)
+- A conversational interface with a standard model (`gpt-5.6-terra` with medium reasoning by default, using Chat Completions) and an administrator-assignable Advanced variant (`gpt-5.6-sol` with medium reasoning, using the Responses API)
 - Information and data context (provide custom "Instruction" manuals, "Knowledge" documents, and Data files)
 - Tool use for real actions (file I/O, code execution, plotting, and reporting)
 - Human-driven and reproducible science workflows (code reviews and "Conversation" sharing)
@@ -209,8 +209,9 @@ https://docs.openwebui.com/features/authentication-access/api-keys/
    ```bash
    ./assistants/deploy_assistants_openwebui.py
    ```
-   This seeds Welcome Assistant, SEA, and Mars Assistant on top of the visible
-   `idea-terminal-agent` base model. It enables private Assistant creation for
+   This seeds Welcome Assistant, SEA, and Mars Assistant on the standard
+   `idea-terminal-agent` base model and registers an admin-assignable Advanced
+   variant. It enables private Assistant creation for
    verified users without enabling user-to-user or public sharing. Normal seed
    mode preserves subsequent Admin UI edits; use `--reconcile` to restore the
    repository definitions. User-created Assistants are never modified.
@@ -283,6 +284,72 @@ you want production UI access to traces; `litellm` reaching it over the
 internal compose network is all that's required for tracing to work.
 
 In CI, this is what the `deploy` job in `.github/workflows/deploy.yml` runs remotely over SSH via each environment's `DEPLOY_CMD` GitHub Actions variable.
+
+### Deployment Checklist (Field Notes)
+
+This is a condensed, step-by-step checklist distilled from real deployments,
+in the order things actually need to happen. It complements - rather than
+replaces - the detailed steps above and in
+[`docs/Quick-Deploy.md`](docs/Quick-Deploy.md); use those for full detail on
+any individual step.
+
+1. **Set up the databases for LangGraph and LiteLLM** (and Langfuse, if used)
+   by running their setup scripts (see "Set Up the Service Database Roles"
+   above). This depends on having already generated the several secrets each
+   service needs (Postgres passwords, `LANGGRAPH_AES_KEY`,
+   `LITELLM_MASTER_KEY`, etc. - see "Configure Environment Variables" above)
+   and put them in `.env`.
+2. **Build the images.** For the raw attachment upload fix, see the
+   [local build and testing guide](docs/File-Uploads-Local-Test.md).
+   Building/starting the `openwebui` service requires
+   pull access to the custom, IDEA-maintained
+   `ghcr.io/uhsealevelcenter/idea-open-webui` base image referenced in
+   `openwebui/Dockerfile` - this is a private GHCR package, so request access
+   if the pull fails with an authentication error.
+3. **Set up Open WebUI's own keys and secrets through its UI** - some values
+   (like the admin API key) can only be generated from inside Open WebUI's
+   **Settings** panel, not by editing `.env` alone.
+4. **Create the admin account(s).** In Open WebUI, the first account signed
+   up becomes the admin account (see "One-Time Open WebUI Setup" above).
+5. **Run the one-time Open WebUI setup scripts**, which depend on the admin
+   API key from step 3 being saved as `OPENWEBUI_API_KEY` in `.env`:
+   - `./openwebui/register_idea_pipe.sh`
+   - `./openwebui/configure_openwebui.py`
+   - `./assistants/deploy_assistants_openwebui.py`
+6. **Create a LiteLLM virtual key** with access to all models and a budget
+   set to $300 (or whatever your deployment needs; see the `curl` command in
+   the `LITELLM_VIRTUAL_KEY` comment in `example.env`), then set it as
+   `LITELLM_VIRTUAL_KEY` in `.env`. This depends on `LITELLM_MASTER_KEY`
+   already being set in `.env` and the `litellm` service already running.
+7. **Migrate `/data`** from the stage or dev environment into the shared data
+   volume (see "Seed Shared Scientific Data" above).
+8. **After changing keys in `.env`, recreate the affected containers** so
+   they receive the updated runtime environment. No image rebuild is needed
+   for environment-only changes. On production, run:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate langgraph litellm
+   ```
+
+#### Additional Notes / Gotchas
+
+- In `.env`, `OPENWEBUI_API_KEY` must be an Open WebUI **API Key** (generated
+  under **Settings > Account > API Keys**), not a JWT/session token - a JWT
+  will not work here even though the two can look similar.
+- If Open WebUI's Functions data is ever lost or the instance is redeployed
+  from scratch, the IDEA Pipe needs to be re-registered by rerunning
+  `./openwebui/register_idea_pipe.sh` - Functions live in Open WebUI's own
+  database, not in this repo, so they don't come back automatically.
+- In `.env`, pin `SANDBOX_IMAGE` to a specific tag, e.g.
+  `ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2` (check `example.env` for the current
+  recommended tag).
+- Existing microVMs do **not** pick up a changed `SANDBOX_IMAGE`
+  automatically - after changing it, recreate the `sandbox` service and
+  refresh existing sandboxes with
+  `./interpreter_kernel/refresh_sandboxes.sh`. Note this is destructive to
+  sandbox filesystem state (see "Update or Roll Back" in
+  `docs/Quick-Deploy.md`), so only do this deliberately, not as a routine
+  step.
 
 ### Security and Deployment Notes
 

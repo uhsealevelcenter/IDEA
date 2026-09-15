@@ -234,6 +234,27 @@ class ConfigureOpenWebUITests(unittest.TestCase):
             200_000,
         )
 
+    def test_context_compaction_skips_token_cap_when_unsupported(self):
+        # Pinned Open WebUI releases predating the Token Cap feature never
+        # include the key in /api/v1/chats/config at all - the configurator
+        # must not send or verify it in that case.
+        current = {
+            "ENABLE_CONTEXT_COMPACTION": False,
+            "CONTEXT_COMPACTION_TOKEN_THRESHOLD": 80_000,
+            "CONTEXT_COMPACTION_PROMPT_TEMPLATE": "",
+        }
+        client = FakeClient({"/api/v1/chats/config": current})
+
+        configure_openwebui.configure_context_compaction(
+            client,
+            True,
+            configure_openwebui.DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD,
+        )
+
+        path, payload = client.posts[0]
+        self.assertEqual(path, "/api/v1/chats/config")
+        self.assertNotIn("CONTEXT_COMPACTION_TOKEN_CAP", payload)
+
     def test_native_code_execution_is_disabled_without_losing_other_settings(self):
         current = {
             "ENABLE_CODE_EXECUTION": True,

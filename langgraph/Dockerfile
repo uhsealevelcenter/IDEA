@@ -5,13 +5,18 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     git \
     curl \
     wget \
     build-essential \
+    fonts-dejavu-core \
+    libreoffice-writer \
     && rm -rf /var/lib/apt/lists/*
+
+# PaperQA normalizes supported office documents to PDF before indexing.
+RUN soffice --version
 
 # NOTE: this service no longer talks to microsandbox/pexpect directly - all
 # terminal/sandbox execution is delegated over HTTP to the sandbox_service

@@ -450,7 +450,7 @@ with exact Open WebUI file URLs after finalization. Passive preview-safe
 extensions use the canonical `/api/v1/files/.../content` route so shared-chat
 pages can rewrite them to their share-scoped authorization endpoint. Active
 HTML uses the authenticated, sandboxed `/idea-file-preview/...` route in the
-owner's chat. The current IDEA Open WebUI `v0.11.0-idea.0.8` image rewrites that link on shared
+owner's chat. The current IDEA Open WebUI `v0.11.0-idea.0.9` image rewrites that link on shared
 pages to an authorized share-scoped HTML response with the same sandbox
 restrictions, allowing the webpage to open in a new tab. Other types use the
 download endpoint. URL-encoded paths are normalized, Markdown labels are
@@ -484,9 +484,17 @@ PaperQA setup but do not run input synchronization or emit a misleading
 
 PaperQA is now prepared lazily. `TerminalAgent._ensure_paperqa_library()` does
 not initialize a library during ordinary graph preparation; it runs only when
-the PaperQA tool is invoked. This avoids unnecessary collection/PDF work and
+the PaperQA tool is invoked. This avoids unnecessary collection/document work and
 allows an early Stop to complete promptly. PaperQA remains enabled only for
 configured Assistants and authenticated non-guests.
+
+PaperQA accepts PDF, DOCX, DOC, ODT, and RTF literature documents. LangGraph
+downloads each authorized original under the existing byte and sync limits,
+normalizes office documents to PDF with an isolated, time-bounded LibreOffice
+process, and validates the result before it becomes indexable. State records
+retain original names, types, and source/output fingerprints. Unsupported or
+failed documents produce tool-visible warnings, while valid documents in the
+same collection remain queryable.
 
 `langgraph/utils/skill_loader.py` changes model-facing skill handling so the
 model receives the complete validated skill document/bundle while logs and

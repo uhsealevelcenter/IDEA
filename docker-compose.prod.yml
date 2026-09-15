@@ -1,14 +1,7 @@
 version: '3.8'
 
-# NOTE: superseded - the `sandbox.devices` /dev/kvm passthrough this file
-# used to add now lives directly in the base docker-compose.yml, gated
-# behind the KVM_DEVICE_PATH env var (defaults to the always-safe /dev/null,
-# set to /dev/kvm in .env only on hosts that actually have it). That base
-# file is included by both local_start.sh and the actual CI deploy path
-# (DEPLOY_CMD), so a separate -f docker-compose.prod.yml overlay is no
-# longer necessary for that; set KVM_DEVICE_PATH=/dev/kvm in that host's
-# .env instead - see docker-compose.yml's `sandbox.devices` comment for
-# details.
+# Production overlay: HTTPS for app.ideaxiom.org and sandbox resource defaults.
+# Requires the existing certificate tree in ./certbot/conf.
 
 services:
   sandbox:
@@ -25,13 +18,13 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      # - "443:443"   # uncomment once prod has a real domain + cert
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx-locations.conf:/etc/nginx/snippets/locations.conf:ro
       - ./static:/static:ro
-      # - ./certbot/conf:/etc/letsencrypt:ro   # cert storage, once TLS is set up
-      # - ./certbot/www:/var/www/certbot:ro    # certbot's renewal challenge path
-      # - ./nginx-https-prod.conf:/etc/nginx/https.d/https.conf:ro   # TODO uncomment once nginx-https-prod.conf has a real domain + cert paths filled in
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro    # certbot's renewal challenge path
+      - ./nginx-https-prod.conf:/etc/nginx/https.d/https.conf:ro
     depends_on:
       - openwebui

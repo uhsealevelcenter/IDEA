@@ -8,7 +8,7 @@ import json
 import os
 import uuid
 import threading
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 from datetime import datetime
 from fastapi import Depends, FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -22,6 +22,7 @@ from idea_config import (
     IDEA_CHECKPOINT_MAP_TTL_SECONDS,
     IDEA_KERNEL_SCOPE,
     IDEA_MAX_TOOL_RESULT_EXCERPT_BYTES,
+    resolve_idea_agent_profile,
 )
 from idea_graph.checkpoints import get_checkpointer
 from idea_graph.control import RunCancellation
@@ -340,6 +341,7 @@ class ChatRequest(BaseModel):
     input_checkpoint_id: Optional[str] = None
     idea_context: dict[str, Any] = Field(default_factory=dict)
     model: Optional[str] = None
+    agent_variant: Optional[Literal["standard", "advanced"]] = None
     temperature: Optional[float] = None
     max_iterations: Optional[int] = 20
     restore_history: Optional[bool] = True
@@ -359,7 +361,7 @@ class ChatRunRequest(BaseModel):
     response_message_id: Optional[str] = None
     input_checkpoint_id: Optional[str] = None
     idea_context: dict[str, Any] = Field(default_factory=dict)
-    model: Optional[str] = None
+    agent_variant: Literal["standard", "advanced"] = "standard"
     assistant_id: Optional[str] = None
     assistant_system_prompt: Optional[str] = None
     attached_files: list[dict[str, Any]] = Field(default_factory=list)
@@ -379,6 +381,8 @@ def _run_chat_job(
     is_guest: bool,
     messages: list[dict[str, Any]],
     model: str,
+    reasoning_effort: Optional[str] = None,
+    use_responses_api: bool = False,
     user_email: Optional[str] = None,
     assistant_id: Optional[str] = None,
     assistant_system_prompt: Optional[str] = None,
@@ -448,6 +452,8 @@ def _run_chat_job(
                     user_email=user_email,
                     session_id=session_key,
                     model=model,
+                    reasoning_effort=reasoning_effort,
+                    use_responses_api=use_responses_api,
                     assistant_id=assistant_id,
                     assistant_system_prompt=assistant_system_prompt,
                     attached_files=list(attached_files or []),
@@ -555,6 +561,8 @@ def _run_chat_job(
             is_guest=is_guest,
             db=None,
             model=model,
+            reasoning_effort=reasoning_effort,
+            use_responses_api=use_responses_api,
             temperature=None,
             max_iterations=20,
             user_email=user_email,
@@ -654,12 +662,14 @@ async def health_check():
 @app.post("/chat-runs", dependencies=[Depends(require_internal_token)])
 async def start_chat_run(request: ChatRunRequest):
     """Start an async chat run and return immediately with run_id"""
+    profile = resolve_idea_agent_profile(request.agent_variant)
     run_id = uuid.uuid4().hex
     status = {
         "run_id": run_id,
         "session_id": request.session_id,
         "user_id": request.user_id,
         "status": "queued",
+        "agent_variant": request.agent_variant,
         "created_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat(),
     }
@@ -678,7 +688,9 @@ async def start_chat_run(request: ChatRunRequest):
             "is_guest": request.is_guest,
             "messages": request.messages,
             "response_message_id": request.response_message_id,
-            "model": request.model or IDEA_AGENT_MODEL,
+            "model": profile.model,
+            "reasoning_effort": profile.reasoning_effort,
+            "use_responses_api": profile.use_responses_api,
             "assistant_id": request.assistant_id,
             "assistant_system_prompt": request.assistant_system_prompt,
             "attached_files": request.attached_files,
@@ -790,12 +802,19 @@ async def chat_endpoint(request: ChatRequest):
         
         # Build a fresh orchestrator for this request (no cross-request
         # cache - see the note above chat_run_threads).
+        profile = (
+            resolve_idea_agent_profile(request.agent_variant)
+            if request.agent_variant
+            else None
+        )
         orchestrator = ConversationOrchestrator(
             user_id=request.user_id,
             session_id=session_key,
             is_guest=request.is_guest,
             db=None,
-            model=request.model or IDEA_AGENT_MODEL,
+            model=profile.model if profile else request.model or IDEA_AGENT_MODEL,
+            reasoning_effort=profile.reasoning_effort if profile else None,
+            use_responses_api=profile.use_responses_api if profile else False,
             temperature=request.temperature,
             max_iterations=request.max_iterations,
             user_email=request.user_email,
