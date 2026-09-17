@@ -107,15 +107,6 @@ or changing defaults.
    uses `idea_terminal_agent_langgraph`; preserving this ID keeps existing
    chat model references valid. Enable only the intended Pipe instance.
 
-   The default Assistant manifest also updates suggestions on existing
-   CINDRA Assistants. On hosts without those Assistants, deploy the official
-   set explicitly:
-
-   ```bash
-   ./assistants/deploy_assistants_openwebui.py \
-     --only welcome-assistant --only sea --only mars-assistant
-   ```
-
 8. Open the Langfuse UI (internal-only unless routed through your reverse
    proxy - see the root [`README.md`](../README.md)'s "LLM Observability
    (Langfuse)" section), create an org/project, and generate an API key pair
@@ -145,7 +136,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs \
 
 Log in through the public HTTPS URL and confirm that Welcome Assistant can
 answer a prompt, run Python, read an uploaded file and image, use PaperQA on
-an attached PDF, delegate one read-only and one workspace-write task to Codex,
+attached PDF and Word documents, delegate one read-only and one workspace-write task to Codex,
 and return a downloadable artifact whose link still works on a later turn.
 
 ## Production HTTPS
@@ -197,3 +188,12 @@ The GitHub Actions workflow maps `next-dev` to the GitHub Environment of the
 same name. Automatic deployment still requires that environment's
 `DEPLOY_ENABLED=true`, SSH and app-directory values, deployment command,
 DNS/TLS route, and smoke-check URL to be configured.
+
+The `next-dev` environment must use `docker-compose.next-dev.yml`, which
+publishes nginx over HTTP without mounting the production certificate tree.
+The production environment must continue to use `docker-compose.prod.yml`.
+Set the `next-dev` GitHub Environment's `DEPLOY_CMD` variable to:
+
+```bash
+set -a && . ./.env && set +a && docker compose -f docker-compose.yml -f docker-compose.next-dev.yml up -d --build --remove-orphans && curl --retry 24 --retry-delay 5 --retry-all-errors -fsS http://localhost:3001/health >/dev/null && OPENWEBUI_BASE_URL=http://localhost:3001 ./openwebui/register_idea_pipe.sh && OPENWEBUI_BASE_URL=http://localhost:3001 ./openwebui/configure_openwebui.py && OPENWEBUI_BASE_URL=http://localhost:3001 ./assistants/deploy_assistants_openwebui.py && docker compose -f docker-compose.yml -f docker-compose.next-dev.yml restart nginx
+```

@@ -380,7 +380,7 @@ def configure_context_compaction(
         raise RuntimeError("CONTEXT_COMPACTION_TOKEN_THRESHOLD must be positive")
 
     config = client.get("/api/v1/chats/config")
-    # Older/currently-pinned Open WebUI releases (e.g. 0.11.0-idea.0.8) have
+    # Older/currently-pinned Open WebUI releases (e.g. 0.11.0-idea.0.9) have
     # no Token Cap field at all in their /api/v1/chats/config schema - only
     # newer releases added it. Detect support instead of assuming it exists,
     # so this script keeps working against a pinned image that predates it.

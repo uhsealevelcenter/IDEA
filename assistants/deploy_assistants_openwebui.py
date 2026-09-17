@@ -43,6 +43,8 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 OFFICIAL_ASSISTANT_CAPABILITIES = {
     "vision": True,
     "file_upload": True,
+    "raw_file_access": True,
+    "file_context": False,
     "web_search": False,
     "image_generation": False,
     "code_interpreter": False,
@@ -52,6 +54,11 @@ OFFICIAL_ASSISTANT_CAPABILITIES = {
     "builtin_tools": True,
     "terminal": False,
     "usage": False,
+}
+NEW_ASSISTANT_FILE_CAPABILITIES = {
+    "file_upload": True,
+    "raw_file_access": True,
+    "file_context": False,
 }
 OFFICIAL_ASSISTANT_DEFAULT_FEATURE_IDS: list[str] = []
 OFFICIAL_ASSISTANT_BUILTIN_TOOLS = {
@@ -101,6 +108,7 @@ def load_manifest(path: Path) -> dict[str, Any]:
     base_model_id = manifest.get("base_model_id")
     base_model_name = manifest.get("base_model_name")
     base_model_logo = manifest.get("base_model_logo")
+    base_models = manifest.get("base_models")
     assistants = manifest.get("assistants")
     if not isinstance(base_model_id, str) or not base_model_id:
         raise RuntimeError("Assistant manifest requires a non-empty base_model_id")
@@ -108,6 +116,43 @@ def load_manifest(path: Path) -> dict[str, Any]:
         raise RuntimeError("Assistant manifest requires a non-empty base_model_name")
     if not isinstance(base_model_logo, str) or not base_model_logo:
         raise RuntimeError("Assistant manifest requires a non-empty base_model_logo")
+    if not isinstance(base_models, list) or not base_models:
+        raise RuntimeError("Assistant manifest requires a non-empty base_models list")
+    base_ids: set[str] = set()
+    variants: set[str] = set()
+    defaults = 0
+    for base_model in base_models:
+        if not isinstance(base_model, dict):
+            raise RuntimeError("Every base_models entry must be an object")
+        for field in ("id", "name", "variant", "logo"):
+            if not isinstance(base_model.get(field), str) or not base_model[field]:
+                raise RuntimeError(
+                    f"Base-model manifest entry requires a non-empty {field!r}"
+                )
+        if not isinstance(base_model.get("hidden"), bool):
+            raise RuntimeError("Base-model hidden must be true or false")
+        if not isinstance(base_model.get("default_for_assistants"), bool):
+            raise RuntimeError(
+                "Base-model default_for_assistants must be true or false"
+            )
+        if base_model["id"] in base_ids:
+            raise RuntimeError(f"Duplicate base-model ID {base_model['id']!r}")
+        if base_model["variant"] in variants:
+            raise RuntimeError(
+                f"Duplicate base-model variant {base_model['variant']!r}"
+            )
+        base_ids.add(base_model["id"])
+        variants.add(base_model["variant"])
+        defaults += int(base_model["default_for_assistants"])
+    if defaults != 1 or base_model_id not in base_ids:
+        raise RuntimeError(
+            "base_models must contain exactly one default and include base_model_id"
+        )
+    declared_default = next(
+        item["id"] for item in base_models if item["default_for_assistants"]
+    )
+    if declared_default != base_model_id:
+        raise RuntimeError("base_model_id must identify the default base model")
     if not isinstance(assistants, list) or not assistants:
         raise RuntimeError("Assistant manifest requires a non-empty assistants list")
     default_suggestions = validated_suggestion_prompts(
@@ -125,6 +170,11 @@ def load_manifest(path: Path) -> dict[str, Any]:
                     f"Assistant manifest entry requires a non-empty {field!r}"
                 )
         assistant_id = assistant["id"]
+        assistant_base_model_id = assistant.get("base_model_id", base_model_id)
+        if assistant_base_model_id not in base_ids:
+            raise RuntimeError(
+                f"Assistant {assistant_id!r} references an unknown base model"
+            )
         if "paperqa_enabled" in assistant and not isinstance(
             assistant["paperqa_enabled"], bool
         ):
@@ -268,10 +318,8 @@ def official_assistant_payload(
     )
     capabilities = dict(meta.get("capabilities") or {})
     capabilities.update(OFFICIAL_ASSISTANT_CAPABILITIES)
-    if definition.get("paperqa_enabled"):
-        # The collection descriptors still reach the Pipe in legacy mode, but
-        # Open WebUI must not inject its own RAG context for the same PDFs.
-        capabilities["file_context"] = False
+    # IDEA reads original attachments in its sandbox; PaperQA owns literature
+    # retrieval. Neither path needs Open WebUI's extracted text or vectors.
     meta["capabilities"] = capabilities
     meta["defaultFeatureIds"] = list(
         OFFICIAL_ASSISTANT_DEFAULT_FEATURE_IDS
@@ -302,13 +350,23 @@ def configure_assistant_base_model(
     base_model_name: str,
     profile_image_url: str,
     dry_run: bool,
+    hidden: bool = False,
+    default_for_assistants: bool = False,
+    variant: str = "standard",
 ) -> str:
     existing = get_workspace_model(client, base_model_id)
     meta = dict((existing or {}).get("meta") or {})
-    # Keep the implementation model visible. It can therefore be selected
-    # directly in chat and in the stock Open WebUI Assistant base-model
-    # picker without requiring a custom frontend publication.
-    meta["hidden"] = False
+    # Hidden models remain executable through public Assistants. The IDEA
+    # Open WebUI editor deliberately exposes them only to administrators.
+    meta["hidden"] = hidden
+    meta["default_for_assistants"] = default_for_assistants
+    meta["idea_agent_variant"] = variant
+    meta["capabilities"] = {
+        **(meta.get("capabilities") or {}),
+        "file_upload": True,
+        "raw_file_access": True,
+        "file_context": False,
+    }
     meta["profile_image_url"] = profile_image_url
     meta.pop("assistant_base_model", None)
     payload = {
@@ -357,7 +415,7 @@ def deploy_assistants(
 
         payload = official_assistant_payload(
             manifest_path,
-            manifest["base_model_id"],
+            definition.get("base_model_id", manifest["base_model_id"]),
             definition,
             existing,
         )
@@ -439,18 +497,43 @@ def configure_default_assistant(
     return "updated"
 
 
+def configure_new_assistant_defaults(
+    client: OpenWebUIClient,
+    dry_run: bool,
+) -> str:
+    """Make future Assistants use IDEA's raw-file upload path by default."""
+    config = client.get("/api/v1/configs/models")
+    metadata = dict(config.get("DEFAULT_MODEL_METADATA") or {})
+    capabilities = dict(metadata.get("capabilities") or {})
+    updated_capabilities = {
+        **capabilities,
+        **NEW_ASSISTANT_FILE_CAPABILITIES,
+    }
+    if updated_capabilities == capabilities:
+        return "unchanged"
+
+    metadata["capabilities"] = updated_capabilities
+    config["DEFAULT_MODEL_METADATA"] = metadata
+    if not dry_run:
+        client.post("/api/v1/configs/models", config)
+    return "updated"
+
+
 def verify_assistants(
     client: OpenWebUIClient,
     manifest: dict[str, Any],
     expected_ids: set[str],
 ) -> None:
-    base = get_workspace_model(client, manifest["base_model_id"])
-    if not base or base.get("meta", {}).get("hidden") is not False:
-        raise RuntimeError("Assistant base model visibility verification failed")
-    if not str(base.get("meta", {}).get("profile_image_url") or "").startswith(
-        "data:image/png;base64,"
-    ):
-        raise RuntimeError("Assistant base model IDEA logo verification failed")
+    for definition in manifest["base_models"]:
+        base = get_workspace_model(client, definition["id"])
+        if not base or base.get("meta", {}).get("hidden") is not definition["hidden"]:
+            raise RuntimeError(
+                f"Assistant base model verification failed: {definition['id']!r}"
+            )
+        if not str(base.get("meta", {}).get("profile_image_url") or "").startswith(
+            "data:image/png;base64,"
+        ):
+            raise RuntimeError("Assistant base model IDEA logo verification failed")
 
     definitions = {
         item["id"]: item for item in manifest["assistants"] if item["id"] in expected_ids
@@ -459,7 +542,10 @@ def verify_assistants(
         model = get_workspace_model(client, assistant_id)
         if not model:
             raise RuntimeError(f"Assistant verification failed: {assistant_id!r} is missing")
-        if model.get("base_model_id") != manifest["base_model_id"]:
+        expected_base_model_id = definition.get(
+            "base_model_id", manifest["base_model_id"]
+        )
+        if model.get("base_model_id") != expected_base_model_id:
             raise RuntimeError(f"Assistant base-model verification failed: {assistant_id!r}")
         if model.get("name") != definition["name"]:
             raise RuntimeError(f"Assistant name verification failed: {assistant_id!r}")
@@ -549,30 +635,54 @@ def main() -> int:
     wait_for_openwebui(client, args.wait_seconds)
     authenticate(client)
 
-    configured_base_model_id = manifest["base_model_id"]
-    base_model = wait_for_base_model(
-        client,
-        configured_base_model_id,
-        args.wait_seconds,
-    )
-    resolved_base_model_id = base_model["id"]
-    # Open WebUI qualifies manifold Pipe sub-models as
-    # "<function-id>.<sub-model-id>". Keep the readable sub-model ID in the
-    # manifest, but use the live catalog ID in every API payload.
-    manifest = {**manifest, "base_model_id": resolved_base_model_id}
-    if resolved_base_model_id != configured_base_model_id:
-        print(
-            f"Resolved Assistant base model {configured_base_model_id!r} "
-            f"to {resolved_base_model_id!r}."
+    resolved_ids: dict[str, str] = {}
+    resolved_base_models = []
+    base_actions: dict[str, str] = {}
+    for definition in manifest["base_models"]:
+        configured_id = definition["id"]
+        resolved_id = wait_for_base_model(
+            client, configured_id, args.wait_seconds
+        )["id"]
+        resolved_ids[configured_id] = resolved_id
+        resolved_definition = {**definition, "id": resolved_id}
+        resolved_base_models.append(resolved_definition)
+        if resolved_id != configured_id:
+            print(
+                f"Resolved Assistant base model {configured_id!r} "
+                f"to {resolved_id!r}."
+            )
+        base_actions[resolved_id] = configure_assistant_base_model(
+            client,
+            resolved_id,
+            definition["name"],
+            png_data_uri(manifest_path, definition["logo"]),
+            args.dry_run,
+            hidden=definition["hidden"],
+            default_for_assistants=definition["default_for_assistants"],
+            variant=definition["variant"],
         )
-    base_action = configure_assistant_base_model(
+    resolved_assistants = [
+        {
+            **definition,
+            **(
+                {"base_model_id": resolved_ids[definition["base_model_id"]]}
+                if "base_model_id" in definition
+                else {}
+            ),
+        }
+        for definition in manifest["assistants"]
+    ]
+    manifest = {
+        **manifest,
+        "base_model_id": resolved_ids[manifest["base_model_id"]],
+        "base_models": resolved_base_models,
+        "assistants": resolved_assistants,
+    }
+    configure_user_assistant_permissions(client, args.dry_run)
+    new_assistant_defaults_action = configure_new_assistant_defaults(
         client,
-        resolved_base_model_id,
-        manifest["base_model_name"],
-        png_data_uri(manifest_path, manifest["base_model_logo"]),
         args.dry_run,
     )
-    configure_user_assistant_permissions(client, args.dry_run)
     results = deploy_assistants(
         client,
         manifest_path,
@@ -611,11 +721,16 @@ def main() -> int:
         )
 
     prefix = "Would apply" if args.dry_run else "Applied"
-    print(f"{prefix} Assistant base model: {base_action}")
+    for base_model_id, action in base_actions.items():
+        print(f"{prefix} Assistant base model {base_model_id}: {action}")
     for assistant_id, action in results.items():
         print(f"{prefix} {assistant_id}: {action}")
     for assistant_id, action in inherited_results.items():
         print(f"{prefix} {assistant_id} Welcome suggestions: {action}")
+    print(
+        f"{prefix} new Assistant raw-file defaults: "
+        f"{new_assistant_defaults_action}"
+    )
     print(f"{prefix} default Assistant: {default_action}")
     print(
         "Verified users may create private Assistants; public and user-to-user "

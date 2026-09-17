@@ -25,6 +25,7 @@ class LangGraphPaperQAPrepareTests(unittest.TestCase):
         runtime.outputs_dir = "/outputs"
         runtime.outputs_before = None
         runtime.event_callback = Mock()
+        runtime.attached_files_context = Mock(return_value="")
 
         with (
             patch(
@@ -44,6 +45,7 @@ class LangGraphPaperQAPrepareTests(unittest.TestCase):
         agent.paperqa_scope_id = None
         agent.paperqa_direct_scope_id = None
         agent.paperqa_direct_file_names = ()
+        agent.paperqa_warnings = ()
         agent.user_id = "user-1"
         agent.assistant_id = "sea"
         agent.session_id = "user-1:chat-1"
@@ -53,6 +55,7 @@ class LangGraphPaperQAPrepareTests(unittest.TestCase):
             scope_id="collection-scope",
             direct_scope_id="direct-scope",
             direct_file_names=("supplement.pdf",),
+            warnings=("Skipped 'notes.txt': unsupported document type.",),
         )
 
         with patch(
@@ -73,6 +76,10 @@ class LangGraphPaperQAPrepareTests(unittest.TestCase):
         self.assertEqual(second, "collection-scope")
         self.assertEqual(agent.paperqa_direct_scope_id, "direct-scope")
         self.assertEqual(agent.paperqa_direct_file_names, ("supplement.pdf",))
+        self.assertEqual(
+            agent.paperqa_warnings,
+            ("Skipped 'notes.txt': unsupported document type.",),
+        )
 
 
 if __name__ == "__main__":

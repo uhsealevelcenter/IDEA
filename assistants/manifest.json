@@ -2,8 +2,26 @@
   "base_model_id": "idea-terminal-agent",
   "base_model_name": "IDEA Agent",
   "base_model_logo": "assets/idea.png",
+  "base_models": [
+    {
+      "id": "idea-terminal-agent",
+      "name": "IDEA Agent",
+      "variant": "standard",
+      "logo": "assets/idea.png",
+      "hidden": false,
+      "default_for_assistants": true
+    },
+    {
+      "id": "idea-terminal-agent-advanced",
+      "name": "IDEA Agent Advanced",
+      "variant": "advanced",
+      "logo": "assets/idea.png",
+      "hidden": true,
+      "default_for_assistants": false
+    }
+  ],
   "default_assistant_id": "welcome-assistant",
-  "welcome_suggestion_assistant_ids": ["cindra"],
+  "welcome_suggestion_assistant_ids": [],
   "default_suggestion_prompts": [
     {
       "title": ["Explore IDEA", "See what it can do"],

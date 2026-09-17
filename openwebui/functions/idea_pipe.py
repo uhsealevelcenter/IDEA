@@ -8,7 +8,7 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.2.6
+version: 0.3.0
 """
 
 import asyncio
@@ -23,8 +23,12 @@ from typing import AsyncGenerator, Awaitable, Callable, Generator
 from urllib.parse import quote, unquote
 
 
-BASE_MODEL_ID = "idea_terminal_agent.idea-terminal-agent"
-BASE_MODEL_ALIASES = {BASE_MODEL_ID, "idea-terminal-agent"}
+BASE_MODEL_VARIANTS = {
+    "idea-terminal-agent": "standard",
+    "idea_terminal_agent.idea-terminal-agent": "standard",
+    "idea-terminal-agent-advanced": "advanced",
+    "idea_terminal_agent.idea-terminal-agent-advanced": "advanced",
+}
 TERMINAL_RUN_STATUSES = {
     "completed", "stopped", "failed", "cancelled-before-start"
 }
@@ -379,16 +383,36 @@ def _selected_assistant_id(metadata: dict | None) -> str | None:
     model = metadata.get("model")
     if isinstance(model, dict):
         model_id = model.get("id")
-        if isinstance(model_id, str) and model_id and model_id not in BASE_MODEL_ALIASES:
+        if isinstance(model_id, str) and model_id and not _is_base_model_alias(model_id):
             return model_id
     model_id = metadata.get("model_id")
     if (
         isinstance(model_id, str)
         and model_id
-        and model_id not in BASE_MODEL_ALIASES
+        and not _is_base_model_alias(model_id)
     ):
         return model_id
     return None
+
+
+def _is_base_model_alias(model_id: str) -> bool:
+    readable_id = model_id.rsplit(".", 1)[-1]
+    return readable_id in {
+        "idea-terminal-agent",
+        "idea-terminal-agent-advanced",
+    }
+
+
+def _selected_agent_variant(model_id: object) -> str:
+    """Map the trusted Pipe submodel selected by Open WebUI to a profile."""
+    if model_id is None:
+        # Compatibility for direct/unit callers predating manifold variants.
+        return "standard"
+    if isinstance(model_id, str):
+        readable_id = model_id.rsplit(".", 1)[-1]
+        if readable_id in BASE_MODEL_VARIANTS:
+            return BASE_MODEL_VARIANTS[readable_id]
+    raise ValueError(f"Unsupported IDEA base model: {model_id!r}")
 
 
 def _request_authorization(request: object | None) -> str | None:
@@ -760,8 +784,14 @@ class Pipe:
         self.valves = self.Valves()
 
     def pipes(self) -> list[dict]:
-        """Registers this as a single selectable model in Open WebUI's model dropdown."""
-        return [{"id": "idea-terminal-agent", "name": "IDEA Agent"}]
+        """Register the standard and administrator-assignable IDEA variants."""
+        return [
+            {"id": "idea-terminal-agent", "name": "IDEA Agent"},
+            {
+                "id": "idea-terminal-agent-advanced",
+                "name": "IDEA Agent Advanced",
+            },
+        ]
 
     async def pipe(
         self,
@@ -783,6 +813,7 @@ class Pipe:
             return
         assistant_system_prompt = _assistant_system_prompt(messages)
         assistant_id = _selected_assistant_id(__metadata__)
+        agent_variant = _selected_agent_variant(body.get("model"))
         public_base_url = _request_public_base_url(__request__)
 
         user = __user__ or {}
@@ -824,6 +855,7 @@ class Pipe:
             "input_checkpoint_id": idea_context.get("output_checkpoint_id"),
             "idea_context": idea_context,
             "assistant_id": assistant_id,
+            "agent_variant": agent_variant,
             "assistant_system_prompt": assistant_system_prompt,
             "paperqa_enabled": paperqa_enabled,
             "attached_files": _attached_resource_descriptors(
