@@ -248,20 +248,47 @@ wiring.
 
 1. Generate the four Langfuse secrets shown in step 2 above and run
    `./langfuse/setup_langfuse_db.sh` (step 3 above) before first start.
-2. Start (or restart) the stack, then open the Langfuse UI - `:3050` in dev
+2. With the four secrets generated, create the `LANGFUSE_INIT_*` environment variables that 
+   will be used to sign into the admin account.
+```ini
+   #one-shot bootstrap (LANGFUSE_INIT_*) to auto-create the
+   # org/project/user and skip the manual UI signup above entirely - see
+   # docker-compose.yml's `langfuse` service and
+   # https://langfuse.com/self-hosting/v2/deployment-guide for the full list
+   # of LANGFUSE_INIT_* variables.
+   LANGFUSE_INIT_ORG_ID=change-this
+   LANGFUSE_INIT_ORG_NAME=change-this
+   LANGFUSE_INIT_PROJECT_ID=change-this
+   LANGFUSE_INIT_PROJECT_NAME=change-this
+   LANGFUSE_INIT_USER_EMAIL=change-this
+   LANGFUSE_INIT_USER_NAME=change-this
+   LANGFUSE_INIT_USER_PASSWORD=change-this
+   LANGFUSE_INIT_PUBLIC_KEY=generate-this
+   LANGFUSE_INIT_SECRET_KEY=generate-this
+   AUTH_DISABLE_SIGNUP=true
+
+```
+3. Next is generating your keys use these commands
+```bash
+   echo "pk-lf-$(uuidgen)"
+   echo "sk-lf-$(uuidgen)"
+```
+4. Once generated add them to these four variables 
+```ini
+   LANGFUSE_INIT_PUBLIC_KEY=generate-this
+   LANGFUSE_INIT_SECRET_KEY=generate-this
+   LANGFUSE_PUBLIC_KEY=generate-this
+   LANGFUSE_SECRET_KEY=generate-this
+```
+5. Start (or restart) the stack, then open the Langfuse UI - `:3050` in dev
    (`docker-compose.override.yml`), otherwise wherever you route it in
-   production (see the Quick Deploy doc) - and create an org/project through
-   the normal sign-up flow. Alternatively, set the `LANGFUSE_INIT_*`
-   variables in `.env` (see `example.env`) to auto-create the org, project,
-   and admin user on first boot without touching the UI - useful for
-   scripted/CI environments.
-3. Under **Project Settings > API Keys**, generate a public/secret key pair
-   and save them into `.env` as `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`
-   (or, if you used `LANGFUSE_INIT_*`, they already match the project's
-   actual keys - no extra step needed).
-4. Restart `litellm` so it picks up the keys:
+   production (see the Quick Deploy doc)
+6. Go to the http://localhost:3050.
+7. After logging in, double check everything was generated with the use of `LANGFUSE_INIT_*`, the public and secret keys already match the project's actual keys - no extra step needed
+
+8. Restart `litellm` so it picks up the keys:
    ```bash
-   docker compose up -d litellm
+   docker compose -f docker-compose.yml -f docker-compose.next-dev.yml up -d --no-deps litellm
    ```
 
 A failure to reach Langfuse only logs a warning inside `litellm` - it never
