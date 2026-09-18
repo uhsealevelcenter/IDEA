@@ -257,6 +257,9 @@ services:
       # section and litellm/init_litellm_db.sql for how the `litellm`
       # role/schema this points at get created.
       - LITELLM_DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}?schema=litellm
+      # Keys used by litellm to connect to the langfuse project
+      - LANGFUSE_PUBLIC_KEY={LITELLM_LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY={LITELLM_LANGFUSE_SECRET_KEY}
       # Consumed by litellm_config.yaml's success_callback/failure_callback
       # (["langfuse"]) below - LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY are
       # NOT re-declared here for the same reason OPENAI_API_KEY isn't above -
@@ -308,22 +311,22 @@ services:
       - NEXTAUTH_URL=${LANGFUSE_NEXTAUTH_URL:-http://localhost:3050}
       - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET?Variable not set}
       - SALT=${LANGFUSE_SALT?Variable not set}
-      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY?Variable not set}
-      - TELEMETRY_ENABLED=false
-      # LANGFUSE_INIT_* one-shot bootstrap of an org/project/user on first
-      # boot - see example.env's Langfuse section for the recommended flow
-      # (create the project through the UI once, then paste the generated
-      # keys back into .env for litellm to use, same as LITELLM_VIRTUAL_KEY
-      # below).
-      - LANGFUSE_INIT_ORG_ID=${LANGFUSE_INIT_ORG_ID:-}
-      - LANGFUSE_INIT_ORG_NAME=${LANGFUSE_INIT_ORG_NAME:-}
-      - LANGFUSE_INIT_PROJECT_ID=${LANGFUSE_INIT_PROJECT_ID:-}
-      - LANGFUSE_INIT_PROJECT_NAME=${LANGFUSE_INIT_PROJECT_NAME:-}
-      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL:-}
-      - LANGFUSE_INIT_USER_NAME=${LANGFUSE_INIT_USER_NAME:-}
-      - LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD:-}
+      # - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY?Variable not set}
+      # - TELEMETRY_ENABLED=false
+      # # LANGFUSE_INIT_* one-shot bootstrap of an org/project/user on first
+      # # boot - see example.env's Langfuse section for the recommended flow
+      # # (create the project through the UI once, then paste the generated
+      # # keys back into .env for litellm to use, same as LITELLM_VIRTUAL_KEY
+      # # below).
+      # - LANGFUSE_INIT_ORG_ID=${LANGFUSE_INIT_ORG_ID:-}
+      # - LANGFUSE_INIT_ORG_NAME=${LANGFUSE_INIT_ORG_NAME:-}
+      # - LANGFUSE_INIT_PROJECT_ID=${LANGFUSE_INIT_PROJECT_ID:-}
+      # - LANGFUSE_INIT_PROJECT_NAME=${LANGFUSE_INIT_PROJECT_NAME:-}
+      # - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      # - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      # - LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL:-}
+      # - LANGFUSE_INIT_USER_NAME=${LANGFUSE_INIT_USER_NAME:-}
+      # - LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD:-}
     depends_on:
       db:
         condition: service_healthy
@@ -350,7 +353,7 @@ services:
     build:
       context: ./openwebui
       dockerfile: Dockerfile
-    image: idea-openwebui:0.11.0-idea.0.9-open-sharing-fix
+    image: idea-openwebui:0.11.0-idea.0.9-open-sharing-fix # ghcr.io/open-webui/open-webui:main 
     container_name: idea_openwebui
     restart: unless-stopped
     ports:

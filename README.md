@@ -257,15 +257,25 @@ wiring.
    # docker-compose.yml's `langfuse` service and
    # https://langfuse.com/self-hosting/v2/deployment-guide for the full list
    # of LANGFUSE_INIT_* variables.
+
+   # Initializing Organization for langfuse
+   # The organization is the group that will have access to the traces
    LANGFUSE_INIT_ORG_ID=change-this
    LANGFUSE_INIT_ORG_NAME=change-this
+
+   # Initializing project for langfuse
+   # The project is where you will see the traces come in from litellm
    LANGFUSE_INIT_PROJECT_ID=change-this
    LANGFUSE_INIT_PROJECT_NAME=change-this
+
+   # Initializing user credentials
+   # This information is for generating a log in for the first user
+   # This info will be what admin users will use to log into langfuse
    LANGFUSE_INIT_USER_EMAIL=change-this
    LANGFUSE_INIT_USER_NAME=change-this
    LANGFUSE_INIT_USER_PASSWORD=change-this
-   LANGFUSE_INIT_PUBLIC_KEY=generate-this
-   LANGFUSE_INIT_SECRET_KEY=generate-this
+
+   # Turning off Sign up so there will only be one admin account (the Init user)
    AUTH_DISABLE_SIGNUP=true
 
 ```
@@ -274,12 +284,17 @@ wiring.
    echo "pk-lf-$(uuidgen)"
    echo "sk-lf-$(uuidgen)"
 ```
-4. Once generated add them to these four variables 
+4. Once generated add them to these four variables. The key `"pk-lf-*"` is placed under `*_PUBLIC_KEY`. 
+   The key `"sk-lf-*"` is placed under `*_SECRET_KEY`.
 ```ini
+   # Pre generating keys to quickly connect services
    LANGFUSE_INIT_PUBLIC_KEY=generate-this
    LANGFUSE_INIT_SECRET_KEY=generate-this
-   LANGFUSE_PUBLIC_KEY=generate-this
-   LANGFUSE_SECRET_KEY=generate-this
+   # These variabels are used for connecting langfuse to litellm
+   # Public key is used for telling litellm which project to connect to
+   # Secret key is authorixing litellm to access that porject
+   LITELLM_LANGFUSE_PUBLIC_KEY=generate-this
+   LITELLM_LANGFUSE_SECRET_KEY=generate-this
 ```
 5. Start (or restart) the stack, then open the Langfuse UI - `:3050` in dev
    (`docker-compose.override.yml`), otherwise wherever you route it in
