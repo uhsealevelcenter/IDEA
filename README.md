@@ -290,9 +290,9 @@ wiring.
    # Pre generating keys to quickly connect services
    LANGFUSE_INIT_PUBLIC_KEY=generate-this
    LANGFUSE_INIT_SECRET_KEY=generate-this
-   # These variabels are used for connecting langfuse to litellm
+   # These variables are used for connecting langfuse to litellm
    # Public key is used for telling litellm which project to connect to
-   # Secret key is authorixing litellm to access that porject
+   # Secret key is authorizing litellm to access that project
    LITELLM_LANGFUSE_PUBLIC_KEY=generate-this
    LITELLM_LANGFUSE_SECRET_KEY=generate-this
 ```
