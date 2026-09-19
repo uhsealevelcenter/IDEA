@@ -258,8 +258,8 @@ services:
       # role/schema this points at get created.
       - LITELLM_DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}?schema=litellm
       # Keys used by litellm to connect to the langfuse project
-      - LANGFUSE_PUBLIC_KEY={LITELLM_LANGFUSE_PUBLIC_KEY}
-      - LANGFUSE_SECRET_KEY={LITELLM_LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LITELLM_LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LITELLM_LANGFUSE_SECRET_KEY}
       # Consumed by litellm_config.yaml's success_callback/failure_callback
       # (["langfuse"]) below - LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY are
       # NOT re-declared here for the same reason OPENAI_API_KEY isn't above -
