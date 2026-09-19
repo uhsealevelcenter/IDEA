@@ -452,13 +452,16 @@ class LangGraphKernelImageTests(unittest.TestCase):
             },
         )
 
-    def test_standard_agent_retains_chat_completions_shape(self):
+    def test_standard_agent_uses_chat_completions_reasoning_shape(self):
         self.assertEqual(
             terminal_agent._model_api_kwargs(
                 use_responses_api=False,
-                reasoning_effort=None,
+                reasoning_effort="medium",
             ),
-            {"use_responses_api": False},
+            {
+                "use_responses_api": False,
+                "reasoning_effort": "medium",
+            },
         )
 
     @patch("tools.persistent_terminal.inspect_python_namespace")

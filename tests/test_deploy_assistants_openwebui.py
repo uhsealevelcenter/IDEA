@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import importlib.util
 import json
@@ -54,7 +55,7 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertTrue(self.manifest["base_models"][1]["hidden"])
         self.assertEqual(
             self.manifest["welcome_suggestion_assistant_ids"],
-            ["cindra"],
+            [],
         )
 
     def test_every_official_assistant_has_six_suggested_prompts(self):
@@ -347,30 +348,32 @@ class DeployAssistantsTests(unittest.TestCase):
 
         self.assertEqual(client.posts, [])
 
-    def test_cindra_receives_only_welcome_suggestion_metadata(self):
+    def test_external_assistant_receives_only_welcome_suggestion_metadata(self):
+        manifest = copy.deepcopy(self.manifest)
+        manifest["welcome_suggestion_assistant_ids"] = ["external-assistant"]
         existing = {
-            "id": "cindra",
+            "id": "external-assistant",
             "base_model_id": "idea-terminal-agent",
-            "name": "CIndRA",
+            "name": "External Assistant",
             "meta": {
-                "description": "Custom CIndRA description",
+                "description": "Custom external Assistant description",
                 "capabilities": {"vision": True},
                 "custom": "kept",
             },
-            "params": {"system": "CIndRA instructions", "temperature": 0.1},
+            "params": {"system": "Custom instructions", "temperature": 0.1},
             "access_grants": [{"principal_id": "owner", "permission": "read"}],
             "is_active": False,
         }
-        client = FakeClient(models={"cindra": existing})
+        client = FakeClient(models={"external-assistant": existing})
 
         result = deploy.deploy_welcome_suggestions(
             client,
-            self.manifest,
+            manifest,
             dry_run=False,
-            only={"cindra"},
+            only={"external-assistant"},
         )
 
-        self.assertEqual(result, {"cindra": "updated"})
+        self.assertEqual(result, {"external-assistant": "updated"})
         path, payload = client.posts[0]
         self.assertEqual(path, "/api/v1/models/model/update")
         self.assertEqual(
