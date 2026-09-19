@@ -22,8 +22,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PIPE_FILE="${SCRIPT_DIR}/functions/idea_pipe.py"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PIPE_FILE="${REPO_ROOT}/openwebui/functions/idea_pipe.py"
 
 # Falls back to .env in the repo root if OPENWEBUI_API_KEY isn't already
 # exported in the shell environment.

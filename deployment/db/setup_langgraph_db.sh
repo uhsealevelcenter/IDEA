@@ -41,7 +41,7 @@ docker compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" "${DB_SERVICE}" \
   psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 \
   -v dbname="${POSTGRES_DB}" \
   -v langgraph_password="${LANGGRAPH_DB_PASSWORD}" \
-  -f /dev/stdin < langgraph/db/init_langgraph_db.sql
+  -f /dev/stdin < "${SCRIPT_DIR}/init_langgraph_db.sql"
 
 echo "==> Building LangGraph and creating checkpoint tables..."
 docker compose build langgraph

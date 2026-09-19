@@ -447,7 +447,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--env-file",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / ".env",
+        default=Path(__file__).resolve().parent.parent.parent / ".env",
         help="Docker-style environment file (default: repository .env)",
     )
     parser.add_argument("--base-url", help="Host-reachable Open WebUI URL")

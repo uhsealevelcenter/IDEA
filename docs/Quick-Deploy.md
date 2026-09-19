@@ -62,9 +62,9 @@ or changing defaults.
 5. Build and start the production service set:
 
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-     up -d --build
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+   eval "$(python3 deployment/load_env.py prod)"
+   docker compose up -d --build
+   docker compose ps
    ```
 
    If `interpreter_kernel/` changed, first build and test its guest image
@@ -95,11 +95,11 @@ or changing defaults.
 
    ```bash
    OPENWEBUI_BASE_URL=http://localhost:3001 \
-     ./openwebui/register_idea_pipe.sh
+     ./deployment/post_deploy/register_idea_pipe.sh
    OPENWEBUI_BASE_URL=http://localhost:3001 \
-     ./openwebui/configure_openwebui.py
+     ./deployment/post_deploy/configure_openwebui.py
    OPENWEBUI_BASE_URL=http://localhost:3001 \
-     ./assistants/deploy_assistants_openwebui.py
+     ./deployment/post_deploy/deploy_assistants_openwebui.py
    ```
 
    For an existing installation with a different Pipe function ID, set
@@ -112,7 +112,7 @@ or changing defaults.
    set explicitly:
 
    ```bash
-   ./assistants/deploy_assistants_openwebui.py \
+   ./deployment/post_deploy/deploy_assistants_openwebui.py \
      --only welcome-assistant --only sea --only mars-assistant
    ```
 
@@ -130,16 +130,16 @@ or changing defaults.
    after any `.env` changes:
 
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-     up -d
+   eval "$(python3 deployment/load_env.py prod)"
+   docker compose up -d
    ```
 
 ## Verify
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose ps
 curl -f http://localhost:3001/
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs \
+docker compose logs \
   --tail=100 openwebui langgraph sandbox litellm
 ```
 
@@ -150,19 +150,16 @@ and return a downloadable artifact whose link still works on a later turn.
 
 ## Production HTTPS
 
-The production overlay serves `https://app.ideaxiom.org/` using the existing
+Production serves `https://app.ideaxiom.org/` using the existing
 certificate tree in `certbot/conf`, which is excluded from Git. Keep the
-hostname, port 443, and TLS mounts configured in the tracked nginx and
-Compose files: deployment uses `git reset --hard` and discards local edits.
-The production overlay requires a valid certificate before nginx can start.
+hostname, port 443, and TLS mounts configured via `deployment/config.yaml` (`prod` section).
+Production requires a valid certificate before nginx can start with HTTPS.
 
 After proxy changes, validate and recreate only nginx:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-  run --rm --no-deps nginx nginx -t
-docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-  up -d --no-deps --force-recreate nginx
+docker compose run --rm --no-deps nginx nginx -t
+docker compose up -d --no-deps --force-recreate nginx
 curl --fail --show-error https://app.ideaxiom.org/
 ```
 
@@ -170,7 +167,7 @@ The production host runs the following entry in the deployment user's crontab
 (time is UTC); preserve other jobs when installing it on a replacement host:
 
 ```cron
-17 3 * * * /bin/bash /home/exouser/IDEA/scripts/renew-production-cert.sh >> /home/exouser/idea-cert-renewal.log 2>&1
+17 3 * * * /bin/bash /home/exouser/IDEA/deployment/renew-production-cert.sh >> /home/exouser/idea-cert-renewal.log 2>&1
 ```
 
 The script runs Certbot with the port-80 ACME webroot and reloads nginx after
@@ -198,11 +195,12 @@ same name. Automatic deployment still requires that environment's
 `DEPLOY_ENABLED=true`, SSH and app-directory values, deployment command,
 DNS/TLS route, and smoke-check URL to be configured.
 
-The `next-dev` environment must use `docker-compose.next-dev.yml`, which
+The `next-dev` environment uses `deployment/config.yaml` (`next-dev` section), which
 publishes nginx over HTTP without mounting the production certificate tree.
-The production environment must continue to use `docker-compose.prod.yml`.
-Set the `next-dev` GitHub Environment's `DEPLOY_CMD` variable to:
+The production environment continues to use `deployment/config.yaml` (`prod` section).
+The deployment commands for all environments are managed in `deployment/deploy.sh`
+and executed automatically by `.github/workflows/deploy.yml`:
 
 ```bash
-set -a && . ./.env && set +a && docker compose -f docker-compose.yml -f docker-compose.next-dev.yml up -d --build --remove-orphans && curl --retry 24 --retry-delay 5 --retry-all-errors -fsS http://localhost:3001/health >/dev/null && OPENWEBUI_BASE_URL=http://localhost:3001 ./openwebui/register_idea_pipe.sh && OPENWEBUI_BASE_URL=http://localhost:3001 ./openwebui/configure_openwebui.py && OPENWEBUI_BASE_URL=http://localhost:3001 ./assistants/deploy_assistants_openwebui.py && docker compose -f docker-compose.yml -f docker-compose.next-dev.yml restart nginx
+./deployment/deploy.sh next-dev
 ```

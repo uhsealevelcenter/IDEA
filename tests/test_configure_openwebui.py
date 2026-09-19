@@ -5,7 +5,8 @@ from pathlib import Path
 
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[1]
-    / "openwebui"
+    / "deployment"
+    / "post_deploy"
     / "configure_openwebui.py"
 )
 SPEC = importlib.util.spec_from_file_location("configure_openwebui", SCRIPT_PATH)

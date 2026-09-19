@@ -21,10 +21,10 @@ from urllib.parse import quote
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPOSITORY_ROOT = SCRIPT_DIR.parent
+REPOSITORY_ROOT = SCRIPT_DIR.parent.parent
 sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from openwebui.configure_openwebui import (  # noqa: E402
+from deployment.post_deploy.configure_openwebui import (  # noqa: E402
     ApiError,
     DEFAULT_OPENWEBUI_URL,
     OpenWebUIClient,
@@ -35,7 +35,7 @@ from openwebui.configure_openwebui import (  # noqa: E402
 )
 
 
-DEFAULT_MANIFEST = SCRIPT_DIR / "manifest.json"
+DEFAULT_MANIFEST = REPOSITORY_ROOT / "assistants" / "manifest.json"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 # Keep the official Assistants' Workspace controls consistent while allowing
