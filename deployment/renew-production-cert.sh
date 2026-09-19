@@ -8,5 +8,5 @@ docker run --rm \
   -v "$PWD/certbot/www:/var/www/certbot" \
   certbot/certbot:latest renew --quiet --non-interactive
 # Reload after successful renewal checks so nginx picks up renewed certificates.
-docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T nginx nginx -t
-docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T nginx nginx -s reload
+docker compose exec -T nginx nginx -t
+docker compose exec -T nginx nginx -s reload

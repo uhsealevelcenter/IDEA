@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPOSITORY_ROOT / "assistants" / "deploy_assistants_openwebui.py"
+SCRIPT_PATH = REPOSITORY_ROOT / "deployment" / "post_deploy" / "deploy_assistants_openwebui.py"
 SPEC = importlib.util.spec_from_file_location("deploy_assistants_openwebui", SCRIPT_PATH)
 deploy = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

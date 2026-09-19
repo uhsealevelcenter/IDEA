@@ -1,0 +1,51 @@
+# deployment/config.yaml
+# Central deployment parameters per environment for IDEA.
+# Merged with 'default' and exported as environment variables prior to running docker compose.
+
+default:
+  SANDBOX_CPUS: "1"
+  SANDBOX_MEMORY_MB: "1024"
+  SANDBOX_DISK_MB: "4096"
+  NGINX_PORT_HTTP: "80"
+  NGINX_PORT_HTTPS: ""
+  NGINX_HTTPS_CONF: "/dev/null"
+  CERTBOT_CONF_DIR: "./certbot/conf"
+  CERTBOT_WWW_DIR: "./certbot/www"
+  # Host debug ports (empty = accessible only within internal docker network)
+  DB_HOST_PORT: ""
+  REDIS_HOST_PORT: ""
+  LANGGRAPH_HOST_PORT: ""
+  SANDBOX_HOST_PORT: ""
+  LITELLM_HOST_PORT: ""
+  LANGFUSE_HOST_PORT: ""
+
+dev:
+  SANDBOX_CPUS: "1"
+  SANDBOX_MEMORY_MB: "1024"
+  SANDBOX_DISK_MB: "4096"
+  DB_HOST_PORT: "127.0.0.1:5434:5432"
+  REDIS_HOST_PORT: "127.0.0.1:6380:6379"
+  LANGGRAPH_HOST_PORT: "8010:8010"
+  SANDBOX_HOST_PORT: "8020:8020"
+  LITELLM_HOST_PORT: "8030:8080"
+  LANGFUSE_HOST_PORT: "3050:3000"
+
+staging:
+  SANDBOX_CPUS: "2"
+  SANDBOX_MEMORY_MB: "4096"
+  SANDBOX_DISK_MB: "10240"
+  REDIS_HOST_PORT: "127.0.0.1:6380:6379"
+
+next-dev:
+  SANDBOX_CPUS: "2"
+  SANDBOX_MEMORY_MB: "4096"
+  SANDBOX_DISK_MB: "10240"
+  REDIS_HOST_PORT: "127.0.0.1:6380:6379"
+
+prod:
+  SANDBOX_CPUS: "2"
+  SANDBOX_MEMORY_MB: "4096"
+  SANDBOX_DISK_MB: "10240"
+  REDIS_HOST_PORT: "127.0.0.1:6380:6379"
+  NGINX_PORT_HTTPS: "443"
+  NGINX_HTTPS_CONF: "./nginx/nginx-https-prod.conf"
