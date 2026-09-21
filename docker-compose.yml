@@ -14,15 +14,9 @@ services:
     volumes:
       - app-db-data:/var/lib/postgresql/data/pgdata
     env_file:
-      - ./db/.env.example
-      - .env
-    environment:
-      - PGDATA=/var/lib/postgresql/data/pgdata
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
-      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
-      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
+      - ./db/.env
     ports:
-      - "127.0.0.1:5434:5432"
+      - "${DB_HOST_PORT:-127.0.0.1:5434:5432}"
 
   redis:
     build:
@@ -30,8 +24,10 @@ services:
       dockerfile: Dockerfile
     image: idea-redis
     restart: unless-stopped
+    env_file:
+      - ./redis/.env
     ports:
-      - "127.0.0.1:6380:6379"
+      - "${REDIS_HOST_PORT:-127.0.0.1:6380:6379}"
     volumes:
       - idea_redis_data:/data
     command: redis-server --appendonly yes
@@ -42,54 +38,10 @@ services:
       dockerfile: Dockerfile
     image: idea-langgraph
     container_name: idea_langgraph
+    ports:
+      - "${LANGGRAPH_HOST_PORT:-8010:8010}"
     env_file:
-      - ./langgraph/.env.example
-      - .env
-    environment:
-      - PYTHONUNBUFFERED=1
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - IDEA_AGENT_RUNTIME=${IDEA_AGENT_RUNTIME:-langgraph}
-      - IDEA_AGENT_MODEL=${IDEA_AGENT_MODEL:-gpt-5.6-terra}
-      - IDEA_AGENT_REASONING_EFFORT=${IDEA_AGENT_REASONING_EFFORT:-medium}
-      - IDEA_ADVANCED_AGENT_MODEL=${IDEA_ADVANCED_AGENT_MODEL:-gpt-5.6-sol}
-      - IDEA_ADVANCED_REASONING_EFFORT=${IDEA_ADVANCED_REASONING_EFFORT:-medium}
-      - IDEA_TOOL_MODEL=${IDEA_TOOL_MODEL:-gpt-5.6-terra}
-      - IDEA_MODEL_REQUEST_TIMEOUT_SECONDS=${IDEA_MODEL_REQUEST_TIMEOUT_SECONDS:-180}
-      - IDEA_MODEL_MAX_RETRIES=${IDEA_MODEL_MAX_RETRIES:-1}
-      - IDEA_CODEX_ENABLED=${IDEA_CODEX_ENABLED:-true}
-      - IDEA_CODEX_MODEL=${IDEA_CODEX_MODEL:-gpt-5.6-terra}
-      - IDEA_CODEX_BASE_URL=${IDEA_CODEX_BASE_URL:-}
-      - IDEA_CODEX_MAX_EVENTS=${IDEA_CODEX_MAX_EVENTS:-100}
-      - IDEA_KERNEL_SCOPE=${IDEA_KERNEL_SCOPE:-chat_assistant}
-      - IDEA_IDENTITY_SECRET=${IDEA_IDENTITY_SECRET:-}
-      - IDEA_MAX_STATE_BYTES=${IDEA_MAX_STATE_BYTES:-524288}
-      - IDEA_MAX_RECENT_ACTIONS=${IDEA_MAX_RECENT_ACTIONS:-50}
-      - IDEA_MAX_RECENT_EXECUTIONS=${IDEA_MAX_RECENT_EXECUTIONS:-20}
-      - IDEA_MAX_CODE_INLINE_BYTES=${IDEA_MAX_CODE_INLINE_BYTES:-100000}
-      - IDEA_MAX_EXECUTION_MEMORY_BYTES=${IDEA_MAX_EXECUTION_MEMORY_BYTES:-48000}
-      - IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES=${IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES:-6000}
-      - IDEA_MAX_MODEL_HISTORY_MESSAGE_BYTES=${IDEA_MAX_MODEL_HISTORY_MESSAGE_BYTES:-16000}
-      - IDEA_MAX_IDENTICAL_TOOL_CALLS=${IDEA_MAX_IDENTICAL_TOOL_CALLS:-3}
-      - IDEA_CHECKPOINT_MAP_TTL_SECONDS=${IDEA_CHECKPOINT_MAP_TTL_SECONDS:-31536000}
-      - LANGGRAPH_DATABASE_URL=postgresql://idea_langgraph:${LANGGRAPH_DB_PASSWORD?Variable not set}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?options=-csearch_path%3Didea_langgraph%2Cpublic
-      - LANGGRAPH_AES_KEY=${LANGGRAPH_AES_KEY:-}
-      - SANDBOX_SERVICE_URL=${SANDBOX_SERVICE_URL:-http://sandbox:8020}
-      - OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://openwebui:8080}
-      - INPUT_SYNC_TIMEOUT_SECONDS=${INPUT_SYNC_TIMEOUT_SECONDS:-120}
-      - INPUT_SYNC_MAX_FILE_BYTES=${INPUT_SYNC_MAX_FILE_BYTES:-1073741824}
-      - VISION_MAX_IMAGE_BYTES=${VISION_MAX_IMAGE_BYTES:-20971520}
-      - VISION_MAX_IMAGES_PER_TURN=${VISION_MAX_IMAGES_PER_TURN:-8}
-      - OUTPUT_SYNC_TIMEOUT_SECONDS=${OUTPUT_SYNC_TIMEOUT_SECONDS:-30}
-      - OUTPUT_SYNC_MAX_WORKERS=${OUTPUT_SYNC_MAX_WORKERS:-4}
-      - PQA_LLM_MODEL=${PQA_LLM_MODEL:-gpt-5.6-luna}
-      - PQA_EMBEDDING_MODEL=${PQA_EMBEDDING_MODEL:-text-embedding-3-small}
-      - PQA_LITELLM_BASE_URL=${PQA_LITELLM_BASE_URL:-http://litellm:8080/v1}
-      - PQA_SYNC_TIMEOUT_SECONDS=${PQA_SYNC_TIMEOUT_SECONDS:-300}
-      - PQA_CONVERSION_TIMEOUT_SECONDS=${PQA_CONVERSION_TIMEOUT_SECONDS:-120}
-      - PQA_MAX_DOCUMENT_BYTES=${PQA_MAX_DOCUMENT_BYTES:-${PQA_MAX_PDF_BYTES:-1073741824}}
-      - PQA_MAX_CONVERTED_PDF_BYTES=${PQA_MAX_CONVERTED_PDF_BYTES:-1073741824}
-      - MAX_SKILL_BYTES=${MAX_SKILL_BYTES:-100000}
+      - ./langgraph/.env
     volumes:
       - idea_paperqa_data:/app/data
     depends_on:
@@ -108,33 +60,16 @@ services:
       dockerfile: Dockerfile
     image: idea-sandbox
     container_name: idea_sandbox
+    ports:
+      - "${SANDBOX_HOST_PORT:-8020:8020}"
     env_file:
-      - ./sandbox_service/.env.example
-      - .env
+      - ./sandbox_service/.env
     volumes:
       - idea_microsandbox_data:/root/.microsandbox
       - idea_shared_data:/app/data:ro
       - idea_shared_data:/srv/idea_shared_data
     devices:
       - ${KVM_DEVICE_PATH:-/dev/null}:/dev/kvm
-    environment:
-      - PYTHONUNBUFFERED=1
-      - SANDBOX_BACKEND=${SANDBOX_BACKEND:-auto}
-      - SANDBOX_CPUS=${SANDBOX_CPUS:-1}
-      - SANDBOX_MEMORY_MB=${SANDBOX_MEMORY_MB:-1024}
-      - SANDBOX_DISK_MB=${SANDBOX_DISK_MB:-4096}
-      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-ghcr.io/uhsealevelcenter/idea-oi-kernel:slim}
-      - SHARED_DATA_HOST_PATH=/srv/idea_shared_data
-      - GHCR_USERNAME=${GHCR_USERNAME:-}
-      - GHCR_PAT=${GHCR_PAT:-}
-      - SANDBOX_IDLE_TIMEOUT_SECONDS=${SANDBOX_IDLE_TIMEOUT_SECONDS:-1800}
-      - SANDBOX_MAX_DURATION_SECONDS=${SANDBOX_MAX_DURATION_SECONDS:-}
-      - SANDBOX_PYTHON_INTERRUPT_GRACE_SECONDS=${SANDBOX_PYTHON_INTERRUPT_GRACE_SECONDS:-7}
-      - SANDBOX_PYTHON_KERNEL_RECOVERY_GRACE_SECONDS=${SANDBOX_PYTHON_KERNEL_RECOVERY_GRACE_SECONDS:-5}
-      - SANDBOX_PYTHON_EXECUTION_TIMEOUT_SECONDS=${SANDBOX_PYTHON_EXECUTION_TIMEOUT_SECONDS:-1800}
-      - SANDBOX_PYTHON_RUN_STATUS_TTL_SECONDS=${SANDBOX_PYTHON_RUN_STATUS_TTL_SECONDS:-3600}
-      - INPUT_SYNC_MAX_FILE_BYTES=${INPUT_SYNC_MAX_FILE_BYTES:-1073741824}
-      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
 
   shared-data:
     profiles: ["maintenance"]
@@ -152,16 +87,10 @@ services:
     image: idea-litellm
     container_name: idea_litellm
     restart: unless-stopped
+    ports:
+      - "${LITELLM_HOST_PORT:-8030:8080}"
     env_file:
-      - ./litellm/.env.example
-      - .env
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - LITELLM_DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?schema=litellm
-      - LANGFUSE_HOST=http://langfuse:3000
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-${LITELLM_LANGFUSE_PUBLIC_KEY:-}}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-${LITELLM_LANGFUSE_SECRET_KEY:-}}
+      - ./litellm/.env
     volumes:
       - ./litellm/litellm_config.yaml:/app/litellm_config.yaml:ro
     depends_on:
@@ -180,27 +109,9 @@ services:
     container_name: idea_langfuse
     restart: unless-stopped
     ports:
-      - "3050:3000"
+      - "${LANGFUSE_HOST_PORT:-3050:3000}"
     env_file:
-      - ./langfuse/.env.example
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD?Variable not set}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?schema=langfuse
-      - NEXTAUTH_URL=${LANGFUSE_NEXTAUTH_URL:-http://localhost:3050}
-      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET?Variable not set}
-      - SALT=${LANGFUSE_SALT?Variable not set}
-      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY?Variable not set}
-      - TELEMETRY_ENABLED=false
-      - AUTH_DISABLE_SIGNUP=${AUTH_DISABLE_SIGNUP:-true}
-      - LANGFUSE_INIT_ORG_ID=${LANGFUSE_INIT_ORG_ID:-}
-      - LANGFUSE_INIT_ORG_NAME=${LANGFUSE_INIT_ORG_NAME:-}
-      - LANGFUSE_INIT_PROJECT_ID=${LANGFUSE_INIT_PROJECT_ID:-}
-      - LANGFUSE_INIT_PROJECT_NAME=${LANGFUSE_INIT_PROJECT_NAME:-}
-      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PUBLIC_KEY:-}}
-      - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_SECRET_KEY:-}}
-      - LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL:-}
-      - LANGFUSE_INIT_USER_NAME=${LANGFUSE_INIT_USER_NAME:-}
-      - LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD:-}
+      - ./langfuse/.env
     depends_on:
       db:
         condition: service_healthy
@@ -215,18 +126,7 @@ services:
     ports:
       - "3001:8080"
     env_file:
-      - ./openwebui/.env.example
-      - .env
-    environment:
-      - WEBUI_NAME=Open WebUI
-      - ENABLE_OLLAMA_API=false
-      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
-      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-pending}
-      - ENABLE_CODE_EXECUTION=${ENABLE_CODE_EXECUTION:-false}
-      - ENABLE_CODE_INTERPRETER=${ENABLE_CODE_INTERPRETER:-false}
-      - LANGGRAPH_SERVICE_URL=http://langgraph:8010
-      - THREAD_POOL_SIZE=2000
-      - DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL=60
+      - ./openwebui/.env
     volumes:
       - idea_openwebui_data:/app/backend/data
       - ./openwebui/functions:/app/backend/data/functions/idea
@@ -244,8 +144,7 @@ services:
       - "${NGINX_PORT_HTTP:-80}:80"
       - "${NGINX_PORT_HTTPS:-443}:443"
     env_file:
-      - ./nginx/.env.example
-      - .env
+      - ./nginx/.env
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/nginx-locations.conf:/etc/nginx/snippets/locations.conf:ro

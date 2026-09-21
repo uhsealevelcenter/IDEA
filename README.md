@@ -88,17 +88,11 @@ For complete deployment, environment variable descriptions, database provisionin
    ```
 
 2. **Configure Environment Variables:**
-   Copy the example configuration for each service (see [deployment/README.md](deployment/README.md) for full variable descriptions):
+   Run the setup helper to generate `.env` files with secure random keys:
    ```bash
-   cp db/.env.example db/.env
-   cp redis/.env.example redis/.env
-   cp nginx/.env.example nginx/.env
-   cp langgraph/.env.example langgraph/.env
-   cp sandbox_service/.env.example sandbox_service/.env
-   cp litellm/.env.example litellm/.env
-   cp langfuse/.env.example langfuse/.env
-   cp openwebui/.env.example openwebui/.env
+   ./deployment/setup_env.sh
    ```
+   Then fill in your `OPENAI_API_KEY` and `OPENAI_BASE_URL` in `langgraph/.env` and `litellm/.env` (see [deployment/README.md](deployment/README.md) for full variable details).
 
 3. **Set Up the Service Database Roles:**
    Initialize PostgreSQL roles and schemas for LiteLLM, LangGraph, and Langfuse in one shot:

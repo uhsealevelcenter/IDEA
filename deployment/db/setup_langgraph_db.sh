@@ -5,15 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
-if [[ ! -f .env ]]; then
-  echo "Error: .env not found in ${REPO_ROOT} (copy example.env and fill it in first)." >&2
-  exit 1
+# Load per-service .env files (falling back to root .env if present)
+if [ -f .env ]; then
+  set -a; source .env; set +a
 fi
-
-set -a
-# shellcheck disable=SC1091
-source .env
-set +a
+if [ -f db/.env ]; then
+  set -a; source db/.env; set +a
+fi
+if [ -f langgraph/.env ]; then
+  set -a; source langgraph/.env; set +a
+fi
 
 : "${POSTGRES_USER:?POSTGRES_USER not set in .env}"
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set in .env}"
@@ -23,7 +24,7 @@ set +a
 DB_SERVICE="${1:-db}"
 
 echo "==> Ensuring '${DB_SERVICE}' is up..."
-docker compose up -d "${DB_SERVICE}"
+docker compose up -d --quiet-pull "${DB_SERVICE}" >/dev/null 2>&1
 
 echo "==> Waiting for '${DB_SERVICE}' to accept connections..."
 tries=0
@@ -43,8 +44,8 @@ docker compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" "${DB_SERVICE}" \
   -v langgraph_password="${LANGGRAPH_DB_PASSWORD}" \
   -f /dev/stdin < "${SCRIPT_DIR}/init_langgraph_db.sql"
 
-echo "==> Building LangGraph and creating checkpoint tables..."
-docker compose build langgraph
+echo "==> Building LangGraph and creating checkpoint tables (this may take 1-2 minutes on first build)..."
+docker compose build --quiet langgraph
 docker compose run --rm --no-deps langgraph \
   python -c 'from idea_graph.checkpoints import setup_checkpointer; setup_checkpointer()'
 

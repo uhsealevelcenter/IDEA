@@ -10,7 +10,10 @@ This directory houses all infrastructure, provisioning, database initialization,
 deployment/
 ├── config.yaml                     # Central environment configuration (ports, sandbox limits, SSL)
 ├── load_env.py                     # Zero-dependency environment exporter (eval "$(python3 deployment/load_env.py <env>)")
-├── deploy.sh                       # Main deployment runner used by GitHub Actions CI/CD and manual VM deploys
+├── deploy.sh                       # All-in-one deployment & startup runner (used by CI/CD and local development)
+├── setup_env.sh                    # Interactive per-service .env generator & password creator
+├── update_openwebui_key.sh         # Helper to generate/sync Open WebUI admin API key into .env files
+├── check_openwebui.sh              # Health check utility for Open WebUI
 ├── renew-production-cert.sh        # Production Certbot TLS renewal cron script
 │
 ├── db/                             # Database provisioning & schema migrations
@@ -29,7 +32,23 @@ deployment/
 
 ## 1. Environment Variables Configuration
 
-Environment variables are managed **per-service** in each service's respective directory. Copy each `.env.example` file to `.env`:
+Environment variables are managed **per-service** in each service's respective directory.
+
+### Automated Setup (Recommended)
+You can run the interactive setup helper, which generates `.env` files for all services from their templates and automatically populates strong random passwords, AES keys, and session secrets:
+
+```bash
+./deployment/setup_env.sh
+```
+
+*(Pass `--force` if you want to overwrite and regenerate existing `.env` files).*
+
+After running the script, simply fill in your `OPENAI_API_KEY` and `OPENAI_BASE_URL` in `langgraph/.env` and `litellm/.env`.
+
+---
+
+### Manual Setup
+Alternatively, copy each `.env.example` file to `.env`:
 
 ```bash
 cp db/.env.example db/.env
@@ -144,42 +163,49 @@ Or run individual setup scripts if preferred:
 
 ---
 
-## 3. Starting Services
+## 3. Starting Services with deploy.sh (All-in-One Runner)
 
-### Local Development (`dev`)
-```bash
-eval "$(python3 deployment/load_env.py dev)"
-docker compose up -d --build
-```
+`deployment/deploy.sh` is the single, fully automated entrypoint for both local development and remote CI/CD deployments. It executes 5 stages:
+1. **Stage 1**: Generates missing service `.env` files via `setup_env.sh` and loads `config.yaml` parameters.
+2. **Stage 2**: Automatically verifies and initializes PostgreSQL schemas for LiteLLM, LangGraph, and Langfuse.
+3. **Stage 3**: Authenticates with GHCR (if credentials are set) and starts all Docker Compose services with quiet, streamlined logging.
+4. **Stage 4**: Runs service health checks, polls LiteLLM until ready (up to 3 min), and automatically generates & injects `LITELLM_VIRTUAL_KEY`.
+5. **Stage 5**: Automatically generates and syncs `OPENWEBUI_API_KEY`, sets the `INTERNAL_SERVICE_TOKEN` Valve, configures task models, and seeds assistants.
 
-### Staging
-```bash
-eval "$(python3 deployment/load_env.py staging)"
-docker compose up -d --build
-```
+To start any environment:
 
-### Next-Dev
 ```bash
-eval "$(python3 deployment/load_env.py next-dev)"
-docker compose up -d --build
-```
+# Local development:
+./deployment/deploy.sh dev
 
-### Production (`prod`)
-```bash
-eval "$(python3 deployment/load_env.py prod)"
-docker compose up -d --build
+# Staging:
+./deployment/deploy.sh staging
+
+# Next-dev:
+./deployment/deploy.sh next-dev
+
+# Production:
+./deployment/deploy.sh prod
 ```
 
 ---
 
-## 4. Post-Deployment Open WebUI Setup
+## 4. Manual Deployment Workflow (Optional)
 
-Once Open WebUI is reachable:
-1. Sign up for the first account (automatically becomes administrator).
-2. Go to **Settings > Account > API Keys** to generate an admin API key.
-3. Save the key as `OPENWEBUI_API_KEY` in `openwebui/.env` (and `langgraph/.env`).
-4. Reconcile Pipe function, settings, and Assistants:
+If you prefer to start services step-by-step rather than running `deploy.sh`:
+
+1. **Initialize Databases:**
    ```bash
+   ./deployment/db/setup_all_databases.sh
+   ```
+2. **Start Docker Compose:**
+   ```bash
+   eval "$(python3 deployment/load_env.py dev)"
+   docker compose up -d --build
+   ```
+3. **Sync Open WebUI Key & Reconcile:**
+   ```bash
+   ./deployment/update_openwebui_key.sh
    ./deployment/post_deploy/register_idea_pipe.sh
    ./deployment/post_deploy/configure_openwebui.py
    ./deployment/post_deploy/deploy_assistants_openwebui.py

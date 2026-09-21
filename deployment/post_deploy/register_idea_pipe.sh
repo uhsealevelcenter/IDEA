@@ -25,13 +25,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIPE_FILE="${REPO_ROOT}/openwebui/functions/idea_pipe.py"
 
-# Falls back to .env in the repo root if OPENWEBUI_API_KEY isn't already
-# exported in the shell environment.
-if [ -z "${OPENWEBUI_API_KEY:-}" ] && [ -f "${REPO_ROOT}/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${REPO_ROOT}/.env"
-  set +a
+# Load OPENWEBUI_API_KEY from openwebui/.env or root .env
+if [ -z "${OPENWEBUI_API_KEY:-}" ]; then
+  if [ -f "${REPO_ROOT}/openwebui/.env" ]; then
+    OPENWEBUI_API_KEY="$(grep -E '^OPENWEBUI_API_KEY=' "${REPO_ROOT}/openwebui/.env" | cut -d= -f2- || true)"
+  elif [ -f "${REPO_ROOT}/.env" ]; then
+    OPENWEBUI_API_KEY="$(grep -E '^OPENWEBUI_API_KEY=' "${REPO_ROOT}/.env" | cut -d= -f2- || true)"
+  fi
 fi
 
 OPENWEBUI_BASE_URL="${OPENWEBUI_BASE_URL:-http://localhost:3001}"
@@ -105,6 +105,18 @@ if [ "${IS_ACTIVE}" != "True" ]; then
   curl -s -o /dev/null -w '%{http_code}\n' \
     -X POST "${API_BASE}/id/${FUNCTION_ID}/toggle" \
     -H "${AUTH_HEADER}"
+fi
+
+# Automatically configure the INTERNAL_SERVICE_TOKEN Valve if set in the environment
+INTERNAL_TOKEN="${INTERNAL_SERVICE_TOKEN:-$(grep -E '^INTERNAL_SERVICE_TOKEN=' "${REPO_ROOT}/langgraph/.env" 2>/dev/null | cut -d= -f2- || true)}"
+if [ -n "${INTERNAL_TOKEN}" ]; then
+  echo "==> Setting INTERNAL_SERVICE_TOKEN Valve on '${FUNCTION_ID}'..."
+  VALVE_PAYLOAD="$(python3 -c 'import json, sys; print(json.dumps({"INTERNAL_SERVICE_TOKEN": sys.argv[1]}))' "${INTERNAL_TOKEN}")"
+  curl -s -o /dev/null -w '%{http_code}\n' \
+    -X POST "${API_BASE}/id/${FUNCTION_ID}/valves/update" \
+    -H "${AUTH_HEADER}" \
+    -H "Content-Type: application/json" \
+    -d "${VALVE_PAYLOAD}" || true
 fi
 
 rm -f /tmp/idea_pipe_create_response.json /tmp/idea_pipe_update_response.json

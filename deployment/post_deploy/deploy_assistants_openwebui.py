@@ -619,6 +619,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    repo_root = Path(__file__).resolve().parents[2]
+    load_env_file(repo_root / "openwebui" / ".env")
     load_env_file(args.env_file)
     manifest_path = args.manifest.resolve()
     manifest = load_manifest(manifest_path)
