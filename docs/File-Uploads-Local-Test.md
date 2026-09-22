@@ -51,7 +51,7 @@ without replacing the running customized Open WebUI image. On a fresh stack,
 complete the normal database/service setup described in the README as well.
 
 Reload the browser after deployment. For a separately maintained custom IDEA
-assistant such as CIndRA, enable **Raw File Access** under its model capabilities.
+assistant, enable **Raw File Access** under its model capabilities.
 The deployment script intentionally preserves custom assistants' settings.
 Enable this capability only on integrations that can download original files.
 
