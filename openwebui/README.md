@@ -136,7 +136,8 @@ closure in deterministic dependency-first order. Shared documents are
 deduplicated. Unknown IDs, dependency cycles, excessive depth/count/size,
 path traversal, and symlinks fail the entire request; no partial package is
 returned. Package-root policy takes precedence if component instructions
-conflict. CIndRA is the first package using this general mechanism.
+conflict. The mechanism supports future built-in hierarchical packages without
+coupling the loader to any one package.
 
 A minimal package manifest is:
 

@@ -73,9 +73,10 @@ ENV GDAL_DATA=/usr/share/gdal
 ENV PROJ_DATA=/usr/share/proj
 
 # Legacy IDEA system capabilities plus small additions demonstrated useful in
-# recent CIndRA work. Build headers stay in python-builder; this stage receives
-# only runtime utilities and libraries. Keep this expensive, stable layer ahead
-# of the application environments so normal lock/CLI updates can reuse it.
+# recent scientific workflows. Build headers stay in python-builder; this stage
+# receives only runtime utilities and libraries. Keep this expensive, stable
+# layer ahead of the application environments so normal lock/CLI updates can
+# reuse it.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         biber \
         chktex \

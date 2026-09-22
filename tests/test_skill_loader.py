@@ -22,7 +22,7 @@ class BuiltinSkillLoaderTests(unittest.TestCase):
         loader = skill_loader.BuiltinSkillLoader()
         documents = loader.catalog()
 
-        self.assertEqual(len(documents), 10)
+        self.assertEqual(len(documents), 9)
         for document in documents:
             source = (
                 loader.root / document.skill_id / "SKILL.md"
@@ -56,9 +56,6 @@ class BuiltinSkillLoaderTests(unittest.TestCase):
             "Create distinctive, production-grade frontend interfaces",
             manifest,
         )
-        self.assertIn("<id>cindra</id>", manifest)
-        self.assertIn("<kind>package</kind>", manifest)
-        self.assertIn("<id>flood-frequency</id>", manifest)
 
     def test_rejects_traversal_unknown_and_symlinked_skills(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -176,6 +173,7 @@ class BuiltinSkillPackageTests(unittest.TestCase):
             loader = skill_loader.BuiltinSkillLoader(root)
 
             bundle = loader.load_bundle("example", route="standard")
+            rendered_manifest = loader.render_manifest()
 
             self.assertEqual(
                 [document.component_id for document in bundle.documents],
@@ -198,6 +196,8 @@ class BuiltinSkillPackageTests(unittest.TestCase):
                 "workflow",
             ])
             self.assertTrue(all("sha256" in item for item in payload["documents"]))
+            self.assertIn("<kind>package</kind>", rendered_manifest)
+            self.assertIn("<id>standard</id>", rendered_manifest)
 
     def test_component_selection_still_loads_policy_dependencies(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -267,70 +267,6 @@ class BuiltinSkillPackageTests(unittest.TestCase):
                     "No package component was partially loaded",
                 ):
                     loader.load_bundle("example", route="standard")
-
-    def test_cindra_routes_load_complete_expected_source_documents(self):
-        loader = skill_loader.BuiltinSkillLoader()
-        bundle = loader.load_bundle("cindra", route="trend")
-        component_ids = [
-            document.component_id for document in bundle.documents
-        ]
-
-        self.assertEqual(
-            component_ids,
-            [
-                "root",
-                "cindra-terminology",
-                "cindra-data-sources",
-                "cindra-conventions",
-                "cindra-validation-rules",
-                "cindra-sea-level-governance",
-                "cindra-site-setup",
-                "cindra-quality-control",
-                "cindra-sea-level-trend",
-            ],
-        )
-        package = loader.package("cindra")
-        self.assertIsNotNone(package)
-        for document in bundle.documents[1:]:
-            source = package.components[document.component_id].path.read_text(
-                encoding="utf-8"
-            )
-            self.assertEqual(document.content, source)
-            self.assertEqual(
-                document.sha256,
-                hashlib.sha256(source.encode("utf-8")).hexdigest(),
-            )
-        self.assertLess(bundle.byte_count, skill_loader.MAX_SKILL_BUNDLE_BYTES)
-        self.assertTrue(
-            all(
-                requirement["status"] == "unresolved"
-                for requirement in bundle.external_requirements
-            )
-        )
-
-        package = loader.package("cindra")
-        self.assertIsNotNone(package)
-        for route_id, route in package.routes.items():
-            with self.subTest(route=route_id):
-                route_bundle = loader.load_bundle("cindra", route=route_id)
-                load_order = [
-                    document.component_id
-                    for document in route_bundle.documents
-                ]
-                self.assertEqual(load_order[0], "root")
-                self.assertEqual(len(load_order), len(set(load_order)))
-                for requested in route.components:
-                    self.assertIn(requested, load_order)
-                for component_id in load_order[1:]:
-                    component_index = load_order.index(component_id)
-                    for dependency in package.components[
-                        component_id
-                    ].requires:
-                        self.assertLess(
-                            load_order.index(dependency),
-                            component_index,
-                        )
-
 
 class OpenWebUISkillLoaderTests(unittest.TestCase):
     @staticmethod
