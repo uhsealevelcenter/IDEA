@@ -56,7 +56,7 @@ code.
 17. The primary agent model is centrally selected through `IDEA_AGENT_MODEL`; `debug/ui-langgraph-general` briefly evaluated `gpt-5.6-sol` before restoring the `gpt-5.6-terra` default, while keeping auxiliary models separate.
 18. Python kernel failures retain structured error metadata through the kernel, sandbox, and LangGraph layers, are marked as failed tool executions, and render in Open WebUI as labeled traceback blocks without marking the entire assistant response as failed.
 19. IDEA can now delegate substantial repository investigation, implementation, debugging, and review to Codex inside the user's existing microsandbox workspace. LangGraph remains the conversation orchestrator, checkpoints resumable Codex threads, applies read-only or workspace-write policy, and propagates Stop requests to active Codex turns.
-20. The microsandbox guest image now includes the pinned Codex runtime and a reviewed research software environment that restores the broadly useful legacy IDEA analysis stack while adding commonly needed CIndRA, document, OCR, browser, geospatial, and ocean-data packages. Local and microVM smoke tests, dependency auditing, immutable multi-architecture publication, and an explicitly destructive developer-only refresh workflow are documented.
+20. The microsandbox guest image now includes the pinned Codex runtime and a reviewed research software environment that restores the broadly useful legacy IDEA analysis stack while adding commonly needed document, OCR, browser, geospatial, and ocean-data packages. Local and microVM smoke tests, dependency auditing, immutable multi-architecture publication, and an explicitly destructive developer-only refresh workflow are documented.
 
 ## Previous change listing
 
@@ -73,7 +73,7 @@ major changes.
 7. Generated artifacts are synchronized back to Open WebUI with reusable links, and browser-safe HTML and image previews are supported.
 8. Uploaded and sandbox images can now be supplied directly to the vision-capable IDEA agent, with configurable size and count limits.
 9. A centrally maintained shared scientific-data volume is mounted read-only in every user sandbox, and climate tools write full datasets and provenance directly into the user's workspace.
-10. IDEA now has unified skill discovery and loading for built-in and user Workspace skills, including validated hierarchical packages and the ported CIndRA skill suite.
+10. IDEA now has unified skill discovery and loading for built-in and user Workspace skills, including validated hierarchical packages.
 11. PaperQA2 is integrated with Open WebUI Assistant knowledge collections and direct PDF, DOCX, DOC, ODT, and RTF attachments. Office documents are normalized to PDF before indexing, conversion failures are reported explicitly, and cited visual contexts are returned alongside literature answers.
 12. Chat responses, tool progress, and output-finalization status now stream through Open WebUI so long-running work remains visible to the user.
 

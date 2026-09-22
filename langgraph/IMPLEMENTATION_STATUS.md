@@ -25,7 +25,7 @@ endpoint, but it is not the normal IDEA request path.
 | Model routing | Complete | `IDEA_AGENT_MODEL`, `IDEA_TOOL_MODEL`, Codex, and PaperQA default to Terra, while Open WebUI tasks stay on Luna. Primary chat uses LiteLLM with end-user attribution and telemetry. |
 | Tool-observation limit | Complete | Every live `ToolMessage`, including the newest, is capped before checkpointing and again before model inference. A whole-prompt preflight and full Python-output archive reference remain follow-ups. |
 | Codex delegation | Developer rollout complete | Codex runs inside the same VM, supports read-only/workspace-write, resumes threads, and participates in Stop. It currently reuses external `OPENAI_*` credentials when dedicated values are blank. |
-| Guest image | AMD64 candidate published and tested | The research image includes the legacy analysis stack, current CIndRA-oriented additions, Codex, GuardDog, and local/microVM smoke tests. Multi-architecture production publication remains a GitHub workflow task. |
+| Guest image | AMD64 candidate published and tested | The research image includes the legacy analysis stack, current research-oriented additions, Codex, GuardDog, and local/microVM smoke tests. Multi-architecture production publication remains a GitHub workflow task. |
 
 ## Storage ownership
 
