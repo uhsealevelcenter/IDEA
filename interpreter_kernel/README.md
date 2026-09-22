@@ -183,8 +183,8 @@ When rolling out a published image, two things matter:
 `/opt/idea-venv`. `research` is the supported module. Its `requirements.in`
 documents intentional version ranges and `requirements.lock` records the exact,
 transitive, cross-platform resolution. This preserves the legacy IDEA analysis
-stack while adding packages repeatedly needed by CIndRA work (HDF5-backed
-NetCDF, ReportLab, OCR, `adjustText`, browser automation, and current
+stack while adding packages repeatedly needed by scientific workflows
+(HDF5-backed NetCDF, ReportLab, OCR, `adjustText`, browser automation, and current
 oceanographic/geospatial clients). Heavy build headers exist only in the
 builder stage; GuardDog has its own small venv because its Click constraint
 conflicts with Copernicus Marine.
