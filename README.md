@@ -248,59 +248,67 @@ wiring.
 
 1. Generate the four Langfuse secrets shown in step 2 above and run
    `./langfuse/setup_langfuse_db.sh` (step 3 above) before first start.
-2. With the four secrets generated, create the `LANGFUSE_INIT_*` environment variables that 
-   will be used to sign into the admin account.
+2. With the four secrets generated, configure the 
+   `LANGFUSE_INIT_*` environment variables to automatically initialize the Langfuse organization, project, and first user account.
 ```ini
-   #one-shot bootstrap (LANGFUSE_INIT_*) to auto-create the
-   # org/project/user and skip the manual UI signup above entirely - see
+   # One-time initialization (LANGFUSE_INIT_*) to automatically create the 
+   # organization/project/user and skip the manual UI signup above entirely - see
    # docker-compose.yml's `langfuse` service and
    # https://langfuse.com/self-hosting/v2/deployment-guide for the full list
    # of LANGFUSE_INIT_* variables.
-   
-   # Initializing Organization for langfuse
-   # The organization is the group that will have access to the traces
+
+   # Initialize the Langfuse organization.
+   # The organization groups projects and manages access to them.
    LANGFUSE_INIT_ORG_ID=change-this
    LANGFUSE_INIT_ORG_NAME=change-this
 
-   # Initializing project for langfuse
-   # The project is where you will see the traces come in from litellm
+   # Initialize the Langfuse project.
+   # The project is where traces and other observability data
+   # from LiteLLM will be collected and displayed.
    LANGFUSE_INIT_PROJECT_ID=change-this
    LANGFUSE_INIT_PROJECT_NAME=change-this
 
-   # Initializing user credentials
-   # This information is for generating a log in for the first user
-   # This info will be what admin users will use to log into langfuse
+   # Initialize the first user account 
+   # These credentials will be used to log in to Langfuse.
+   # This account can be used to administer the organization.
    LANGFUSE_INIT_USER_EMAIL=change-this
    LANGFUSE_INIT_USER_NAME=change-this
    LANGFUSE_INIT_USER_PASSWORD=change-this
 
-   # Turning off Sign up so there will only be one admin account (the Init user)
+   # Disable user registration so that additional accounts
+   # cannot be created through the signup interface.
    AUTH_DISABLE_SIGNUP=true
 
 ```
-3. Next is generating your keys use these commands
+
+3. Use the following commands to generate a public key and a secret key:
 ```bash
    echo "pk-lf-$(uuidgen)"
    echo "sk-lf-$(uuidgen)"
 ```
-4. Once generated add them to these four variables. The key `"pk-lf-*"` is placed under `*_PUBLIC_KEY`. 
-   The key `"sk-lf-*"` is placed under `*_SECRET_KEY`.
+
+4. Add the generated keys to the appropriate environment variables. The pk-lf-* key is the public key, while the sk-lf-* key is the secret key.
 ```ini
+   # Preconfigure the Langfuse project API keys. 
+   # These keys are used to authenticate services connecting to Langfuse.
    LANGFUSE_INIT_PUBLIC_KEY=generate-this
    LANGFUSE_INIT_SECRET_KEY=generate-this
-   # These variabels are used for connecting langfuse to litellm
-   # Public key is used for telling litellm which project to connect to
-   # Secret key is authorixing litellm to access that porject
+   
+   # Configure LiteLLM to connect to the Langfuse project. 
+   # The public key identifies the project. 
+   # The secret key authenticates LiteLLM when sending data to the project
    LITELLM_LANGFUSE_PUBLIC_KEY=generate-this
    LITELLM_LANGFUSE_SECRET_KEY=generate-this
 ```
-5. Start (or restart) the stack, then open the Langfuse UI - `:3050` in dev
-   (`docker-compose.override.yml`), otherwise wherever you route it in
-   production (see the Quick Deploy doc)
-6. Go to the http://localhost:3050.
-7. After logging in, double check everything was generated with the use of `LANGFUSE_INIT_*`, the public and secret keys already match the project's actual keys - no extra step needed
+   **Note**: Ensure that the initialization and LiteLLM variables contain the corresponding matching keys. The initialization variables must use the names expected by your Langfuse version, and the LiteLLM variables must match the environment variable references in your Docker Compose configuration. 
 
-8. Restart `litellm` so it picks up the keys:
+5. Start or restart the Docker Compose stack. Once the environment variables are configured, start or restart the stack to initialize Langfuse. In development, the Langfuse UI is available at port `3050`, as configured in `docker-compose.override.yml`. In production, access Langfuse through the URL configured for your deployment. See the Quick Deploy documentation for details. 
+
+6. Navigate to http://localhost:3050 in your browser.
+
+7. Log in using the credentials configured through `LANGFUSE_INIT_USER_EMAIL` and `LANGFUSE_INIT_USER_PASSWORD`. Verify that the organization and project were created successfully and that the project's public and secret API keys match the values configured in your environment variables. If the initialization process created the project and its API keys successfully, no additional manual key-generation or configuration step should be necessary in the Langfuse UI.
+
+8. Restart `litellm` so it picks up the Langfuse API keys:
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.next-dev.yml up -d --no-deps litellm
    ```
