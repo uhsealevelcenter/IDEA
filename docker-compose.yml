@@ -304,6 +304,9 @@ services:
       - SALT=${LANGFUSE_SALT?Variable not set}
       - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY?Variable not set}
       - TELEMETRY_ENABLED=false
+      # Keys used by litellm to connect to the langfuse project
+      - LANGFUSE_PUBLIC_KEY={LITELLM_LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY={LITELLM_LANGFUSE_SECRET_KEY}
       # LANGFUSE_INIT_* one-shot bootstrap of an org/project/user on first
       # boot - see example.env's Langfuse section for the recommended flow
       # (create the project through the UI once, then paste the generated
