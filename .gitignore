@@ -163,6 +163,8 @@ cython_debug/
 *.pkl
 *.json
 !assistants/manifest.json
+!shared_data/seeds/**/*.json
+!shared_data/seeds/**/*.geojson
 *.csv
 *.png
 !assistants/assets/*.png
