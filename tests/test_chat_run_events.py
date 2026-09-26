@@ -22,10 +22,10 @@ class ChatRunEventTests(unittest.TestCase):
         )
 
         self.assertEqual(request.agent_variant, "standard")
-        self.assertEqual(langgraph_service.IDEA_AGENT_MODEL, "gpt-5.6-terra")
+        self.assertEqual(langgraph_service.IDEA_AGENT_MODEL, "gpt-6-sol")
         profile = langgraph_service.resolve_idea_agent_profile("standard")
         self.assertEqual(profile.reasoning_effort, "medium")
-        self.assertFalse(profile.use_responses_api)
+        self.assertTrue(profile.use_responses_api)
 
     def test_advanced_chat_run_resolves_model_and_reasoning_server_side(self):
         async def exercise():
@@ -46,7 +46,7 @@ class ChatRunEventTests(unittest.TestCase):
                 )
 
             kwargs = thread.call_args.kwargs["kwargs"]
-            self.assertEqual(kwargs["model"], "gpt-5.6-sol")
+            self.assertEqual(kwargs["model"], "gpt-6-sol-priority")
             self.assertEqual(kwargs["reasoning_effort"], "medium")
             self.assertTrue(kwargs["use_responses_api"])
 

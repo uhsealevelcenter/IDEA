@@ -83,15 +83,16 @@ cp openwebui/.env.example openwebui/.env
 - `CERTBOT_WWW_DIR`: Mount path for Certbot HTTP-01 renewal challenges (`./certbot/www`).
 
 #### 4. `langgraph/.env` (LangGraph Agent Runtime)
-- `IDEA_AGENT_MODEL`: Primary conversational model identifier (e.g. `gpt-5.6-terra`).
+- `IDEA_AGENT_MODEL`: Primary conversational model identifier (e.g. `gpt-6-sol`).
 - `IDEA_AGENT_REASONING_EFFORT`: Reasoning depth/effort for the agent model (`low`, `medium`, `high`).
 - `IDEA_TOOL_MODEL`: Auxiliary model used for sub-agent tool evaluation.
-- `IDEA_ADVANCED_AGENT_MODEL`: Model used for advanced agent tasks using the Responses API (e.g. `gpt-5.6-sol`).
+- `IDEA_ADVANCED_AGENT_MODEL`: Model used for advanced agent tasks using the Responses API (e.g. `gpt-6-sol-priority`).
 - `IDEA_ADVANCED_REASONING_EFFORT`: Reasoning depth for the advanced agent model.
 - `IDEA_MODEL_REQUEST_TIMEOUT_SECONDS`: Maximum request timeout for model completions.
 - `IDEA_MODEL_MAX_RETRIES`: Number of retry attempts for failed model requests.
 - `IDEA_CODEX_ENABLED`: Toggle for delegating code-generation tasks to Codex (`true`/`false`).
-- `IDEA_CODEX_MODEL`: Model used for Codex generation (`gpt-5.6-terra`).
+- `IDEA_CODEX_MODEL`: Model used for Codex generation (`gpt-6-sol`).
+- `IDEA_CODEX_REASONING_EFFORT`: Codex reasoning depth (`medium`).
 - `IDEA_CODEX_BASE_URL` / `IDEA_CODEX_API_KEY`: Dedicated upstream credentials for Codex (optional).
 - `LANGGRAPH_DB_PASSWORD`: Dedicated PostgreSQL password for the `idea_langgraph` role.
 - `LANGGRAPH_AES_KEY`: 16, 24, or 32-character AES secret key used to encrypt agent session checkpoints at rest.
@@ -101,7 +102,7 @@ cp openwebui/.env.example openwebui/.env
 - `INTERNAL_SERVICE_TOKEN`: Shared secret Bearer token guarding internal HTTP communication between LangGraph, Sandbox, and OpenWebUI.
 - `OPENWEBUI_BASE_URL`: Base URL used by LangGraph to push artifacts to Open WebUI (`http://openwebui:8080`).
 - `OPENWEBUI_API_KEY`: Admin API key used to authenticate artifact uploads into Open WebUI.
-- `PQA_LLM_MODEL`: LLM model used by PaperQA for answering and summaries (`gpt-5.6-luna`).
+- `PQA_LLM_MODEL`: LLM model used by PaperQA for answering and summaries (`gpt-6-luna`).
 - `PQA_EMBEDDING_MODEL`: Text embedding model for PaperQA document indexing (`text-embedding-3-small`).
 - `PQA_LITELLM_BASE_URL`: LiteLLM endpoint used by PaperQA (`http://litellm:8080/v1`).
 - `PQA_SYNC_TIMEOUT_SECONDS`: Timeout for downloading and indexing attached research documents.
@@ -137,7 +138,7 @@ cp openwebui/.env.example openwebui/.env
 - `WEBUI_SECRET_KEY`: Encryption secret for Open WebUI sessions and cookies.
 - `ENABLE_SIGNUP`: Enables user self-registration (`true`).
 - `DEFAULT_USER_ROLE`: Initial role assigned to new signups (`pending` puts them in the admin queue for approval).
-- `TASK_MODEL_EXTERNAL`: Model used for title generation and auxiliary tasks (`gpt-5.6-luna`).
+- `TASK_MODEL_EXTERNAL`: Model used for title generation and auxiliary tasks (`gpt-6-luna`).
 - `ENABLE_CONTEXT_COMPACTION`: Automatically compacts long chat histories to prevent context overflow.
 - `CONTEXT_COMPACTION_TOKEN_THRESHOLD`: Token count that triggers chat compaction (e.g. `136000`).
 - `OPENWEBUI_LITELLM_BASE_URL`: Internal URL to reach the LiteLLM proxy (`http://litellm:8080/v1`).

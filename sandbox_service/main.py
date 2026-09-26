@@ -12,7 +12,7 @@ import hmac
 import os
 import json
 import tempfile
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -97,6 +97,7 @@ class CodexRunRequest(BaseModel):
     thread_id: str = ""
     run_id: str = ""
     model: str
+    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "medium"
     base_url: str
     api_key: str = Field(repr=False)
     max_events: int = Field(default=100, ge=1, le=500)

@@ -149,6 +149,7 @@ class CodexIntegrationTests(unittest.TestCase):
             'shell_environment_policy.filters.IDEA_CODEX_API_KEY="exclude"',
             overrides,
         )
+        self.assertIn('model_reasoning_effort="medium"', overrides)
 
     def test_langgraph_client_keeps_credentials_out_of_model_arguments(self):
         response = Mock()
@@ -165,6 +166,7 @@ class CodexIntegrationTests(unittest.TestCase):
 
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["api_key"], "scoped-secret")
+        self.assertEqual(payload["reasoning_effort"], "medium")
         self.assertNotIn("api_key", {"task": "Review it", "cwd": "/workspace/repo"})
         self.assertNotIn("scoped-secret", post.call_args.args[0])
 

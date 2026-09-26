@@ -25,7 +25,7 @@ from urllib.request import Request, urlopen
 
 DEFAULT_OPENWEBUI_URL = "http://localhost:3001"
 DEFAULT_LITELLM_URL = "http://litellm:8080/v1"
-DEFAULT_TASK_MODEL = "gpt-5.6-luna"
+DEFAULT_TASK_MODEL = "gpt-6-luna"
 DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD = 136_000
 LEGACY_LITELLM_URLS = {"http://litellm:4000/v1"}
 TITLE_GENERATION_PROMPT = """### Task:

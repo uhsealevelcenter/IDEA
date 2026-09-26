@@ -37,6 +37,9 @@ class MissingModelClient(FakeClient):
 
 
 class ConfigureOpenWebUITests(unittest.TestCase):
+    def test_default_task_model_is_gpt_6_luna(self):
+        self.assertEqual(configure_openwebui.DEFAULT_TASK_MODEL, "gpt-6-luna")
+
     def test_connection_update_preserves_existing_connections(self):
         client = FakeClient(
             {

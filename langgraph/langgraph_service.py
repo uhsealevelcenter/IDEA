@@ -802,9 +802,11 @@ async def chat_endpoint(request: ChatRequest):
         
         # Build a fresh orchestrator for this request (no cross-request
         # cache - see the note above chat_run_threads).
+        # Legacy callers without a selected variant use the standard IDEA
+        # profile. Explicit custom models retain their prior endpoint behavior.
         profile = (
-            resolve_idea_agent_profile(request.agent_variant)
-            if request.agent_variant
+            resolve_idea_agent_profile(request.agent_variant or "standard")
+            if request.agent_variant or not request.model
             else None
         )
         orchestrator = ConversationOrchestrator(
@@ -813,8 +815,15 @@ async def chat_endpoint(request: ChatRequest):
             is_guest=request.is_guest,
             db=None,
             model=profile.model if profile else request.model or IDEA_AGENT_MODEL,
-            reasoning_effort=profile.reasoning_effort if profile else None,
-            use_responses_api=profile.use_responses_api if profile else False,
+            reasoning_effort=(
+                profile.reasoning_effort if profile
+                else "medium" if request.model and request.model.startswith("gpt-6-")
+                else None
+            ),
+            use_responses_api=(
+                profile.use_responses_api if profile
+                else bool(request.model and request.model.startswith("gpt-6-"))
+            ),
             temperature=request.temperature,
             max_iterations=request.max_iterations,
             user_email=request.user_email,

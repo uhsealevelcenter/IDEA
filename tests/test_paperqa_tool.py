@@ -172,9 +172,9 @@ class PaperQAToolTests(unittest.TestCase):
                 end_user_id="scientist@example.org",
             )
 
-        self.assertEqual(settings.llm, "gpt-5.6-terra")
-        self.assertEqual(settings.summary_llm, "gpt-5.6-terra")
-        self.assertEqual(settings.agent.agent_llm, "gpt-5.6-terra")
+        self.assertEqual(settings.llm, "gpt-6-luna")
+        self.assertEqual(settings.summary_llm, "gpt-6-luna")
+        self.assertEqual(settings.agent.agent_llm, "gpt-6-luna")
         self.assertEqual(
             settings.embedding,
             "text-embedding-3-small",
@@ -182,6 +182,7 @@ class PaperQAToolTests(unittest.TestCase):
         llm_params = settings.llm_config["model_list"][0][
             "litellm_params"
         ]
+        self.assertEqual(llm_params["reasoning_effort"], "none")
         self.assertEqual(
             llm_params["api_base"],
             "http://litellm:8080/v1",

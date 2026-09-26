@@ -54,7 +54,7 @@ class ConversationOrchestrator:
         db: Optional[Session] = None,
         model: str = IDEA_AGENT_MODEL,
         reasoning_effort: Optional[str] = None,
-        use_responses_api: bool = False,
+        use_responses_api: bool = True,
         temperature: Optional[float] = None,
         max_iterations: int = 20,
         user_email: Optional[str] = None,

@@ -108,7 +108,7 @@ def _prompt_cache_key(model: str, session_id: str) -> str:
 def _supports_prompt_caching(model: str) -> bool:
     """Return whether IDEA may attach explicit prompt-cache request fields."""
     normalized = str(model or "").strip().lower()
-    return normalized.startswith("gpt-5.6") or normalized == "gpt-6-astra"
+    return normalized.startswith(("gpt-5.6", "gpt-6-"))
 
 
 def _model_api_kwargs(
@@ -262,7 +262,7 @@ class TerminalAgent:
         user_email: Optional[str] = None,
         model: str = IDEA_AGENT_MODEL,
         reasoning_effort: Optional[str] = None,
-        use_responses_api: bool = False,
+        use_responses_api: bool = True,
         temperature: Optional[float] = None,
         max_iterations: int = 20,
         assistant_id: Optional[str] = None,
@@ -404,8 +404,8 @@ class TerminalAgent:
         # key shared by every user (a $100 total budget, not per-user), and
         # LITELLM_END_USER_HEADER carries this user's email so LiteLLM can
         # still attribute spend/usage per end user despite the shared key.
-        # Reasoning models in the GPT-5.6 family only support the provider default
-        # temperature - omit the kwarg entirely when temperature is None.
+        # Models with reasoning enabled require the provider default
+        # temperature. Keep explicit temperatures for non-reasoning requests.
         if not LITELLM_VIRTUAL_KEY:
             raise RuntimeError(
                 "LITELLM_VIRTUAL_KEY is not set - see example.env for how to "
@@ -431,7 +431,7 @@ class TerminalAgent:
                 else IDEA_MODEL_MAX_RETRIES
             ),
         }
-        if temperature is not None:
+        if temperature is not None and reasoning_effort in (None, "none"):
             llm_kwargs["temperature"] = temperature
         llm_kwargs.update(_model_api_kwargs(
             use_responses_api=use_responses_api,
