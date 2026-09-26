@@ -1,6 +1,9 @@
 import importlib.util
+import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT_PATH = (
@@ -39,6 +42,18 @@ class MissingModelClient(FakeClient):
 class ConfigureOpenWebUITests(unittest.TestCase):
     def test_default_task_model_is_gpt_6_luna(self):
         self.assertEqual(configure_openwebui.DEFAULT_TASK_MODEL, "gpt-6-luna")
+
+    def test_service_env_can_override_legacy_exported_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text("TASK_MODEL_EXTERNAL=gpt-6-luna\n")
+            with patch.dict(
+                os.environ,
+                {"TASK_MODEL_EXTERNAL": "gpt-5.6-luna"},
+                clear=False,
+            ):
+                configure_openwebui.load_env_file(path, override=True)
+                self.assertEqual(os.environ["TASK_MODEL_EXTERNAL"], "gpt-6-luna")
 
     def test_connection_update_preserves_existing_connections(self):
         client = FakeClient(

@@ -60,8 +60,8 @@ class ApiError(RuntimeError):
         self.status = status
 
 
-def load_env_file(path: Path) -> None:
-    """Load a simple Docker-style env file without overriding exported values."""
+def load_env_file(path: Path, *, override: bool = False) -> None:
+    """Load a simple Docker-style env file."""
     if not path.exists():
         return
 
@@ -74,7 +74,8 @@ def load_env_file(path: Path) -> None:
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
-        os.environ.setdefault(key, value)
+        if override or key not in os.environ:
+            os.environ[key] = value
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -474,8 +475,8 @@ def main() -> int:
     args = parse_args()
     # Prioritize openwebui/.env and litellm/.env
     repo_root = Path(__file__).resolve().parents[2]
-    load_env_file(repo_root / "openwebui" / ".env")
-    load_env_file(repo_root / "litellm" / ".env")
+    load_env_file(repo_root / "openwebui" / ".env", override=True)
+    load_env_file(repo_root / "litellm" / ".env", override=True)
     load_env_file(args.env_file)
 
     base_url = args.base_url or os.getenv("OPENWEBUI_BASE_URL") or DEFAULT_OPENWEBUI_URL
