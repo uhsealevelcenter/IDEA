@@ -15,7 +15,7 @@
 # https://docs.litellm.ai/docs/proxy/deploy — "Deploy with Database" recommends the
 # litellm-database image, which is what's used here.
 ARG LITELLM_IMAGE=litellm-database
-ARG LITELLM_VERSION=v1.92.0
+ARG LITELLM_VERSION=v1.101.0
 
 FROM ghcr.io/berriai/${LITELLM_IMAGE}:${LITELLM_VERSION}
 
