@@ -57,6 +57,9 @@ if [[ ! -f "db/.env" || ! -f "langgraph/.env" || ! -f "openwebui/.env" ]]; then
   "${SCRIPT_DIR}/setup_env.sh" || fail "setup_env.sh failed." "Check file permissions and ensure openssl is installed."
 fi
 
+echo "    Migrating service model settings to GPT-6 where prior defaults remain..."
+python3 "${SCRIPT_DIR}/migrate_gpt6_env.py"
+
 echo "    Exporting parameters from deployment/config.yaml for '${TARGET_ENV}'..."
 eval "$(python3 "${SCRIPT_DIR}/load_env.py" "${TARGET_ENV}")" || fail "load_env.py failed." "Check deployment/config.yaml syntax."
 
@@ -158,57 +161,76 @@ current_key="$(grep -E '^LITELLM_VIRTUAL_KEY=' langgraph/.env 2>/dev/null | cut 
 
 virt_key_valid="false"
 if [[ -n "${current_key}" ]]; then
-  virt_key_valid="$(docker compose exec -T langgraph python -c "
-import urllib.request, json, os
-req = urllib.request.Request('http://litellm:8080/health/liveliness', headers={'Authorization': 'Bearer ${current_key}'})
+  # A live old key can still be restricted to retired models. Ask LiteLLM
+  # which models this key can see without putting the key in a query string.
+  if printf '%s' "${current_key}" | docker compose exec -T langgraph python -c '
+import json, sys, urllib.request
+required = {"gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "text-embedding-3-small"}
+key = sys.stdin.read().strip()
+request = urllib.request.Request(
+    "http://litellm:8080/v1/models",
+    headers={"Authorization": f"Bearer {key}"},
+)
 try:
-    with urllib.request.urlopen(req) as resp:
-        exit(0)
+    with urllib.request.urlopen(request, timeout=10) as response:
+        data = json.load(response)
+    allowed = {item.get("id") for item in data.get("data", [])}
+    raise SystemExit(0 if required <= allowed else 1)
 except Exception:
-    exit(1)
-" 2>/dev/null && echo "true" || echo "false")"
+    raise SystemExit(1)
+' 2>/dev/null; then
+    virt_key_valid="true"
+  fi
 fi
 
 if [[ "${virt_key_valid}" != "true" && -n "${litellm_master}" ]]; then
-  echo "    LITELLM_VIRTUAL_KEY is missing or invalid in database; generating new shared virtual key..."
-  new_virt_key="$(docker compose exec -T langgraph python -c "
-import urllib.request, json, time, sys
-master = '${litellm_master}'
-url = 'http://litellm:8080/key/generate'
+  echo "    LITELLM_VIRTUAL_KEY is missing or lacks GPT-6 model access; generating new shared virtual key..."
+  new_virt_key="$(docker compose exec -T litellm python -c '
+import json, os, sys, time, urllib.request
+master = os.environ.get("LITELLM_MASTER_KEY", "")
+if not master:
+    raise SystemExit("LITELLM_MASTER_KEY is missing in the LiteLLM container")
+url = "http://localhost:8080/key/generate"
 headers = {
-    'Authorization': f'Bearer {master}',
-    'Content-Type': 'application/json'
+    "Authorization": f"Bearer {master}",
+    "Content-Type": "application/json",
 }
 data = json.dumps({
-    'max_budget': 100,
-    'models': ['gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-6-astra', 'text-embedding-3-small'],
-    'key_alias': f'idea-langgraph-shared-{int(time.time())}'
+    "max_budget": 100,
+    "models": ["gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-6-astra", "text-embedding-3-small"],
+    "key_alias": f"idea-langgraph-shared-{int(time.time())}",
 }).encode()
-req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+request = urllib.request.Request(url, data=data, headers=headers, method="POST")
 try:
-    with urllib.request.urlopen(req) as resp:
-        print(json.loads(resp.read().decode()).get('key', ''))
-except Exception as e:
-    sys.stderr.write(f'LiteLLM key generation error: {e}\n')
-" | grep -E '^sk-' | head -n 1 | tr -d '\r\n' || true)"
+    with urllib.request.urlopen(request, timeout=30) as response:
+        print(json.load(response).get("key", ""))
+except Exception as exc:
+    sys.stderr.write(f"LiteLLM key generation error: {exc}\n")
+' | grep -E '^sk-' | head -n 1 | tr -d '\r\n' || true)"
 
   if [[ -n "${new_virt_key}" && "${new_virt_key}" == sk-* ]]; then
-    echo "    Generated and registered new virtual key: ${new_virt_key:0:8}..."
-    python3 -c "
+    echo "    Generated and registered a new virtual key."
+    printf '%s' "${new_virt_key}" | python3 -c '
 from pathlib import Path
-f = Path('langgraph/.env')
-if f.exists():
-    text = f.read_text()
-    lines = [f'LITELLM_VIRTUAL_KEY=${new_virt_key}' if l.startswith('LITELLM_VIRTUAL_KEY=') else l for l in text.splitlines()]
-    if not any(l.startswith('LITELLM_VIRTUAL_KEY=') for l in lines):
-        lines.append(f'LITELLM_VIRTUAL_KEY=${new_virt_key}')
-    f.write_text('\n'.join(lines) + '\n')
-"
+import sys
+key = sys.stdin.read().strip()
+file = Path("langgraph/.env")
+if file.exists():
+    lines = file.read_text().splitlines()
+    lines = [f"LITELLM_VIRTUAL_KEY={key}" if line.startswith("LITELLM_VIRTUAL_KEY=") else line for line in lines]
+    if not any(line.startswith("LITELLM_VIRTUAL_KEY=") for line in lines):
+        lines.append(f"LITELLM_VIRTUAL_KEY={key}")
+    file.write_text("\n".join(lines) + "\n")
+'
     docker compose up -d --force-recreate langgraph >/dev/null 2>&1 || true
     success "Virtual key generated and injected into LangGraph."
   else
     fail "Failed to generate LiteLLM virtual key." "Check LiteLLM master key and verify LiteLLM database connection."
   fi
+fi
+
+if [[ "${virt_key_valid}" != "true" && -z "${litellm_master}" ]]; then
+  fail "Cannot refresh LiteLLM virtual key." "Set LITELLM_MASTER_KEY in litellm/.env to grant the GPT-6 models."
 fi
 
 # 4d. Open WebUI

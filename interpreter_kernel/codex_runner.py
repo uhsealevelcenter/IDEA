@@ -80,8 +80,11 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
     api_key = str(request.get("api_key", "")).strip()
     base_url = str(request.get("base_url", "")).rstrip("/")
     model = str(request.get("model", "")).strip()
+    reasoning_effort = str(request.get("reasoning_effort", "medium")).strip().lower()
     if not api_key or not base_url or not model:
         raise ValueError("Codex model, base_url, and scoped api_key are required")
+    if reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+        raise ValueError("Unsupported Codex reasoning_effort")
 
     cwd.mkdir(parents=True, exist_ok=True)
     CODEX_HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -95,6 +98,7 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
         f"model_providers.idea.base_url={json.dumps(base_url)}",
         'model_providers.idea.env_key="IDEA_CODEX_API_KEY"',
         'model_providers.idea.wire_api="responses"',
+        f'model_reasoning_effort="{reasoning_effort}"',
         'shell_environment_policy.filters.IDEA_CODEX_API_KEY="exclude"',
     )
     client = AsyncCodex(CodexConfig(cwd=str(cwd), env=env, config_overrides=overrides))

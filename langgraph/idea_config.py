@@ -23,16 +23,16 @@ IDEA_AGENT_RUNTIME = os.getenv("IDEA_AGENT_RUNTIME", "manual").strip().lower()
 # own stable setting below so changing the primary does not silently change
 # auxiliary inference.
 IDEA_AGENT_MODEL = (
-    os.getenv("IDEA_AGENT_MODEL", "gpt-5.6-terra").strip()
-    or "gpt-5.6-terra"
+    os.getenv("IDEA_AGENT_MODEL", "gpt-6-sol").strip()
+    or "gpt-6-sol"
 )
 IDEA_AGENT_REASONING_EFFORT = (
     os.getenv("IDEA_AGENT_REASONING_EFFORT", "medium").strip().lower()
     or "medium"
 )
 IDEA_ADVANCED_AGENT_MODEL = (
-    os.getenv("IDEA_ADVANCED_AGENT_MODEL", "gpt-5.6-sol").strip()
-    or "gpt-5.6-sol"
+    os.getenv("IDEA_ADVANCED_AGENT_MODEL", "gpt-6-sol-priority").strip()
+    or "gpt-6-sol-priority"
 )
 IDEA_ADVANCED_REASONING_EFFORT = (
     os.getenv("IDEA_ADVANCED_REASONING_EFFORT", "medium").strip().lower()
@@ -51,6 +51,7 @@ IDEA_AGENT_PROFILES = {
     "standard": IdeaAgentProfile(
         model=IDEA_AGENT_MODEL,
         reasoning_effort=IDEA_AGENT_REASONING_EFFORT,
+        use_responses_api=True,
     ),
     "advanced": IdeaAgentProfile(
         model=IDEA_ADVANCED_AGENT_MODEL,
@@ -69,8 +70,8 @@ def resolve_idea_agent_profile(variant: str) -> IdeaAgentProfile:
 
 
 IDEA_TOOL_MODEL = (
-    os.getenv("IDEA_TOOL_MODEL", "gpt-5.6-terra").strip()
-    or "gpt-5.6-terra"
+    os.getenv("IDEA_TOOL_MODEL", "gpt-6-luna").strip()
+    or "gpt-6-luna"
 )
 
 
@@ -87,8 +88,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # and use a separate, revocable, model-restricted, low-budget virtual key.
 IDEA_CODEX_ENABLED = _env_bool("IDEA_CODEX_ENABLED", True)
 IDEA_CODEX_MODEL = (
-    os.getenv("IDEA_CODEX_MODEL", "gpt-5.6-terra").strip()
-    or "gpt-5.6-terra"
+    os.getenv("IDEA_CODEX_MODEL", "gpt-6-sol").strip()
+    or "gpt-6-sol"
+)
+IDEA_CODEX_REASONING_EFFORT = (
+    os.getenv("IDEA_CODEX_REASONING_EFFORT", "medium").strip().lower()
+    or "medium"
 )
 IDEA_CODEX_BASE_URL = (
     os.getenv("IDEA_CODEX_BASE_URL", "").strip()

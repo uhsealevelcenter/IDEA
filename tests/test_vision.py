@@ -560,8 +560,10 @@ class LangGraphKernelImageTests(unittest.TestCase):
             terminal_agent._prompt_cache_key("gpt-5.6-terra", "other-session"),
         )
 
-    def test_astra_uses_the_same_prompt_cache_fields_as_gpt_5_6(self):
+    def test_gpt_6_uses_the_same_prompt_cache_fields_as_gpt_5_6(self):
         self.assertTrue(terminal_agent._supports_prompt_caching("gpt-6-astra"))
+        self.assertTrue(terminal_agent._supports_prompt_caching("gpt-6-sol"))
+        self.assertTrue(terminal_agent._supports_prompt_caching("gpt-6-sol-priority"))
         message = terminal_agent._cacheable_system_message(
             "stable IDEA instructions", "gpt-6-astra"
         )

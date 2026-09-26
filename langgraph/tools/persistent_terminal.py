@@ -38,6 +38,7 @@ from idea_config import (
     IDEA_CODEX_BASE_URL,
     IDEA_CODEX_MAX_EVENTS,
     IDEA_CODEX_MODEL,
+    IDEA_CODEX_REASONING_EFFORT,
     TEMP_OUTPUT_DIR as _TEMP_OUTPUT_DIR,
 )
 
@@ -152,6 +153,7 @@ def run_codex(
         "thread_id": thread_id,
         "run_id": run_id,
         "model": IDEA_CODEX_MODEL,
+        "reasoning_effort": IDEA_CODEX_REASONING_EFFORT,
         "base_url": IDEA_CODEX_BASE_URL,
         "api_key": IDEA_CODEX_API_KEY,
         "max_events": IDEA_CODEX_MAX_EVENTS,
