@@ -77,138 +77,51 @@ Always verify critical results, especially for publication or operational decisi
 
 ## Getting Started Locally (requires Docker)
 
-### 1. Clone the Repository
+For complete deployment, environment variable descriptions, database provisioning, and production CI/CD details, see the dedicated [Deployment Guide](deployment/README.md).
 
-```bash
-git clone https://github.com/uhsealevelcenter/IDEA.git
-cd IDEA
-```
+### Quickstart Summary
 
-### 2. Configure Environment Variables
-
-Copy `example.env` to `.env` in the project root:
-
-```bash
-cp example.env .env
-```
-
-At minimum, edit `.env` and set your own values for:
-
-```ini
-# LLM provider - replace with your own key and endpoint
-# (Azure AI Foundry OpenAI-compatible endpoint, or platform.openai.com)
-OPENAI_API_KEY=YOUR_API_KEY_HERE
-OPENAI_BASE_URL=YOUR_AZURE_OPENAI_ENDPOINT_HERE
-
-# Database
-POSTGRES_DB=idea_db
-POSTGRES_USER=idea_user
-POSTGRES_PASSWORD=change_this
-LANGGRAPH_DB_PASSWORD=change_this
-
-# Durable agent memory (use exactly 16, 24, or 32 characters for AES)
-LANGGRAPH_AES_KEY=0123456789abcdef0123456789abcdef
-IDEA_IDENTITY_SECRET=change_this
-
-# Open WebUI (generate with: openssl rand -hex 32)
-WEBUI_SECRET_KEY=change_this
-
-# LiteLLM proxy (DB: openssl rand -hex 20; master: printf 'sk-'; openssl rand -hex 32)
-LITELLM_DB_PASSWORD=change_this
-LITELLM_MASTER_KEY=change_this
-
-# Langfuse LLM observability (DB: openssl rand -hex 20; the other three:
-# openssl rand -hex 32 each) - see "LLM Observability (Langfuse)" below.
-LANGFUSE_DB_PASSWORD=change_this
-LANGFUSE_NEXTAUTH_SECRET=change_this
-LANGFUSE_SALT=change_this
-LANGFUSE_ENCRYPTION_KEY=change_this
-```
-
-See `example.env` for the full list of variables and inline comments explaining each one. Several are commented out by default (`PQA_HOME`/`PAPER_DIRECTORY`, `EARTHDATA_USERNAME`/`PASSWORD`, `SECRET_KEY`, `FIRST_SUPERUSER`/`PASSWORD`, `SMTP_*`, `GUEST_*`) - these are leftover from the previous `app.py`/`auth.py`-based backend, which no longer exists in this repo; leave them commented out unless something reintroduces a consumer for them.
-
-IDEA has been tested with several LLM inference providers, including OpenAI (https://platform.openai.com/), Anthropic (https://claude.com/platform/api), and Jetstream2 (https://docs.jetstream-cloud.org/inference-service/overview/).
-
-### 3. Set Up the Service Database Roles
-
-LiteLLM, LangGraph, and Langfuse each use a separate, least-privilege Postgres
-role and schema on the shared `db` service. Run all three setup scripts once
-before starting the full stack; all are idempotent and safe to re-run:
-
-```bash
-./litellm/setup_litellm_db.sh
-./langgraph/db/setup_langgraph_db.sh
-./langfuse/setup_langfuse_db.sh
-```
-
-The LangGraph setup builds its service image and initializes the checkpoint
-tables. PostgreSQL checkpoints contain exact tool execution memory and are
-encrypted when `LANGGRAPH_AES_KEY` is set.
-
-### 4. Seed Shared Scientific Data
-
-IDEA exposes a centrally maintained, read-only `/app/data` tree to every
-user's terminal. Import the allowlisted datasets from legacy IDEA before the
-first start:
-
-```bash
-docker compose run --rm --build \
-  --volume "$(realpath ../../IDEA/data):/source:ro" \
-  shared-data import /source
-
-docker compose run --rm shared-data status
-```
-
-Only metadata, benchmarks, altimetry, and InSight data are imported. Papers,
-HCDP, SJW, `.pqa`, prompts, and every other legacy path are excluded. See
-[`shared_data/README.md`](shared_data/README.md) for updates and migration
-details.
-
-### 5. Start Local Services
-
-```bash
-docker compose up -d --build
-```
-
-`docker compose` automatically merges `docker-compose.yml` with `docker-compose.override.yml` (dev-only ports for `langgraph`/`sandbox`/`litellm`, live source mounts, and the `nginx` service) since no `-f` flags are given.
-
-### 6. One-Time Open WebUI Setup
-
-Open WebUI Functions live in its own database, not on disk, so the Pipe function that bridges chat to `langgraph` (`openwebui/functions/idea_pipe.py`) has to be registered once per Open WebUI instance:
-
-1. Open http://localhost, sign up (the first account created becomes admin).
-2. Go to **Settings > Account > API Keys** and generate a key for this admin account.
-https://docs.openwebui.com/features/authentication-access/api-keys/
-3. Register the pipe function using that key:
+1. **Clone the Repository:**
    ```bash
-   OPENWEBUI_API_KEY=<the key from step 2> ./openwebui/register_idea_pipe.sh
+   git clone https://github.com/uhsealevelcenter/IDEA.git
+   cd IDEA
    ```
-   This POSTs `openwebui/functions/idea_pipe.py` to Open WebUI's `/api/v1/functions` admin API (create-or-update + enable), so you don't have to manually copy/paste the file into **Admin Panel > Functions** every time it changes. Re-run it any time `idea_pipe.py` is edited. (You can still do this manually via **Admin Panel > Functions > "+"** if you prefer.)
-4. Configure Open WebUI's hidden external task model:
+
+2. **Configure Environment Variables:**
+   Run the setup helper to generate `.env` files with secure random keys:
    ```bash
-   ./openwebui/configure_openwebui.py
+   ./deployment/setup_env.sh
    ```
-   This idempotent deployment step adds the internal LiteLLM connection,
-   keeps `gpt-5.6-luna` hidden from the chat model selector, and persists it
-   as Open WebUI's **External Task Model**. It also enables context
-   compaction at 136,000 tokens (matching legacy IDEA's 50%-of-272,000
-   policy), raises Open WebUI's Token Cap to at least the same value while
-   preserving an existing higher cap, and installs IDEA's title-generation
-   prompt. It reads
-   `OPENWEBUI_API_KEY`, `LITELLM_MASTER_KEY`, and
-   `TASK_MODEL_EXTERNAL`, `ENABLE_CONTEXT_COMPACTION`, and
-   `CONTEXT_COMPACTION_TOKEN_THRESHOLD` from `.env`. It does **not** disable
-   Open WebUI's persistent configuration, so unrelated changes made in the
-   Admin Panel remain editable and survive restarts. Run it again after
-   deployments to reconcile the IDEA-owned settings. If
-   `OPENWEBUI_API_KEY` is unavailable or rejected, an interactive run
-   securely prompts for the Open WebUI admin login and uses a temporary JWT;
-   non-interactive deployments can provide `WEBUI_ADMIN_EMAIL` and
-   `WEBUI_ADMIN_PASSWORD` through their secret store.
-5. Deploy the official Assistants:
+   Then fill in your `OPENAI_API_KEY` and `OPENAI_BASE_URL` in `langgraph/.env` and `litellm/.env` (see [deployment/README.md](deployment/README.md) for full variable details).
+
+3. **Set Up the Service Database Roles:**
+   Initialize PostgreSQL roles and schemas for LiteLLM, LangGraph, and Langfuse in one shot:
    ```bash
-   ./assistants/deploy_assistants_openwebui.py
+   ./deployment/db/setup_all_databases.sh
    ```
+
+4. **Start Services:**
+   Load local dev parameters and run Docker Compose:
+   ```bash
+   eval "$(python3 deployment/load_env.py dev)"
+   docker compose up -d --build
+   ```
+
+5. **One-Time Open WebUI Setup:**
+   - Open http://localhost and sign up (the first user becomes admin).
+   - Generate an API key in **Settings > Account > API Keys** and set it as `OPENWEBUI_API_KEY` in `openwebui/.env`.
+   - Run the post-deployment configuration and assistant seeding scripts:
+     ```bash
+     ./deployment/post_deploy/register_idea_pipe.sh
+     ./deployment/post_deploy/configure_openwebui.py
+     ./deployment/post_deploy/deploy_assistants_openwebui.py
+     ```
+
+6. **Access the App:**
+   - Main Chat UI: http://localhost
+   - Langfuse Observability: http://localhost:3050
+
+For multi-environment configuration (`dev`, `staging`, `next-dev`, `prod`), see [deployment/README.md](deployment/README.md).
    This seeds Welcome Assistant, SEA, and Mars Assistant on the standard
    `idea-terminal-agent` base model and registers an admin-assignable Advanced
    variant. It enables private Assistant creation for
@@ -319,20 +232,15 @@ blocks or fails the underlying LLM call.
 
 ## Deploying to Production (requires Docker)
 
+Production deployment instructions, prerequisites, and automated CI/CD details are documented in [deployment/README.md](deployment/README.md) and [`docs/Quick-Deploy.md`](docs/Quick-Deploy.md).
+
+Quick summary for deploying to production manually:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+eval "$(python3 deployment/load_env.py prod)"
+docker compose up -d --build
 ```
 
-Explicit `-f` flags skip `docker-compose.override.yml`, so dev-only host ports (`langgraph`, `sandbox`, `litellm`) and the extra `nginx` service are never published. `docker-compose.prod.yml` is currently an empty overlay kept for this `-f` combo's sake (its one-time purpose - the `sandbox` `/dev/kvm` passthrough - now lives directly in `docker-compose.yml`, gated behind the `KVM_DEVICE_PATH` env var).
-
-Repeat all three database setup scripts (step 3 above) and the one-time Open
-WebUI Function setup (step 5 above) on first deploy. The `langfuse` service
-itself is not published to the host by the base `docker-compose.yml` (same as
-`langgraph`/`sandbox`/`litellm`) - route it through your reverse proxy only if
-you want production UI access to traces; `litellm` reaching it over the
-internal compose network is all that's required for tracing to work.
-
-In CI, this is what the `deploy` job in `.github/workflows/deploy.yml` runs remotely over SSH via each environment's `DEPLOY_CMD` GitHub Actions variable.
+In CI, the deploy job in `.github/workflows/deploy.yml` runs remotely over SSH via `deployment/deploy.sh <environment>`.
 
 ### Deployment Checklist (Field Notes)
 
@@ -362,9 +270,9 @@ any individual step.
    up becomes the admin account (see "One-Time Open WebUI Setup" above).
 5. **Run the one-time Open WebUI setup scripts**, which depend on the admin
    API key from step 3 being saved as `OPENWEBUI_API_KEY` in `.env`:
-   - `./openwebui/register_idea_pipe.sh`
-   - `./openwebui/configure_openwebui.py`
-   - `./assistants/deploy_assistants_openwebui.py`
+   - `./deployment/post_deploy/register_idea_pipe.sh`
+   - `./deployment/post_deploy/configure_openwebui.py`
+   - `./deployment/post_deploy/deploy_assistants_openwebui.py`
 6. **Create a LiteLLM virtual key** with access to all models and a budget
    set to $300 (or whatever your deployment needs; see the `curl` command in
    the `LITELLM_VIRTUAL_KEY` comment in `example.env`), then set it as
@@ -387,7 +295,7 @@ any individual step.
   will not work here even though the two can look similar.
 - If Open WebUI's Functions data is ever lost or the instance is redeployed
   from scratch, the IDEA Pipe needs to be re-registered by rerunning
-  `./openwebui/register_idea_pipe.sh` - Functions live in Open WebUI's own
+  `./deployment/post_deploy/register_idea_pipe.sh` - Functions live in Open WebUI's own
   database, not in this repo, so they don't come back automatically.
 - In `.env`, pin `SANDBOX_IMAGE` to a specific tag, e.g.
   `ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2` (check `example.env` for the current
@@ -424,20 +332,20 @@ What this means in practice for local dev:
 
 ```
 .
-├── docker-compose.yml             # Base service definitions (db, redis, langgraph, sandbox, litellm, openwebui)
-├── docker-compose.override.yml    # Local dev overrides (nginx, dev ports, live-reload mounts) - auto-merged
-├── docker-compose.prod.yml        # Explicit production nginx overlay; KVM configuration stays in the base file
-├── example.env                    # Template for the .env file (copy and fill in)
-├── nginx.conf                     # Dev reverse proxy in front of Open WebUI
-├── langgraph/                     # Checkpointed LangGraph runtime and TerminalAgent tools
-├── sandbox_service/               # Per-user microsandbox microVM execution service
+├── docker-compose.yml             # Unified service definitions (db, redis, langgraph, sandbox, litellm, openwebui, langfuse, nginx)
+├── deployment/                    # Multi-environment parameters and loader
+│   ├── config.yaml                # Per-environment configuration (dev, staging, next-dev, prod)
+│   └── load_env.py                # Environment loader script
+├── db/                            # PostgreSQL service Dockerfile and .env.example
+├── redis/                         # Redis service Dockerfile and .env.example
+├── nginx/                         # Nginx reverse proxy Dockerfile, configurations, and .env.example
+├── langgraph/                     # Checkpointed LangGraph runtime, tools, and .env.example
+├── sandbox_service/               # Per-user microsandbox microVM service and .env.example
 ├── interpreter_kernel/            # OCI image booted per microVM: Open Terminal + persistent Python kernel
-├── litellm/                       # LiteLLM proxy config, Dockerfile, and DB setup script
-├── langfuse/                      # Langfuse (LLM observability) DB setup script
+├── litellm/                       # LiteLLM proxy config, Dockerfile, setup script, and .env.example
+├── langfuse/                      # Langfuse LLM observability Dockerfile, DB setup scripts, and .env.example
 ├── assistants/                    # Official Assistant prompts, logos, manifest, and deployment script
-└── openwebui/                     # Open WebUI Pipe function (idea_pipe.py) wiring the chat frontend to langgraph
-    ├── functions/idea_pipe.py     # The Pipe function itself
-    └── register_idea_pipe.sh      # Registers/updates idea_pipe.py in a running Open WebUI via its admin API
+└── openwebui/                     # Open WebUI frontend Dockerfile, Pipe function, and .env.example
 ```
 
 ## Citation

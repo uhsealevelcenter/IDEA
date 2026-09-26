@@ -447,7 +447,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--env-file",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / ".env",
+        default=Path(__file__).resolve().parent.parent.parent / ".env",
         help="Docker-style environment file (default: repository .env)",
     )
     parser.add_argument("--base-url", help="Host-reachable Open WebUI URL")
@@ -472,6 +472,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    # Prioritize openwebui/.env and litellm/.env
+    repo_root = Path(__file__).resolve().parents[2]
+    load_env_file(repo_root / "openwebui" / ".env")
+    load_env_file(repo_root / "litellm" / ".env")
     load_env_file(args.env_file)
 
     base_url = args.base_url or os.getenv("OPENWEBUI_BASE_URL") or DEFAULT_OPENWEBUI_URL
