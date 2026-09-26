@@ -205,8 +205,8 @@ wiring.
 ```ini
    # Preconfigure the Langfuse project API keys. 
    # These keys are used to authenticate services connecting to Langfuse.
-   LANGFUSE_INIT_PUBLIC_KEY=generate-this
-   LANGFUSE_INIT_SECRET_KEY=generate-this
+   LANGFUSE_INIT_PROJECT_PUBLIC_KEY=generate-this
+   LANGFUSE_INIT_PROJECT_SECRET_KEY=generate-this
    
    # Configure LiteLLM to connect to the Langfuse project. 
    # The public key identifies the project. 

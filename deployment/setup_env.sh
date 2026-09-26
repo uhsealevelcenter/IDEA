@@ -298,9 +298,9 @@ DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASS}@db:5432/${PG_DB}?schema=l
 POSTGRES_SERVER=db
 POSTGRES_PORT=5432
 POSTGRES_DB=${PG_DB}
-LANGFUSE_NEXTAUTH_SECRET=${LF_NEXTAUTH}
-LANGFUSE_SALT=${LF_SALT}
-LANGFUSE_ENCRYPTION_KEY=${LF_ENC}
+NEXTAUTH_SECRET=${LF_NEXTAUTH}
+SALT=${LF_SALT}
+ENCRYPTION_KEY=${LF_ENC}
 NEXTAUTH_URL=http://localhost:3050
 AUTH_DISABLE_SIGNUP=true
 TELEMETRY_ENABLED=false
@@ -312,8 +312,8 @@ LANGFUSE_INIT_PROJECT_NAME=Idea_proj
 LANGFUSE_INIT_USER_EMAIL=admin@idea.local
 LANGFUSE_INIT_USER_NAME="Idea Admin"
 LANGFUSE_INIT_USER_PASSWORD=${LF_USER_PASS}
-LANGFUSE_INIT_PUBLIC_KEY=${LF_PUB}
-LANGFUSE_INIT_SECRET_KEY=${LF_SEC}
+LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LF_PUB}
+LANGFUSE_INIT_PROJECT_SECRET_KEY=${LF_SEC}
 EOF
   echo "  -> Created langfuse/.env"
 fi
@@ -347,8 +347,4 @@ echo ""
 echo "=========================================================================="
 echo "==> All service .env files generated successfully!"
 echo "=========================================================================="
-echo "Generated Passwords:"
-echo "  - PostgreSQL superuser (db/.env):          ${PG_PASS}"
-echo "  - OpenWebUI Admin (openwebui/.env):        ${WEBUI_PASS}"
-echo "  - Langfuse Admin (langfuse/.env):          ${LF_USER_PASS}"
-echo "=========================================================================="
+echo "Generated credentials are stored in the service .env files."

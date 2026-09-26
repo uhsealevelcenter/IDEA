@@ -108,7 +108,10 @@ if [ "${IS_ACTIVE}" != "True" ]; then
 fi
 
 # Automatically configure the INTERNAL_SERVICE_TOKEN Valve if set in the environment
-INTERNAL_TOKEN="${INTERNAL_SERVICE_TOKEN:-$(grep -E '^INTERNAL_SERVICE_TOKEN=' "${REPO_ROOT}/langgraph/.env" 2>/dev/null | cut -d= -f2- || true)}"
+# The LangGraph service env is authoritative. A legacy root .env may contain
+# an older token exported by deploy.sh, which would make chat requests return 401.
+INTERNAL_TOKEN="$(grep -E '^INTERNAL_SERVICE_TOKEN=' "${REPO_ROOT}/langgraph/.env" 2>/dev/null | cut -d= -f2- || true)"
+INTERNAL_TOKEN="${INTERNAL_TOKEN:-${INTERNAL_SERVICE_TOKEN:-}}"
 if [ -n "${INTERNAL_TOKEN}" ]; then
   echo "==> Setting INTERNAL_SERVICE_TOKEN Valve on '${FUNCTION_ID}'..."
   VALVE_PAYLOAD="$(python3 -c 'import json, sys; print(json.dumps({"INTERNAL_SERVICE_TOKEN": sys.argv[1]}))' "${INTERNAL_TOKEN}")"

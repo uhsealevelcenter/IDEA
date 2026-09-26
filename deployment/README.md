@@ -126,9 +126,9 @@ cp openwebui/.env.example openwebui/.env
 
 #### 7. `langfuse/.env` (Observability & Tracing)
 - `LANGFUSE_DB_PASSWORD`: Dedicated PostgreSQL password for the `langfuse` role and schema.
-- `LANGFUSE_NEXTAUTH_SECRET`: Secret key used by NextAuth to sign session cookies.
-- `LANGFUSE_SALT`: Salt string used for password hashing.
-- `LANGFUSE_ENCRYPTION_KEY`: 32-character AES key for encrypting stored credentials at rest.
+- `NEXTAUTH_SECRET`: Secret key used by NextAuth to sign session cookies.
+- `SALT`: Salt string used for password hashing.
+- `ENCRYPTION_KEY`: 64-character hex value (32 bytes) for encrypting stored credentials at rest.
 - `NEXTAUTH_URL`: Canonical public URL of the Langfuse service (`http://localhost:3050`).
 - `AUTH_DISABLE_SIGNUP`: Disables open account registration on the Langfuse UI (`true`).
 - `LANGFUSE_INIT_*`: Optional bootstrap variables to pre-create the organization, project, and administrator user.

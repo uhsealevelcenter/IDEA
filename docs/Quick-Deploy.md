@@ -32,8 +32,8 @@ or changing defaults.
    `LANGGRAPH_DB_PASSWORD`, `LANGGRAPH_AES_KEY`, `IDEA_IDENTITY_SECRET`,
    `LITELLM_MASTER_KEY`, `LITELLM_VIRTUAL_KEY`,
    `INTERNAL_SERVICE_TOKEN`, `LANGFUSE_DB_PASSWORD`,
-   `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_SALT`, and
-   `LANGFUSE_ENCRYPTION_KEY`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
+   `NEXTAUTH_SECRET`, `SALT`, and
+   `ENCRYPTION_KEY`; set `KVM_DEVICE_PATH=/dev/kvm` on the production
    host, keep the default `IDEA_CODEX_ENABLED=true` when the published guest
    image is selected, and review `SANDBOX_BACKEND`, `SANDBOX_IMAGE`,
    `SANDBOX_CPUS`, `SANDBOX_MEMORY_MB`, `SANDBOX_DISK_MB`, `ENABLE_SIGNUP`,
