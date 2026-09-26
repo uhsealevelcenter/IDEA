@@ -49,20 +49,20 @@ auto-discovery - they live in its own database):**
    Models, which only manages Ollama/OpenAI connections, unrelated to Pipe
    Functions.
 
-## External task model (`gpt-5.6-luna`)
+## External task model (`gpt-6-luna`)
 
 Open WebUI uses an external task model for auxiliary work such as titles,
 tags, follow-up suggestions, and search queries. IDEA keeps this separate
 from the user-facing Pipe model:
 
 - `IDEA Agent` remains the default visible chat model and uses the centrally
-  configured `IDEA_AGENT_MODEL` (`gpt-5.6-terra` with medium reasoning by
+  configured `IDEA_AGENT_MODEL` (`gpt-6-sol` with medium reasoning by
   default).
-- `IDEA Agent Advanced` uses `gpt-5.6-sol` with medium reasoning through the
+- `IDEA Agent Advanced` uses `gpt-6-sol-priority` with medium reasoning through the
   Responses API. It is publicly readable so assigned Assistants work for their
   users, but its hidden metadata keeps it available only in the admin Assistant
   base-model picker.
-- `gpt-5.6-luna` is exposed by the internal LiteLLM proxy, registered with
+- `gpt-6-luna` is exposed by the internal LiteLLM proxy, registered with
   Open WebUI, and marked hidden so it remains available to backend tasks
   without appearing in the chat model selector.
 
@@ -112,12 +112,12 @@ and reused across chats. Direct PDF attachments are additive only within the
 current chat. Guest/pending users never receive the PaperQA tool.
 
 PaperQA answer generation, evidence summaries, and agent planning all use
-`gpt-5.6-terra`; embeddings use `text-embedding-3-small`. Both routes go
+`gpt-6-luna`; embeddings use `text-embedding-3-small`. Both routes go
 through the internal LiteLLM proxy and shared virtual key. The PaperQA
 library and index live on the durable `idea_paperqa_data` volume. If an
-existing virtual key predates this integration, regenerate or update it to
-allow `gpt-5.6-terra` and `text-embedding-3-small` as documented in
-`example.env`.
+existing virtual key predates this integration, `deployment/deploy.sh` checks
+its model allowlist and generates a replacement when needed. PaperQA uses
+Chat Completions with Luna's reasoning effort set to `none` for tool calls.
 
 ## Unified IDEA and Open WebUI Skills
 
@@ -308,7 +308,7 @@ the canonical template.
   defaults to 4.
 
 - **`PQA_LLM_MODEL`** / **`PQA_EMBEDDING_MODEL`** - PaperQA model aliases;
-  default to `gpt-5.6-terra` and `text-embedding-3-small`.
+  default to `gpt-6-luna` and `text-embedding-3-small`.
 
 - **`PQA_SYNC_TIMEOUT_SECONDS`** / **`PQA_CONVERSION_TIMEOUT_SECONDS`** -
   authenticated collection/direct-document synchronization deadline and

@@ -1,12 +1,11 @@
 # LiteLLM proxy config - see litellm/Dockerfile and docker-compose.yml's
 # `litellm` service. Fronts the same Azure AI Foundry OpenAI-compatible
 # endpoint. IDEA_AGENT_MODEL selects the standard primary model;
-# gpt-5.6-sol backs the administrator-assignable Advanced variant.
+# gpt-6-sol-priority backs the administrator-assignable Advanced variant.
 
 model_list:
 
-    # Keep both primary aliases available. Switching IDEA_AGENT_MODEL between
-  # gpt-5.6-terra and gpt-5.6-sol then requires no proxy-config edit.
+  # Retained for rollback to the previous model deployments.
   - model_name: gpt-5.5
     litellm_params:
       model: openai/gpt-5.5
@@ -15,8 +14,7 @@ model_list:
     model_info:
       mode: chat
 
-  # Keep both primary aliases available. Switching IDEA_AGENT_MODEL between
-  # gpt-5.6-terra and gpt-5.6-sol then requires no proxy-config edit.
+  # Retained for rollback to the previous model deployments.
   - model_name: gpt-5.6-terra
     litellm_params:
       model: openai/gpt-5.6-terra
@@ -54,6 +52,35 @@ model_list:
     model_info:
       # Retained as an explicit Advanced-agent rollback route.
       mode: responses
+
+  # Standard IDEA Agent and IDEA Codex use Responses with medium reasoning.
+  - model_name: gpt-6-sol
+    litellm_params:
+      model: openai/gpt-6-sol
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: responses
+
+  # Azure deployment name for the priority-processing Advanced agent.
+  - model_name: gpt-6-sol-priority
+    litellm_params:
+      model: openai/gpt-6-sol-priority
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: responses
+
+  # PaperQA and Open WebUI tasks use Chat Completions. Luna requires
+  # reasoning_effort=none for function calling on that endpoint.
+  - model_name: gpt-6-luna
+    litellm_params:
+      model: openai/gpt-6-luna
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+      reasoning_effort: none
+    model_info:
+      mode: chat
 
   - model_name: text-embedding-3-small
     litellm_params:

@@ -13,19 +13,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 DB_SERVICE="${1:-db}"
 
-if [ ! -f .env ]; then
-  echo "Error: .env not found in ${REPO_ROOT} (copy example.env and fill it in first)." >&2
-  exit 1
+# Load per-service .env files (falling back to root .env if present)
+if [ -f .env ]; then
+  set -a; source .env; set +a
 fi
-
-set -a
-source .env
-set +a
+if [ -f db/.env ]; then
+  set -a; source db/.env; set +a
+fi
+if [ -f litellm/.env ]; then
+  set -a; source litellm/.env; set +a
+fi
 
 : "${POSTGRES_USER:?POSTGRES_USER not set in .env}"
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set in .env}"
@@ -33,7 +35,7 @@ set +a
 : "${LITELLM_DB_PASSWORD:?LITELLM_DB_PASSWORD not set in .env - generate one with: openssl rand -hex 20}"
 
 echo "==> Ensuring '${DB_SERVICE}' is up..."
-docker compose up -d "${DB_SERVICE}"
+docker compose up -d --quiet-pull "${DB_SERVICE}" >/dev/null 2>&1
 
 echo "==> Waiting for '${DB_SERVICE}' to accept connections..."
 tries=0
@@ -46,11 +48,11 @@ until docker compose exec -T "${DB_SERVICE}" pg_isready -U "${POSTGRES_USER}" -d
   sleep 1
 done
 
-echo "==> Applying litellm/init_litellm_db.sql to database '${POSTGRES_DB}'..."
+echo "==> Applying ${SCRIPT_DIR}/init_litellm_db.sql to database '${POSTGRES_DB}'..."
 docker compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" "${DB_SERVICE}" \
   psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 \
   -v litellm_password="${LITELLM_DB_PASSWORD}" \
   -v dbname="${POSTGRES_DB}" \
-  < litellm/init_litellm_db.sql
+  < "${SCRIPT_DIR}/init_litellm_db.sql"
 
 echo "==> litellm role + schema ready on '${DB_SERVICE}'."

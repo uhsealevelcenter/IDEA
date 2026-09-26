@@ -14,7 +14,8 @@ as Python execution.
 ## Model and endpoint policy
 
 `IDEA_CODEX_MODEL` is independently configurable and defaults to
-`gpt-5.6-terra`; changing `IDEA_AGENT_MODEL` does not silently reroute Codex.
+`gpt-6-sol` with `IDEA_CODEX_REASONING_EFFORT=medium`; changing
+`IDEA_AGENT_MODEL` does not silently reroute Codex.
 During the current developer-only rollout, blank `IDEA_CODEX_BASE_URL` and
 `IDEA_CODEX_API_KEY` values fall back to `OPENAI_BASE_URL` and
 `OPENAI_API_KEY`. This lets Codex use the same external OpenAI-compatible
