@@ -109,6 +109,11 @@ cp openwebui/.env.example openwebui/.env
 - `PQA_MAX_PDF_BYTES`: Maximum document size limit for PaperQA (default: 1 GB).
 - `SEMANTIC_SCHOLAR_API_KEY`: API key for PaperQA academic search (optional).
 
+GPT-6 requests require LiteLLM 1.101.0 or newer in both the LangGraph
+Python environment and the LiteLLM proxy image. Keep their pinned versions
+aligned so PaperQA can send Luna's `reasoning_effort=none` together with its
+Chat Completions tool calls and temperature setting.
+
 #### 5. `sandbox_service/.env` (MicroVM Execution Sandbox)
 - `KVM_DEVICE_PATH`: Host virtualization device. **Notice: Microsandbox microVMs require hardware `/dev/kvm` support on Linux (e.g. Jetstream2). On macOS or Windows, leave this as `/dev/null`, and the service will automatically fall back to the safe local terminal backend.**
 - `SANDBOX_BACKEND`: Sandbox mode (`auto`, `microsandbox`, or `local`).

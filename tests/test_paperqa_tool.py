@@ -1,8 +1,11 @@
+import json
 import sys
+import threading
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 
@@ -10,6 +13,7 @@ LANGGRAPH_DIR = Path(__file__).resolve().parents[1] / "langgraph"
 sys.path.insert(0, str(LANGGRAPH_DIR))
 
 from utils.pqa.my_pqa_settings import create_pqa_settings  # noqa: E402
+from litellm import Router  # noqa: E402
 from utils.tools.knowledge_base_tool import (  # noqa: E402
     _select_knowledge_scope,
     _selected_media_context_ids,
@@ -162,6 +166,74 @@ class PaperQAToolTests(unittest.TestCase):
 
         self.assertIn("notes.txt", payload)
         self.assertIn('"warnings"', payload)
+
+    def test_luna_reasoning_parameter_reaches_the_chat_endpoint(self):
+        """Catch LiteLLM releases that reject PaperQA's GPT-6 request."""
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                requests.append((self.path, json.loads(body)))
+                response = json.dumps({
+                    "id": "chatcmpl-paperqa-test",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "gpt-6-luna",
+                    "choices": [{
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, *_):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                settings = create_pqa_settings(root / "papers", root / "index")
+            params = dict(settings.llm_config["model_list"][0]["litellm_params"])
+            params["api_base"] = f"http://127.0.0.1:{server.server_port}/v1"
+            params["api_key"] = "local-test-key"
+            router = Router(model_list=[{
+                "model_name": settings.llm,
+                "litellm_params": params,
+            }])
+            router.completion(
+                model=settings.llm,
+                messages=[{"role": "user", "content": "Summarize the paper"}],
+                tools=[{
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "description": "Look up a paper",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(requests[0][0], "/v1/chat/completions")
+        self.assertEqual(requests[0][1]["model"], "gpt-6-luna")
+        self.assertEqual(requests[0][1]["reasoning_effort"], "none")
+        self.assertEqual(requests[0][1]["temperature"], 1)
+        self.assertEqual(requests[0][1]["tools"][0]["function"]["name"], "lookup")
 
     def test_all_roles_and_embedding_use_the_litellm_proxy(self):
         with tempfile.TemporaryDirectory() as directory:
