@@ -52,6 +52,13 @@ echo "=========================================================="
 # ------------------------------------------------------------------------------
 step "[Stage 1/5] Setting up environment configuration..."
 
+if [[ -f ".env" ]]; then
+  echo "    Migrating legacy root environment values into missing service files..."
+  python3 "${SCRIPT_DIR}/migrate_legacy_env.py" || fail \
+    "Legacy environment migration failed." \
+    "Review the root .env and service .env.example files before retrying."
+fi
+
 if [[ ! -f "db/.env" || ! -f "langgraph/.env" || ! -f "openwebui/.env" ]]; then
   echo "    Running ./deployment/setup_env.sh..."
   "${SCRIPT_DIR}/setup_env.sh" || fail "setup_env.sh failed." "Check file permissions and ensure openssl is installed."
@@ -60,15 +67,17 @@ fi
 echo "    Migrating service model settings to GPT-6 where prior defaults remain..."
 python3 "${SCRIPT_DIR}/migrate_gpt6_env.py"
 
-echo "    Exporting parameters from deployment/config.yaml for '${TARGET_ENV}'..."
-eval "$(python3 "${SCRIPT_DIR}/load_env.py" "${TARGET_ENV}")" || fail "load_env.py failed." "Check deployment/config.yaml syntax."
-
 if [ -f ./.env ]; then
   set -a
   # shellcheck disable=SC1091
   . ./.env
   set +a
 fi
+
+# Deployment parameters take precedence over legacy root values. Service
+# credentials remain in their respective env_file entries in Compose.
+echo "    Exporting parameters from deployment/config.yaml for '${TARGET_ENV}'..."
+eval "$(python3 "${SCRIPT_DIR}/load_env.py" "${TARGET_ENV}")" || fail "load_env.py failed." "Check deployment/config.yaml syntax."
 success "Environment configuration loaded."
 
 # ------------------------------------------------------------------------------
