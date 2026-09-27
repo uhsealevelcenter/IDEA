@@ -52,7 +52,7 @@ OFFICIAL_ASSISTANT_CAPABILITIES = {
     "status_updates": True,
     "memory": False,
     "builtin_tools": True,
-    "terminal": False,
+    "terminal": True,
     "usage": False,
 }
 NEW_ASSISTANT_FILE_CAPABILITIES = {
@@ -321,6 +321,7 @@ def official_assistant_payload(
     # IDEA reads original attachments in its sandbox; PaperQA owns literature
     # retrieval. Neither path needs Open WebUI's extracted text or vectors.
     meta["capabilities"] = capabilities
+    meta["terminalId"] = "idea-sandbox"
     meta["defaultFeatureIds"] = list(
         OFFICIAL_ASSISTANT_DEFAULT_FEATURE_IDS
     )
@@ -366,7 +367,9 @@ def configure_assistant_base_model(
         "file_upload": True,
         "raw_file_access": True,
         "file_context": False,
+        "terminal": True,
     }
+    meta["terminalId"] = "idea-sandbox"
     meta["profile_image_url"] = profile_image_url
     meta.pop("assistant_base_model", None)
     payload = {

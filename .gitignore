@@ -231,3 +231,4 @@ local_scripts/
 /data
 # Production TLS certificates, private keys, and ACME account material
 /certbot/
+openwebui/open-webui/
