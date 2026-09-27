@@ -21,7 +21,7 @@ if ! docker compose ps openwebui | grep -q "Up"; then
 fi
 
 echo "==> Ensuring API keys are enabled and syncing admin credentials..."
-api_key="$(docker compose exec -T openwebui python -c '
+raw_output="$(docker compose exec -T openwebui python -c '
 import sqlite3, time, uuid, asyncio, os
 from open_webui.utils.auth import get_password_hash
 
