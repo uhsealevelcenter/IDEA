@@ -22,10 +22,12 @@ fi
 
 echo "==> Ensuring API keys are enabled and syncing admin credentials..."
 raw_output="$(docker compose exec -T openwebui python -c '
-import sqlite3, time, uuid, asyncio, os
-from open_webui.utils.auth import get_password_hash
+import sqlite3, time, uuid, os, bcrypt
 
 conn = sqlite3.connect("/app/backend/data/webui.db")
+
+def hash_pwd(pwd: str) -> str:
+    return bcrypt.hashpw(pwd.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 # 1. Enable API keys in config
 conn.execute("UPDATE config SET value=\"true\" WHERE key=\"auth.enable_api_keys\"")
@@ -42,7 +44,7 @@ if not u:
         admin_pass = "admin"
     uid = str(uuid.uuid4())
     now = int(time.time())
-    hashed = asyncio.run(get_password_hash(admin_pass))
+    hashed = hash_pwd(admin_pass)
     conn.execute(
         "INSERT INTO user (id, name, email, role, profile_image_url, created_at, updated_at, last_active_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -58,15 +60,13 @@ if not u:
 uid = u[0]
 
 if admin_pass:
-    async def update_pwd():
-        hashed = await get_password_hash(admin_pass)
-        if admin_email:
-            conn.execute("UPDATE user SET email=? WHERE id=?", (admin_email, uid))
-            conn.execute("UPDATE auth SET email=?, password=? WHERE id=?", (admin_email, hashed, uid))
-        else:
-            conn.execute("UPDATE auth SET password=? WHERE id=?", (hashed, uid))
-        conn.commit()
-    asyncio.run(update_pwd())
+    hashed = hash_pwd(admin_pass)
+    if admin_email:
+        conn.execute("UPDATE user SET email=? WHERE id=?", (admin_email, uid))
+        conn.execute("UPDATE auth SET email=?, password=? WHERE id=?", (admin_email, hashed, uid))
+    else:
+        conn.execute("UPDATE auth SET password=? WHERE id=?", (hashed, uid))
+    conn.commit()
 
 new_key = "sk-" + uuid.uuid4().hex
 now = int(time.time())
