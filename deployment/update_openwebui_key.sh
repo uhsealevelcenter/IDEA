@@ -76,9 +76,11 @@ conn.execute("INSERT INTO api_key (id, user_id, key, created_at, updated_at) VAL
              (f"key_{uid}", uid, new_key, now, now))
 conn.commit()
 print(new_key)
-' 2>/dev/null || true)"
+' 2>&1 || true)"
 
-if [[ -z "${api_key}" || "${api_key}" == *"NO_ADMIN"* ]]; then
+api_key="$(python3 -c "import re, sys; m = re.search(r'sk-[a-f0-9]{32}', sys.stdin.read()); print(m.group(0) if m else '')" <<< "${raw_output}")"
+
+if [[ -z "${api_key}" ]]; then
   echo "Error: Could not generate API key. Make sure an admin account exists in Open WebUI." >&2
   exit 1
 fi
