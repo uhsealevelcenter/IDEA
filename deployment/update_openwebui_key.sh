@@ -36,8 +36,24 @@ admin_pass = os.getenv("WEBUI_ADMIN_PASSWORD", "").strip()
 
 u = conn.execute("SELECT id FROM user WHERE role=\"admin\" LIMIT 1").fetchone()
 if not u:
-    print("NO_ADMIN")
-    exit(1)
+    if not admin_email:
+        admin_email = "admin@idea.com"
+    if not admin_pass:
+        admin_pass = "admin"
+    uid = str(uuid.uuid4())
+    now = int(time.time())
+    hashed = asyncio.run(get_password_hash(admin_pass))
+    conn.execute(
+        "INSERT INTO user (id, name, email, role, profile_image_url, created_at, updated_at, last_active_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (uid, "Admin", admin_email, "admin", "/user.png", now, now, now)
+    )
+    conn.execute(
+        "INSERT INTO auth (id, email, password, active) VALUES (?, ?, ?, ?)",
+        (uid, admin_email, hashed, 1)
+    )
+    conn.commit()
+    u = (uid,)
 
 uid = u[0]
 
