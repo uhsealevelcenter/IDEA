@@ -25,7 +25,7 @@ from urllib.request import Request, urlopen
 
 DEFAULT_OPENWEBUI_URL = "http://localhost:3001"
 DEFAULT_LITELLM_URL = "http://litellm:8080/v1"
-DEFAULT_TASK_MODEL = "gpt-5.6-luna"
+DEFAULT_TASK_MODEL = "gpt-6-luna"
 DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD = 136_000
 LEGACY_LITELLM_URLS = {"http://litellm:4000/v1"}
 TITLE_GENERATION_PROMPT = """### Task:
@@ -60,8 +60,8 @@ class ApiError(RuntimeError):
         self.status = status
 
 
-def load_env_file(path: Path) -> None:
-    """Load a simple Docker-style env file without overriding exported values."""
+def load_env_file(path: Path, *, override: bool = False) -> None:
+    """Load a simple Docker-style env file."""
     if not path.exists():
         return
 
@@ -74,7 +74,8 @@ def load_env_file(path: Path) -> None:
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
-        os.environ.setdefault(key, value)
+        if override or key not in os.environ:
+            os.environ[key] = value
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -447,7 +448,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--env-file",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / ".env",
+        default=Path(__file__).resolve().parent.parent.parent / ".env",
         help="Docker-style environment file (default: repository .env)",
     )
     parser.add_argument("--base-url", help="Host-reachable Open WebUI URL")
@@ -472,6 +473,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    # Prioritize openwebui/.env and litellm/.env
+    repo_root = Path(__file__).resolve().parents[2]
+    load_env_file(repo_root / "openwebui" / ".env", override=True)
+    load_env_file(repo_root / "litellm" / ".env", override=True)
     load_env_file(args.env_file)
 
     base_url = args.base_url or os.getenv("OPENWEBUI_BASE_URL") or DEFAULT_OPENWEBUI_URL

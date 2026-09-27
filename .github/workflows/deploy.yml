@@ -59,9 +59,10 @@ jobs:
     if: needs.gate.outputs.enabled == 'true'
     permissions:
       contents: read
-      packages: read  # lets the run-scoped GITHUB_TOKEN pull private images (e.g. openwebui) referenced by DEPLOY_CMD
+      packages: read  # lets the run-scoped GITHUB_TOKEN pull private images (e.g. openwebui)
     env:
       DEPLOY_REF: ${{ github.event.inputs.ref || github.ref_name }}
+      DEPLOY_ENV: ${{ needs.select.outputs.environment }}
     steps:
       - name: Configure SSH
         run: |
@@ -86,13 +87,8 @@ jobs:
             set -euo pipefail
             APP_DIR="${{ vars.APP_DIR }}"
             DEPLOY_REF="${{ env.DEPLOY_REF }}"
-            DEPLOY_CMD="${{ vars.DEPLOY_CMD }}"
+            DEPLOY_ENV="${{ env.DEPLOY_ENV }}"
             cd "${APP_DIR}"
-
-            # Per-environment deploy command (GitHub var DEPLOY_CMD). 
-            if [ -z "${DEPLOY_CMD}" ]; then
-              echo "::error::DEPLOY_CMD is not set for this environment."; exit 1
-            fi
 
             echo "==> Fetching ${DEPLOY_REF}"
             git fetch --prune origin
@@ -107,19 +103,13 @@ jobs:
             echo "==> Logging in to ghcr.io (ephemeral, run-scoped token) to pull private image(s) (e.g. openwebui)"
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-            echo "==> Running: ${DEPLOY_CMD}"
-            bash -c "${DEPLOY_CMD}"
+            echo "==> Running deployment script for environment: ${DEPLOY_ENV}"
+            ./deployment/deploy.sh "${DEPLOY_ENV}"
 
             echo "==> Waiting for LangGraph to become healthy"
-            compose=(
-              docker compose
-              -f docker-compose.yml
-              -f docker-compose.prod.yml
-            )
-
             langgraph_ready=false
             for attempt in $(seq 1 12); do
-              if "${compose[@]}" exec -T langgraph \
+              if docker compose exec -T langgraph \
                    curl -fsS http://localhost:8010/health >/dev/null 2>&1; then
                 langgraph_ready=true
                 break
@@ -131,8 +121,8 @@ jobs:
 
             if [ "${langgraph_ready}" != "true" ]; then
               echo "::error::LangGraph failed its internal health check."
-              "${compose[@]}" ps -a langgraph
-              "${compose[@]}" logs --tail=200 --timestamps langgraph
+              docker compose ps -a langgraph
+              docker compose logs --tail=200 --timestamps langgraph
               exit 1
             fi
 

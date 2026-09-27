@@ -156,7 +156,7 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
     def test_compose_profiles_define_expected_defaults(self):
         repository = Path(__file__).resolve().parents[1]
         base = (repository / "docker-compose.yml").read_text()
-        production = (repository / "docker-compose.prod.yml").read_text()
+        deployment_config = (repository / "deployment" / "config.yaml").read_text()
 
         for setting in (
             "SANDBOX_CPUS=${SANDBOX_CPUS:-1}",
@@ -165,11 +165,11 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         ):
             self.assertIn(setting, base)
         for setting in (
-            "SANDBOX_CPUS=${SANDBOX_CPUS:-2}",
-            "SANDBOX_MEMORY_MB=${SANDBOX_MEMORY_MB:-4096}",
-            "SANDBOX_DISK_MB=${SANDBOX_DISK_MB:-10240}",
+            'SANDBOX_CPUS: "2"',
+            'SANDBOX_MEMORY_MB: "4096"',
+            'SANDBOX_DISK_MB: "10240"',
         ):
-            self.assertIn(setting, production)
+            self.assertIn(setting, deployment_config)
 
 
 if __name__ == "__main__":
