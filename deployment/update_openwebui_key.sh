@@ -82,6 +82,9 @@ api_key="$(python3 -c "import re, sys; m = re.search(r'sk-[a-f0-9]{32}', sys.std
 
 if [[ -z "${api_key}" ]]; then
   echo "Error: Could not generate API key. Make sure an admin account exists in Open WebUI." >&2
+  echo "--- Raw output from Open WebUI python exec ---" >&2
+  echo "${raw_output}" >&2
+  echo "-----------------------------------------------" >&2
   exit 1
 fi
 
