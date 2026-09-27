@@ -495,11 +495,11 @@ def main() -> int:
     args = parse_args()
     # Prioritize openwebui/.env, litellm/.env, and langgraph/.env
     repo_root = Path(__file__).resolve().parents[2]
-    load_env_file(repo_root / "openwebui" / ".env", override=True)
-    load_env_file(repo_root / "litellm" / ".env", override=True)
-    load_env_file(repo_root / "langgraph" / ".env", override=True)
-    load_env_file(repo_root / "sandbox_service" / ".env", override=True)
-    load_env_file(args.env_file)
+    load_env_file(repo_root / "openwebui" / ".env", override=False)
+    load_env_file(repo_root / "litellm" / ".env", override=False)
+    load_env_file(repo_root / "langgraph" / ".env", override=False)
+    load_env_file(repo_root / "sandbox_service" / ".env", override=False)
+    load_env_file(args.env_file, override=False)
 
     base_url = args.base_url or os.getenv("OPENWEBUI_BASE_URL") or DEFAULT_OPENWEBUI_URL
     litellm_url = (
