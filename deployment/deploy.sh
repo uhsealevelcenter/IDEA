@@ -276,7 +276,7 @@ ow_api_key="$(grep -E "^OPENWEBUI_API_KEY=" openwebui/.env 2>/dev/null | cut -d=
 
 if [[ -z "${ow_api_key}" || "${ow_api_key}" == *"your_"* ]]; then
   echo "    OPENWEBUI_API_KEY is unset; automatically generating and syncing admin API key..."
-  "${SCRIPT_DIR}/update_openwebui_key.sh" >/dev/null 2>&1 || true
+  "${SCRIPT_DIR}/update_openwebui_key.sh" || true
   ow_api_key="$(grep -E "^OPENWEBUI_API_KEY=" openwebui/.env 2>/dev/null | cut -d= -f2- || true)"
   export OPENWEBUI_API_KEY="${ow_api_key}"
 fi

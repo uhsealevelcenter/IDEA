@@ -78,6 +78,13 @@ OPEN_TERMINAL_KEY_PATH = os.getenv(
     "OPEN_TERMINAL_KEY_PATH", "/opt/oi_kernel/.open_terminal_api_key"
 )
 OPEN_TERMINAL_PORT = int(os.getenv("OPEN_TERMINAL_PORT", "8000"))
+WORKSPACE_INIT_COMMAND = (
+    'for directory in /workspace /outputs; do '
+    'if [ ! -d "$directory" ]; then '
+    'mkdir -p -- "$directory" || exit; '
+    'if id user >/dev/null 2>&1; then chown user:user -- "$directory" || exit; fi; '
+    'fi; done'
+)
 
 # Lifecycle policy: idle_timeout auto-drains (stops, does NOT delete) the
 # sandbox after this many idle seconds; max_duration is a hard lifetime cap
@@ -312,6 +319,9 @@ class MicrosandboxTerminal:
             return await Sandbox.start(self.session_id, detached=True)
 
         self._sandbox = self._run(_get_sandbox)
+        result = self._run(lambda: self._sandbox.shell(WORKSPACE_INIT_COMMAND))
+        if result.exit_code != 0:
+            raise RuntimeError(f"Sandbox workspace initialization failed: {result.stderr_text}")
 
     def run(self, command: str) -> tuple[bool, str, float]:
         """
