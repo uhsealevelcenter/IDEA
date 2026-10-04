@@ -105,11 +105,7 @@ if [[ -n "${GHCR_USER}" && -n "${GHCR_TOKEN}" ]]; then
 fi
 
 echo "    Launching containers..."
-if [[ "${TARGET_ENV}" == "dev" ]]; then
-  DOCKER_BUILDKIT=1 docker compose up -d --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for container errors."
-else
-  DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --build --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for build or container errors."
-fi
+DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --build --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for build or container errors."
 success "Docker containers started in background."
 
 # ------------------------------------------------------------------------------
