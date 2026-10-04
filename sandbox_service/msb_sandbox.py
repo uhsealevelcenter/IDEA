@@ -82,8 +82,10 @@ WORKSPACE_INIT_COMMAND = (
     'for directory in /workspace /outputs; do '
     'if [ ! -d "$directory" ]; then '
     'mkdir -p -- "$directory" || exit; '
-    'if id user >/dev/null 2>&1; then chown user:user -- "$directory" || exit; fi; '
-    'fi; done'
+    'fi; '
+    'if id user >/dev/null 2>&1; then chown -R user:user -- "$directory" 2>/dev/null || true; fi; '
+    'chmod 777 -- "$directory" 2>/dev/null || true; '
+    'done'
 )
 
 # Lifecycle policy: idle_timeout auto-drains (stops, does NOT delete) the
@@ -204,6 +206,7 @@ class MicrosandboxTerminal:
         self._sandbox = None
         self._open_terminal_key: Optional[str] = None
         self._cwd: Optional[str] = None
+        self._supports_stream: Optional[bool] = None
         self._stream_handles: dict[str, object] = {}
         self._stream_handles_lock = threading.Lock()
 
@@ -331,8 +334,10 @@ class MicrosandboxTerminal:
             (success, output, elapsed_time) tuple, matching PersistentTerminal.run().
         """
         start_time = time.time()
+        cwd = self._get_cwd()
+        cmd = f"cd {shlex.quote(cwd)} && {{ {command}\n}}"
         try:
-            output = self._exec(lambda: self._sandbox.shell(command), timeout=self._exec_timeout(command))
+            output = self._exec(lambda: self._sandbox.shell(cmd), timeout=self._exec_timeout(command))
         except Exception as e:
             elapsed_time = time.time() - start_time
             return False, f"Sandbox execution failed: {e}", elapsed_time
@@ -372,16 +377,35 @@ class MicrosandboxTerminal:
         one-chunk error payload on failure, so callers never have to
         special-case exceptions from this method.
         """
+        workspace_ensure = (
+            "import os\n"
+            "if os.path.exists('/workspace') and os.getcwd() == '/opt/oi_kernel':\n"
+            "    try:\n"
+            "        os.chdir('/workspace')\n"
+            "    except Exception:\n"
+            "        pass\n"
+        )
+        full_code = workspace_ensure + code
         tmp_path = f"/tmp/.oi_kernel_code_{uuid.uuid4().hex}.py"
         try:
-            self._exec(lambda: self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
-            output = self._exec(
-                lambda: self._sandbox.shell(
+            self._exec(lambda: self._sandbox.fs.write(tmp_path, full_code.encode("utf-8")))
+            if kernel_id == "default" and not run_id:
+                cmd = f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path}"
+            else:
+                cmd = (
                     f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path} "
                     f"--kernel-id {shlex.quote(kernel_id)} --run-id {shlex.quote(run_id)}"
-                ),
+                )
+            output = self._exec(
+                lambda: self._sandbox.shell(cmd),
                 timeout=self._exec_timeout(code),
             )
+            if output.exit_code != 0 and "usage: client.py" in (output.stdout_text or ""):
+                cmd = f"python3 {OI_KERNEL_CLIENT_PATH} --run-file {tmp_path}"
+                output = self._exec(
+                    lambda: self._sandbox.shell(cmd),
+                    timeout=self._exec_timeout(code),
+                )
         except Exception as e:
             return {"chunks": [{"type": "console", "format": "error", "content": f"Kernel exec failed: {e}"}]}
         finally:
@@ -398,6 +422,16 @@ class MicrosandboxTerminal:
             content = text or stderr or "(no output from kernel client)"
             return {"chunks": [{"type": "console", "format": "error", "content": content}]}
 
+    def _supports_streaming(self) -> bool:
+        if getattr(self, "_supports_stream", None) is None:
+            try:
+                res = self._exec(lambda: self._sandbox.shell(f"python3 {OI_KERNEL_CLIENT_PATH} --help"))
+                text = (res.stdout_text or "") + (getattr(res, "stderr_text", None) or "")
+                self._supports_stream = "--run-stream-file" in text
+            except Exception:
+                self._supports_stream = False
+        return self._supports_stream
+
     def run_python_stream(
         self,
         code: str,
@@ -406,14 +440,29 @@ class MicrosandboxTerminal:
         cancelled: Optional[Callable[[], bool]] = None,
     ):
         """Yield persistent-kernel chunks as the guest produces them."""
+        if not self._supports_streaming():
+            result = self.run_python(code, kernel_id=kernel_id, run_id=run_id)
+            for chunk in result.get("chunks", []):
+                yield chunk
+            return
+
         tmp_path = f"/tmp/.oi_kernel_code_{uuid.uuid4().hex}.py"
         events: queue.Queue = queue.Queue()
         sentinel = object()
         stderr_parts: list[bytes] = []
         exit_code = 0
 
+        workspace_ensure = (
+            "import os\n"
+            "if os.path.exists('/workspace') and os.getcwd() == '/opt/oi_kernel':\n"
+            "    try:\n"
+            "        os.chdir('/workspace')\n"
+            "    except Exception:\n"
+            "        pass\n"
+        )
+        full_code = workspace_ensure + code
         try:
-            self._exec(lambda: self._sandbox.fs.write(tmp_path, code.encode("utf-8")))
+            self._exec(lambda: self._sandbox.fs.write(tmp_path, full_code.encode("utf-8")))
         except Exception as exc:
             yield {
                 "type": "console", "format": "error",
@@ -828,14 +877,18 @@ class MicrosandboxTerminal:
     def _get_cwd(self) -> str:
         """
         Absolute working directory `shell()`/`run_python()` commands run
-        from inside this VM - baked into the guest image's `WORKDIR` (e.g.
-        `/opt/oi_kernel` for the oi-kernel image; `/` for the bare `python`
-        image). Cached after the first lookup since it's stable for the
-        VM's lifetime.
+        from inside this VM. Uses /workspace if it exists; otherwise falls back
+        to the guest image's WORKDIR. Cached after the first lookup since it's
+        stable for the VM's lifetime.
         """
         if self._cwd is None:
-            output = self._exec(lambda: self._sandbox.shell("pwd"))
-            self._cwd = (output.stdout_text or "/").strip() or "/"
+            try:
+                output = self._exec(
+                    lambda: self._sandbox.shell("if [ -d /workspace ]; then echo /workspace; else pwd; fi")
+                )
+                self._cwd = (output.stdout_text or "/workspace").strip() or "/workspace"
+            except Exception:
+                self._cwd = "/workspace"
         return self._cwd
 
     def _resolve_path(self, filepath: str) -> str:

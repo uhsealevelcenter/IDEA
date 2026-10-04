@@ -411,6 +411,12 @@ async def terminal_config():
     return {"features": {"terminal": False}}
 
 
+@app.get("/ports", dependencies=[Depends(require_internal_token)])
+async def terminal_ports():
+    """Return available ports for FileNav port preview."""
+    return {"ports": []}
+
+
 @app.get("/files/cwd", dependencies=[Depends(require_internal_token)])
 async def terminal_cwd(request: Request):
     """Return current working directory and root for FileNav."""
