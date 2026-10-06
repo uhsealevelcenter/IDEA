@@ -32,4 +32,7 @@ s = p.read_text(); \
 old = "code_interpreter:{label:a().t(\"Code Interpreter\"),description:a().t(\"Assistant can execute code and perform calculations\")},"; \
 new = "code_interpreter:{label:a().t(\"Code Interpreter\"),description:a().t(\"Assistant can execute code and perform calculations\")},terminal:{label:a().t(\"Terminal\"),description:a().t(\"Assistant can execute commands in an execution sandbox terminal\")},"; \
 assert s.count(old) == 1, "Review Capabilities terminal patch for this release"; \
-p.write_text(s.replace(old, new))'
+old_del = "delete e(t).meta.terminalId"; \
+new_del = "(e(t).meta.terminalId=e(t).meta.terminalId||\"idea-sandbox\",e(t).meta.capabilities=Object.assign(e(t).meta.capabilities||{},{terminal:!0}))"; \
+assert s.count(old_del) == 2, "Review ModelEditor terminalId save patch for this release"; \
+p.write_text(s.replace(old, new).replace(old_del, new_del))'
