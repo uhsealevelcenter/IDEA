@@ -9,7 +9,11 @@ is allowed to live - the langgraph service that calls into this over HTTP
 (see main.py) is otherwise stateless with respect to terminals.
 """
 
+import json
+import mimetypes
 import os
+import posixpath
+import shlex
 import signal
 import threading
 import time
@@ -762,3 +766,181 @@ def file_exists(filepath: str, sandbox_id: str) -> bool:
         if isinstance(terminal, MicrosandboxTerminal):
             return terminal.file_exists(filepath)
         return os.path.isfile(filepath)
+
+
+def read_file_info(filepath: str, sandbox_id: str) -> tuple[bytes, str, bool, str]:
+    """Read a file and return (raw_bytes, content_type, is_text, text_content)."""
+    raw_bytes = read_file_bytes(filepath, sandbox_id=sandbox_id)
+    content_type, _ = mimetypes.guess_type(filepath)
+    if not content_type:
+        content_type = "application/octet-stream"
+
+    is_text = False
+    text_content = ""
+    text_like = (
+        content_type.startswith("text/")
+        or content_type in ("application/json", "application/javascript", "application/xml")
+    )
+    if text_like or b"\x00" not in raw_bytes[:8192]:
+        try:
+            text_content = raw_bytes.decode("utf-8")
+            is_text = True
+        except UnicodeDecodeError:
+            try:
+                text_content = raw_bytes.decode("latin-1")
+                is_text = b"\x00" not in raw_bytes[:8192]
+            except Exception:
+                is_text = False
+
+    return raw_bytes, content_type, is_text, text_content
+
+
+def list_files(directory: str, sandbox_id: str) -> dict:
+    """List directory entries (matching Open Terminal API schema: {entries: [...], writable: True})."""
+    directory = directory.strip() or "/workspace"
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if isinstance(terminal, MicrosandboxTerminal):
+            try:
+                res = terminal._open_terminal_get("/files/list", {"directory": directory})
+                if isinstance(res, dict) and "entries" in res:
+                    return res
+            except Exception:
+                pass
+
+        # Direct filesystem access for local PersistentTerminal or fallback
+        entries = []
+        try:
+            os.makedirs(directory, exist_ok=True)
+            for entry in os.scandir(directory):
+                try:
+                    stat = entry.stat(follow_symlinks=False)
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                    entries.append({
+                        "name": entry.name,
+                        "type": "directory" if is_dir else "file",
+                        "size": 0 if is_dir else stat.st_size,
+                        "modified": int(stat.st_mtime),
+                        "writable": os.access(entry.path, os.W_OK),
+                    })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return {
+            "entries": sorted(entries, key=lambda x: (x["type"] != "directory", x["name"].lower())),
+            "writable": True,
+        }
+
+
+def search_files(
+    query: str,
+    directory: str,
+    sandbox_id: str,
+    limit: int = 50,
+    type_: str = "any",
+    show_hidden: bool = False,
+) -> list[dict]:
+    """Search files by name inside the sandbox directory."""
+    directory = directory.strip() or "/workspace"
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if isinstance(terminal, MicrosandboxTerminal):
+            try:
+                res = terminal._open_terminal_get(
+                    "/files/search",
+                    {
+                        "query": query,
+                        "path": directory,
+                        "limit": limit,
+                        "type": type_,
+                        "show_hidden": str(show_hidden).lower(),
+                    },
+                )
+                if isinstance(res, dict) and "results" in res:
+                    return res["results"]
+            except Exception:
+                pass
+
+        results = []
+        q = query.lower()
+        try:
+            if os.path.exists(directory):
+                for root, dirs, files in os.walk(directory):
+                    items = dirs + files
+                    for name in items:
+                        if not show_hidden and name.startswith("."):
+                            continue
+                        if not q or q in name.lower():
+                            full_path = os.path.join(root, name)
+                            is_dir = os.path.isdir(full_path)
+                            if type_ == "file" and is_dir:
+                                continue
+                            if type_ == "directory" and not is_dir:
+                                continue
+                            try:
+                                stat = os.stat(full_path)
+                                results.append({
+                                    "path": full_path,
+                                    "name": name,
+                                    "type": "directory" if is_dir else "file",
+                                    "size": 0 if is_dir else stat.st_size,
+                                    "modified": int(stat.st_mtime),
+                                })
+                            except Exception:
+                                pass
+                            if len(results) >= limit:
+                                return results
+        except Exception:
+            pass
+        return results
+
+
+def create_directory(directory: str, sandbox_id: str) -> bool:
+    """Create directory in the sandbox."""
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if isinstance(terminal, MicrosandboxTerminal):
+            cmd = f"mkdir -p {shlex.quote(directory)}"
+            success, _, _ = terminal.run(cmd)
+            return success
+        try:
+            os.makedirs(directory, exist_ok=True)
+            return True
+        except Exception:
+            return False
+
+
+def delete_entry(path: str, sandbox_id: str) -> bool:
+    """Delete a file or directory in the sandbox."""
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if isinstance(terminal, MicrosandboxTerminal):
+            cmd = f"rm -rf {shlex.quote(path)}"
+            success, _, _ = terminal.run(cmd)
+            return success
+        try:
+            if os.path.isdir(path):
+                import shutil
+                shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.remove(path)
+            return True
+        except Exception:
+            return False
+
+
+def move_entry(source: str, destination: str, sandbox_id: str) -> bool:
+    """Move or rename a file or directory in the sandbox."""
+    terminal = _get_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        if isinstance(terminal, MicrosandboxTerminal):
+            cmd = f"mv {shlex.quote(source)} {shlex.quote(destination)}"
+            success, _, _ = terminal.run(cmd)
+            return success
+        try:
+            import shutil
+            shutil.move(source, destination)
+            return True
+        except Exception:
+            return False

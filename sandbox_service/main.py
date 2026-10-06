@@ -10,6 +10,7 @@ to terminal/sandbox execution.
 import asyncio
 import hmac
 import os
+import posixpath
 import json
 import tempfile
 from typing import Literal, Optional
@@ -383,6 +384,180 @@ async def destroy_sandbox(sandbox_id: str):
     """Permanently delete this sandbox - NOT resumable."""
     destroyed = await asyncio.to_thread(registry.destroy_terminal, sandbox_id)
     return {"ok": True, "destroyed": destroyed}
+
+
+# ---------------------------------------------------------------------------
+# Open Terminal compatible endpoints for Open WebUI FileNav integration
+# ---------------------------------------------------------------------------
+
+
+def get_request_sandbox_id(request: Request) -> str:
+    user_id = request.headers.get("X-User-Id")
+    if user_id:
+        return user_id.strip()
+    session_id = request.headers.get("X-Session-Id")
+    if session_id:
+        return session_id.strip()
+    query_session = request.query_params.get("session_id")
+    if query_session:
+        return query_session.strip()
+    return "default"
+
+
+@app.get("/api/config", dependencies=[Depends(require_internal_token)])
+@app.get("/config", dependencies=[Depends(require_internal_token)])
+async def terminal_config():
+    """Verify endpoint for Open WebUI terminal connection."""
+    return {"features": {"terminal": False}}
+
+
+@app.get("/ports", dependencies=[Depends(require_internal_token)])
+async def terminal_ports():
+    """Return available ports for FileNav port preview."""
+    return {"ports": []}
+
+
+@app.get("/files/cwd", dependencies=[Depends(require_internal_token)])
+async def terminal_cwd(request: Request):
+    """Return current working directory and root for FileNav."""
+    return {
+        "cwd": "/workspace",
+        "home": "/workspace",
+        "root": {
+            "path": "/",
+            "label": "Root",
+        },
+    }
+
+
+@app.get("/files/list", dependencies=[Depends(require_internal_token)])
+async def terminal_list_files(request: Request, directory: str = "/workspace"):
+    sandbox_id = get_request_sandbox_id(request)
+    result = await asyncio.to_thread(registry.list_files, directory, sandbox_id)
+    return result
+
+
+@app.get("/files/read", dependencies=[Depends(require_internal_token)])
+async def terminal_read_file(request: Request, path: str):
+    sandbox_id = get_request_sandbox_id(request)
+    try:
+        data, content_type, is_text, text_content = await asyncio.to_thread(
+            registry.read_file_info, path, sandbox_id
+        )
+        if is_text:
+            lines = len(text_content.splitlines())
+            return {"path": path, "total_lines": lines, "content": text_content}
+        return Response(content=data, media_type=content_type)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/files/view", dependencies=[Depends(require_internal_token)])
+async def terminal_view_file(request: Request, path: str, preview: bool = False):
+    sandbox_id = get_request_sandbox_id(request)
+    try:
+        data, content_type, _, _ = await asyncio.to_thread(
+            registry.read_file_info, path, sandbox_id
+        )
+        return Response(content=data, media_type=content_type)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/files/serve/{path:path}", dependencies=[Depends(require_internal_token)])
+async def terminal_serve_file(request: Request, path: str):
+    """Serve files directly with proper content-type for FileNav HTML iframe previews."""
+    sandbox_id = get_request_sandbox_id(request)
+    if not path.startswith("/"):
+        path = "/" + path
+    try:
+        data, content_type, _, _ = await asyncio.to_thread(
+            registry.read_file_info, path, sandbox_id
+        )
+        return Response(content=data, media_type=content_type)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/files/download", dependencies=[Depends(require_internal_token)])
+async def terminal_download_file(request: Request, path: str):
+    sandbox_id = get_request_sandbox_id(request)
+    try:
+        data, content_type, _, _ = await asyncio.to_thread(
+            registry.read_file_info, path, sandbox_id
+        )
+        filename = posixpath.basename(path) or "download"
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/files/search", dependencies=[Depends(require_internal_token)])
+async def terminal_search_files(
+    request: Request,
+    query: str = "",
+    path: str = "/outputs",
+    limit: int = 50,
+    type: str = "any",
+    show_hidden: bool = False,
+):
+    sandbox_id = get_request_sandbox_id(request)
+    results = await asyncio.to_thread(
+        registry.search_files,
+        query,
+        path,
+        sandbox_id,
+        limit,
+        type,
+        show_hidden,
+    )
+    return {"results": results}
+
+
+class MkdirPayload(BaseModel):
+    path: str
+
+
+@app.post("/files/mkdir", dependencies=[Depends(require_internal_token)])
+async def terminal_mkdir(request: Request, body: MkdirPayload):
+    sandbox_id = get_request_sandbox_id(request)
+    ok = await asyncio.to_thread(registry.create_directory, body.path, sandbox_id)
+    return {"ok": ok}
+
+
+class DeletePayload(BaseModel):
+    path: str
+
+
+@app.delete("/files/delete", dependencies=[Depends(require_internal_token)])
+async def terminal_delete(request: Request, body: DeletePayload):
+    sandbox_id = get_request_sandbox_id(request)
+    ok = await asyncio.to_thread(registry.delete_entry, body.path, sandbox_id)
+    return {"ok": ok}
+
+
+class MovePayload(BaseModel):
+    source: str
+    destination: str
+
+
+@app.post("/files/move", dependencies=[Depends(require_internal_token)])
+async def terminal_move(request: Request, body: MovePayload):
+    sandbox_id = get_request_sandbox_id(request)
+    ok = await asyncio.to_thread(registry.move_entry, body.source, body.destination, sandbox_id)
+    return {"ok": ok}
 
 
 if __name__ == "__main__":

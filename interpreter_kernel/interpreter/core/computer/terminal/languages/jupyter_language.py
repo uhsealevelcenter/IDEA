@@ -101,6 +101,12 @@ matplotlib.use('{backend}')
         code = """
 %matplotlib inline
 import matplotlib.pyplot as plt
+import os
+if os.path.exists('/workspace') and os.getcwd() == '/opt/oi_kernel':
+    try:
+        os.chdir('/workspace')
+    except Exception:
+        pass
 """.strip()
 
         for _ in self.run(code):
