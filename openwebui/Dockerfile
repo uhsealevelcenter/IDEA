@@ -23,3 +23,13 @@ new2 = "{try{const _r=await fetch(\"/api/v1/terminals/\",{headers:{Authorization
 assert s.count(old2) == 1, "Review layout terminalServers patch for this release"; \
 s = s.replace(old2, new2); \
 p.write_text(s)'
+
+# Expose Terminal capability in Model Workspace editor so terminalId is preserved on assistant save/clone.
+RUN python -c '\
+from pathlib import Path; \
+p = Path("/app/build/_app/immutable/chunks/DHZ8VSvu.js"); \
+s = p.read_text(); \
+old = "code_interpreter:{label:a().t(\"Code Interpreter\"),description:a().t(\"Assistant can execute code and perform calculations\")},"; \
+new = "code_interpreter:{label:a().t(\"Code Interpreter\"),description:a().t(\"Assistant can execute code and perform calculations\")},terminal:{label:a().t(\"Terminal\"),description:a().t(\"Assistant can execute commands in an execution sandbox terminal\")},"; \
+assert s.count(old) == 1, "Review Capabilities terminal patch for this release"; \
+p.write_text(s.replace(old, new))'

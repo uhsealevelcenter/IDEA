@@ -59,6 +59,7 @@ NEW_ASSISTANT_FILE_CAPABILITIES = {
     "file_upload": True,
     "raw_file_access": True,
     "file_context": False,
+    "terminal": True,
 }
 OFFICIAL_ASSISTANT_DEFAULT_FEATURE_IDS: list[str] = []
 OFFICIAL_ASSISTANT_BUILTIN_TOOLS = {
@@ -504,7 +505,7 @@ def configure_new_assistant_defaults(
     client: OpenWebUIClient,
     dry_run: bool,
 ) -> str:
-    """Make future Assistants use IDEA's raw-file upload path by default."""
+    """Make future Assistants use IDEA's raw-file upload path and sandbox terminal by default."""
     config = client.get("/api/v1/configs/models")
     metadata = dict(config.get("DEFAULT_MODEL_METADATA") or {})
     capabilities = dict(metadata.get("capabilities") or {})
@@ -512,10 +513,11 @@ def configure_new_assistant_defaults(
         **capabilities,
         **NEW_ASSISTANT_FILE_CAPABILITIES,
     }
-    if updated_capabilities == capabilities:
+    if updated_capabilities == capabilities and metadata.get("terminalId") == "idea-sandbox":
         return "unchanged"
 
     metadata["capabilities"] = updated_capabilities
+    metadata["terminalId"] = "idea-sandbox"
     config["DEFAULT_MODEL_METADATA"] = metadata
     if not dry_run:
         client.post("/api/v1/configs/models", config)

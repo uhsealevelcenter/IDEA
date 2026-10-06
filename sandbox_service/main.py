@@ -468,6 +468,23 @@ async def terminal_view_file(request: Request, path: str, preview: bool = False)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/files/serve/{path:path}", dependencies=[Depends(require_internal_token)])
+async def terminal_serve_file(request: Request, path: str):
+    """Serve files directly with proper content-type for FileNav HTML iframe previews."""
+    sandbox_id = get_request_sandbox_id(request)
+    if not path.startswith("/"):
+        path = "/" + path
+    try:
+        data, content_type, _, _ = await asyncio.to_thread(
+            registry.read_file_info, path, sandbox_id
+        )
+        return Response(content=data, media_type=content_type)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/files/download", dependencies=[Depends(require_internal_token)])
 async def terminal_download_file(request: Request, path: str):
     sandbox_id = get_request_sandbox_id(request)
