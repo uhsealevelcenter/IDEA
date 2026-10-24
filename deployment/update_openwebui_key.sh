@@ -21,11 +21,13 @@ if ! docker compose ps openwebui | grep -q "Up"; then
 fi
 
 echo "==> Ensuring API keys are enabled and syncing admin credentials..."
-api_key="$(docker compose exec -T openwebui python -c '
-import sqlite3, time, uuid, asyncio, os
-from open_webui.utils.auth import get_password_hash
+raw_output="$(docker compose exec -T openwebui python -c '
+import sqlite3, time, uuid, os, bcrypt
 
 conn = sqlite3.connect("/app/backend/data/webui.db")
+
+def hash_pwd(pwd: str) -> str:
+    return bcrypt.hashpw(pwd.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 # 1. Enable API keys in config
 conn.execute("UPDATE config SET value=\"true\" WHERE key=\"auth.enable_api_keys\"")
@@ -36,21 +38,35 @@ admin_pass = os.getenv("WEBUI_ADMIN_PASSWORD", "").strip()
 
 u = conn.execute("SELECT id FROM user WHERE role=\"admin\" LIMIT 1").fetchone()
 if not u:
-    print("NO_ADMIN")
-    exit(1)
+    if not admin_email:
+        admin_email = "admin@idea.com"
+    if not admin_pass:
+        admin_pass = "admin"
+    uid = str(uuid.uuid4())
+    now = int(time.time())
+    hashed = hash_pwd(admin_pass)
+    conn.execute(
+        "INSERT INTO user (id, name, email, role, profile_image_url, created_at, updated_at, last_active_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (uid, "Admin", admin_email, "admin", "/user.png", now, now, now)
+    )
+    conn.execute(
+        "INSERT INTO auth (id, email, password, active) VALUES (?, ?, ?, ?)",
+        (uid, admin_email, hashed, 1)
+    )
+    conn.commit()
+    u = (uid,)
 
 uid = u[0]
 
 if admin_pass:
-    async def update_pwd():
-        hashed = await get_password_hash(admin_pass)
-        if admin_email:
-            conn.execute("UPDATE user SET email=? WHERE id=?", (admin_email, uid))
-            conn.execute("UPDATE auth SET email=?, password=? WHERE id=?", (admin_email, hashed, uid))
-        else:
-            conn.execute("UPDATE auth SET password=? WHERE id=?", (hashed, uid))
-        conn.commit()
-    asyncio.run(update_pwd())
+    hashed = hash_pwd(admin_pass)
+    if admin_email:
+        conn.execute("UPDATE user SET email=? WHERE id=?", (admin_email, uid))
+        conn.execute("UPDATE auth SET email=?, password=? WHERE id=?", (admin_email, hashed, uid))
+    else:
+        conn.execute("UPDATE auth SET password=? WHERE id=?", (hashed, uid))
+    conn.commit()
 
 new_key = "sk-" + uuid.uuid4().hex
 now = int(time.time())
@@ -60,10 +76,15 @@ conn.execute("INSERT INTO api_key (id, user_id, key, created_at, updated_at) VAL
              (f"key_{uid}", uid, new_key, now, now))
 conn.commit()
 print(new_key)
-' 2>/dev/null || true)"
+' 2>&1 || true)"
 
-if [[ -z "${api_key}" || "${api_key}" == *"NO_ADMIN"* ]]; then
+api_key="$(python3 -c "import re, sys; m = re.search(r'sk-[a-f0-9]{32}', sys.stdin.read()); print(m.group(0) if m else '')" <<< "${raw_output}")"
+
+if [[ -z "${api_key}" ]]; then
   echo "Error: Could not generate API key. Make sure an admin account exists in Open WebUI." >&2
+  echo "--- Raw output from Open WebUI python exec ---" >&2
+  echo "${raw_output}" >&2
+  echo "-----------------------------------------------" >&2
   exit 1
 fi
 
