@@ -49,3 +49,4 @@ prod:
   REDIS_HOST_PORT: "127.0.0.1:6380:6379"
   NGINX_PORT_HTTPS: "443"
   NGINX_HTTPS_CONF: "./nginx/nginx-https-prod.conf"
+  LANGFUSE_HOST_PORT: "0.0.0.0:3050:3000"
