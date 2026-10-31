@@ -279,7 +279,7 @@ class MicrosandboxTerminal:
 
     def _connect_or_create(self):
         from microsandbox import Image, Sandbox
-        from microsandbox.errors import SandboxNotFoundError
+        from microsandbox.errors import SandboxNotFoundError, SandboxStillRunningError
 
         async def _get_sandbox():
             # Explicitly branch on the sandbox's actual current state
@@ -319,7 +319,10 @@ class MicrosandboxTerminal:
                 return await handle.connect()
             # Resumes an existing stopped-but-not-removed sandbox of this
             # name with its filesystem state intact.
-            return await Sandbox.start(self.session_id, detached=True)
+            try:
+                return await Sandbox.start(self.session_id, detached=True)
+            except SandboxStillRunningError:
+                return await handle.connect()
 
         self._sandbox = self._run(_get_sandbox)
         result = self._run(lambda: self._sandbox.shell(WORKSPACE_INIT_COMMAND))
@@ -835,6 +838,8 @@ class MicrosandboxTerminal:
             parsed = {"raw": body}
 
         if status_code >= 400:
+            if status_code == 401:
+                self._open_terminal_key = None
             detail = parsed.get("detail", body) if isinstance(parsed, dict) else body
             raise RuntimeError(f"Open Terminal {path} returned {status_code}: {detail}")
         return parsed
