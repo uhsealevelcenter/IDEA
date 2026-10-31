@@ -34,6 +34,25 @@ class MigrateGpt6EnvTests(unittest.TestCase):
         self.assertIn("IDEA_CODEX_MODEL=gpt-6-sol\n", result)
         self.assertIn("IDEA_CODEX_REASONING_EFFORT=medium\n", result)
 
+    def test_migrates_legacy_slim_sandbox_image_to_research_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text(
+                "SANDBOX_IMAGE=ghcr.io/uhsealevelcenter/idea-oi-kernel:slim\n"
+                "INTERNAL_SERVICE_TOKEN=keep-me\n"
+            )
+            changed = migration.migrate(
+                path, migration.MIGRATIONS["sandbox_service/.env"]
+            )
+            result = path.read_text()
+
+        self.assertEqual(changed, ["SANDBOX_IMAGE"])
+        self.assertIn(
+            "SANDBOX_IMAGE=ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2\n",
+            result,
+        )
+        self.assertIn("INTERNAL_SERVICE_TOKEN=keep-me\n", result)
+
 
 if __name__ == "__main__":
     unittest.main()

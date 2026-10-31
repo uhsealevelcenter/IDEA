@@ -86,7 +86,7 @@ if [[ -z "${GHCR_USER}" && -t 0 ]]; then
 fi
 
 if [[ -n "${GHCR_USER}" && -n "${GHCR_TOKEN}" ]]; then
-  SANDBOX_IMG="ghcr.io/uhsealevelcenter/idea-oi-kernel:slim"
+  SANDBOX_IMG="ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2"
 else
   SANDBOX_IMG="python"
 fi

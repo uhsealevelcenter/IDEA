@@ -118,7 +118,7 @@ Chat Completions tool calls and temperature setting.
 - `KVM_DEVICE_PATH`: Host virtualization device. **Notice: Microsandbox microVMs require hardware `/dev/kvm` support on Linux (e.g. Jetstream2). On macOS or Windows, leave this as `/dev/null`, and the service will automatically fall back to the safe local terminal backend.**
 - `SANDBOX_BACKEND`: Sandbox mode (`auto`, `microsandbox`, or `local`).
 - `SANDBOX_CPUS` / `SANDBOX_MEMORY_MB` / `SANDBOX_DISK_MB`: Hardware resource limits allocated per microVM (overridden per environment via `deployment/config.yaml`).
-- `SANDBOX_IMAGE`: OCI container image booted for user sessions (`ghcr.io/uhsealevelcenter/idea-oi-kernel:slim`).
+- `SANDBOX_IMAGE`: OCI container image booted for user sessions (`ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2`).
 - `GHCR_USERNAME` / `GHCR_PAT`: GitHub Container Registry credentials if pulling private sandbox images.
 - `INTERNAL_SERVICE_TOKEN`: Must match the `INTERNAL_SERVICE_TOKEN` set in `langgraph/.env`.
 - `SANDBOX_IDLE_TIMEOUT_SECONDS`: Seconds of inactivity before an idle microVM is suspended.

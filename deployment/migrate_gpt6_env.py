@@ -22,6 +22,12 @@ MIGRATIONS = {
     "openwebui/.env": {
         "TASK_MODEL_EXTERNAL": ("gpt-6-luna", {"gpt-5.6-luna"}),
     },
+    "sandbox_service/.env": {
+        "SANDBOX_IMAGE": (
+            "ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2",
+            {"ghcr.io/uhsealevelcenter/idea-oi-kernel:slim"},
+        ),
+    },
 }
 
 
