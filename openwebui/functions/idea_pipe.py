@@ -1194,6 +1194,20 @@ class Pipe:
             ):
                 yield translated
 
+        if __event_emitter__ and pending_files:
+            latest_file = pending_files[-1]
+            filepath = latest_file.get("filename")
+            if filepath:
+                try:
+                    await __event_emitter__({
+                        "type": "terminal:display_file",
+                        "data": {
+                            "path": filepath,
+                        },
+                    })
+                except Exception:
+                    pass
+
         if not status_done:
             await emit_status({
                 "action": "idea_agent",

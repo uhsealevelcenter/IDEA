@@ -443,6 +443,26 @@ def configure_native_code_execution(
         raise RuntimeError("Code Interpreter enabled-state verification failed")
 
 
+def configure_terminal_server(
+    client: OpenWebUIClient,
+    terminal_url: str,
+    internal_service_token: str,
+) -> None:
+    """Register the sandbox as a terminal server connection in Open WebUI."""
+    connection = {
+        "id": "idea-sandbox",
+        "name": "IDEA Sandbox",
+        "url": terminal_url,
+        "key": internal_service_token,
+        "auth_type": "bearer",
+        "enabled": True,
+    }
+    client.post(
+        "/api/v1/configs/terminal_servers",
+        {"TERMINAL_SERVER_CONNECTIONS": [connection]},
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -473,11 +493,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    # Prioritize openwebui/.env and litellm/.env
+    # Prioritize openwebui/.env, litellm/.env, and langgraph/.env
     repo_root = Path(__file__).resolve().parents[2]
-    load_env_file(repo_root / "openwebui" / ".env", override=True)
-    load_env_file(repo_root / "litellm" / ".env", override=True)
-    load_env_file(args.env_file)
+    load_env_file(repo_root / "openwebui" / ".env", override=False)
+    load_env_file(repo_root / "litellm" / ".env", override=False)
+    load_env_file(repo_root / "langgraph" / ".env", override=False)
+    load_env_file(repo_root / "sandbox_service" / ".env", override=False)
+    load_env_file(args.env_file, override=False)
 
     base_url = args.base_url or os.getenv("OPENWEBUI_BASE_URL") or DEFAULT_OPENWEBUI_URL
     litellm_url = (
@@ -525,6 +547,14 @@ def main() -> int:
         client,
         compaction_enabled,
         compaction_threshold,
+    )
+    sandbox_service_url = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox:8020").rstrip("/")
+    internal_service_token = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+    print(f"Configuring Open WebUI terminal server connection {sandbox_service_url!r}...")
+    configure_terminal_server(
+        client,
+        sandbox_service_url,
+        internal_service_token,
     )
     print(
         f"Done: {task_model!r} is the hidden External Task Model; "

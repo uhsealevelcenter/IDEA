@@ -29,7 +29,8 @@ RUN apt-get update && apt-get install -y \
 # image still builds and runs on Mac dev machines via the local-shell
 # fallback - real KVM-capable hosts (e.g. a Jetstream2 VM) still get a
 # working microsandbox install.
-RUN curl -fsSL https://install.microsandbox.dev | sh || echo "⚠️  microsandbox install failed (expected on hosts without a working aarch64 build, e.g. Apple Silicon Mac) - continuing; will fall back to the local shell backend at runtime."
+ARG MSB_VERSION=v0.7.2
+RUN curl -fsSL https://install.microsandbox.dev | sed "s|VERSION=\$(curl.*)|VERSION=\${MSB_VERSION}|" | sh || echo "⚠️  microsandbox install failed (expected on hosts without a working aarch64 build, e.g. Apple Silicon Mac) - continuing; will fall back to the local shell backend at runtime."
 ENV PATH="/root/.microsandbox/bin:/root/.local/bin:${PATH}"
 
 # Copy requirements first for better caching

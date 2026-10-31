@@ -509,12 +509,15 @@ class DeployAssistantsTests(unittest.TestCase):
         self.assertTrue(capabilities["file_upload"])
         self.assertTrue(capabilities["raw_file_access"])
         self.assertFalse(capabilities["file_context"])
+        self.assertTrue(capabilities["terminal"])
+        self.assertEqual(payload["DEFAULT_MODEL_METADATA"]["terminalId"], "idea-sandbox")
 
     def test_new_assistant_defaults_are_idempotent(self):
         client = FakeClient(
             responses={
                 "/api/v1/configs/models": {
                     "DEFAULT_MODEL_METADATA": {
+                        "terminalId": "idea-sandbox",
                         "capabilities": {
                             **deploy.NEW_ASSISTANT_FILE_CAPABILITIES,
                             "vision": True,

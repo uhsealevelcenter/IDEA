@@ -344,6 +344,23 @@ Generate a concise 3–5 word title summarizing the chat history.
             payload["access_grants"],
         )
 
+    def test_configure_terminal_server_registers_sandbox_connection(self):
+        client = FakeClient()
+        configure_openwebui.configure_terminal_server(
+            client,
+            "http://sandbox:8020",
+            "test-token",
+        )
+        self.assertEqual(len(client.posts), 1)
+        path, payload = client.posts[0]
+        self.assertEqual(path, "/api/v1/configs/terminal_servers")
+        connections = payload.get("TERMINAL_SERVER_CONNECTIONS") or []
+        self.assertEqual(len(connections), 1)
+        self.assertEqual(connections[0]["id"], "idea-sandbox")
+        self.assertEqual(connections[0]["url"], "http://sandbox:8020")
+        self.assertEqual(connections[0]["key"], "test-token")
+        self.assertTrue(connections[0]["enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

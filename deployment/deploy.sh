@@ -105,11 +105,7 @@ if [[ -n "${GHCR_USER}" && -n "${GHCR_TOKEN}" ]]; then
 fi
 
 echo "    Launching containers..."
-if [[ "${TARGET_ENV}" == "dev" ]]; then
-  DOCKER_BUILDKIT=1 docker compose up -d --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for container errors."
-else
-  DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --build --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for build or container errors."
-fi
+DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --build --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for build or container errors."
 success "Docker containers started in background."
 
 # ------------------------------------------------------------------------------
@@ -276,7 +272,7 @@ ow_api_key="$(grep -E "^OPENWEBUI_API_KEY=" openwebui/.env 2>/dev/null | cut -d=
 
 if [[ -z "${ow_api_key}" || "${ow_api_key}" == *"your_"* ]]; then
   echo "    OPENWEBUI_API_KEY is unset; automatically generating and syncing admin API key..."
-  "${SCRIPT_DIR}/update_openwebui_key.sh" >/dev/null 2>&1 || true
+  "${SCRIPT_DIR}/update_openwebui_key.sh" || true
   ow_api_key="$(grep -E "^OPENWEBUI_API_KEY=" openwebui/.env 2>/dev/null | cut -d= -f2- || true)"
   export OPENWEBUI_API_KEY="${ow_api_key}"
 fi

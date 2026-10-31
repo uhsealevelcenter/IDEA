@@ -133,6 +133,7 @@ general_settings:
 litellm_settings:
   set_verbose: false # Disable debug logging in production.
   json_logs: true # Structured (JSON) logs.
+  drop_params: true
   # Send every request/response (langgraph's TerminalAgent, PaperQA, and Open
   # WebUI's background-task model all route through this proxy - see
   # docker-compose.yml's `litellm` service) to the self-hosted `langfuse`
