@@ -282,11 +282,7 @@ if [[ -n "${ow_api_key}" && "${ow_api_key}" != *"your_"* ]]; then
   OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/register_idea_pipe.sh" || fail "Failed to register IDEA pipe." "Check OPENWEBUI_API_KEY validity or ensure the admin user exists."
   OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/configure_openwebui.py" || fail "Failed to configure Open WebUI settings." "Check LiteLLM connection."
   
-  if [[ "${TARGET_ENV}" == "prod" ]]; then
-    OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/deploy_assistants_openwebui.py" --reconcile || fail "Failed to seed assistants." "Check assistants/manifest.json."
-  else
-    OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/deploy_assistants_openwebui.py" || fail "Failed to seed assistants." "Check assistants/manifest.json."
-  fi
+  OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/deploy_assistants_openwebui.py" --reconcile || fail "Failed to seed assistants." "Check assistants/manifest.json."
 
   echo "    Restarting Nginx to apply routing..."
   docker compose restart nginx >/dev/null 2>&1 || true

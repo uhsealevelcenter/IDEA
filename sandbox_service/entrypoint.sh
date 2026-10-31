@@ -12,6 +12,15 @@
 # ~/.microsandbox/config.json, which is what this generates instead.
 set -eu
 
+# Ensure /root/.microsandbox has the current binaries and libraries from the image.
+# /root/.microsandbox is backed by the persistent idea_microsandbox_data volume,
+# which can retain older binaries/libraries from previous versions across image updates.
+if [ -d /opt/microsandbox-runtime ]; then
+  mkdir -p /root/.microsandbox/bin /root/.microsandbox/lib
+  cp -a /opt/microsandbox-runtime/bin/* /root/.microsandbox/bin/ 2>/dev/null || true
+  cp -a /opt/microsandbox-runtime/lib/* /root/.microsandbox/lib/ 2>/dev/null || true
+fi
+
 if [ -n "${GHCR_PAT:-}" ]; then
   mkdir -p /root/.microsandbox
   # /root/.microsandbox is the idea_microsandbox_data volume (see
