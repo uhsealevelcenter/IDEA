@@ -135,7 +135,7 @@ Chat Completions tool calls and temperature setting.
 - `NEXTAUTH_SECRET`: Secret key used by NextAuth to sign session cookies.
 - `SALT`: Salt string used for password hashing.
 - `ENCRYPTION_KEY`: 64-character hex value (32 bytes) for encrypting stored credentials at rest.
-- `NEXTAUTH_URL`: Canonical public URL of the Langfuse service (`http://localhost:3050`).
+- `NEXTAUTH_URL`: Canonical public URL of Langfuse (`http://localhost:3050` locally; `https://langfuse.ideaxiom.org` in production). Production deploys update only this value from `LANGFUSE_PUBLIC_URL` in `deployment/config.yaml`.
 - `AUTH_DISABLE_SIGNUP`: Disables open account registration on the Langfuse UI (`true`).
 - `LANGFUSE_INIT_*`: Optional bootstrap variables to pre-create the organization, project, and administrator user.
 
@@ -226,3 +226,10 @@ In GitHub Actions (`.github/workflows/deploy.yml`), deployments execute:
 ./deployment/deploy.sh <environment>
 ```
 This handles loading the environment parameters, restarting services, verifying health, and running the post-deployment Open WebUI reconciliation scripts automatically.
+
+
+## Production Langfuse HTTPS
+
+Langfuse is available at **https://langfuse.ideaxiom.org**. See
+[the deployment and rollback runbook](langfuse-https.md) for DNS, initial
+certificate issuance, targeted updates, renewal, validation, and rollback.
