@@ -38,6 +38,7 @@ services:
       dockerfile: Dockerfile
     image: idea-langgraph
     container_name: idea_langgraph
+    restart: unless-stopped
     ports:
       - "${LANGGRAPH_HOST_PORT:-127.0.0.1:8010:8010}"
     env_file:
@@ -60,6 +61,7 @@ services:
       dockerfile: Dockerfile
     image: idea-sandbox
     container_name: idea_sandbox
+    restart: unless-stopped
     ports:
       - "${SANDBOX_HOST_PORT:-127.0.0.1:8020:8020}"
     env_file:
