@@ -102,6 +102,12 @@ Knowledge collection descriptors reach the IDEA Pipe, while
 `capabilities.file_context` is disabled to prevent Open WebUI's native RAG
 from injecting a second copy of the same literature context.
 
+The wrapper also gates Open WebUI's legacy `knowledge_search` status on that
+retrieval policy. Copying collection descriptors into the request does not
+perform a search. Raw-file Assistants therefore do not display “Searching
+Knowledge”; IDEA/PaperQA can still search the attached collections when the
+agent chooses its literature tool.
+
 The Pipe's `PAPERQA_ASSISTANT_IDS` Valve defaults to
 `welcome-assistant,sea,mars-assistant`. Keep this list in sync with manifest
 entries whose `paperqa_enabled` value is true. LangGraph resolves each
@@ -371,8 +377,23 @@ for the underlying agent/sandbox architecture this depends on.
 
 The pinned `0.12.5-idea.0.11` release includes the `open_chats` permissions
 schema and IDEA's terminal support. The Compose service builds the pinned image
-through `openwebui/Dockerfile`; no source or compiled-JavaScript patches are
-needed in the wrapper.
+through `openwebui/Dockerfile`. The wrapper applies the backend preprocessing
+fixes in `patch_preprocessing.py` and runs `test_preprocessing.py` against the
+installed middleware during the image build. Patch anchors must match exactly,
+so an incompatible upstream update fails the build. The published frontend is
+unchanged.
+
+The internal `idea-sandbox` terminal connection remains enabled for the Files
+explorer, with `capabilities.terminal` and `terminalId` preserved. The wrapper
+excludes this connection from model tool resolution and terminal `AGENTS.md`
+injection. Its OpenAPI operations must not be offered to Open WebUI's Task
+model or native tool loop: IDEA's Pipe and LangGraph own sandbox execution.
+This prevents sandbox tool results from becoming `terminal:idea-sandbox/...`
+sources. Other terminal connections and explicitly selected user tools keep
+their normal behavior. Existing saved source labels remain in chat history.
+
+See [the 0.12.5 local test notes](../deployment/OPENWEBUI_0125_LOCAL_TEST.md)
+for the investigation, build checks, and browser smoke checks.
 
 Enable **Allow Chat Share** and **Chats Open Sharing** in saved default or
 group permissions. Users must then explicitly select **Open** for each chat
