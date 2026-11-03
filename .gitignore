@@ -231,3 +231,6 @@ local_scripts/
 /data
 # Production TLS certificates, private keys, and ACME account material
 /certbot/
+
+# Local production infrastructure plan
+/deployment/production-storage-plan.md
