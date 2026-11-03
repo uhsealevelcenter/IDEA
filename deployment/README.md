@@ -4,14 +4,30 @@ This directory houses all infrastructure, provisioning, database initialization,
 
 The `next-dev` Open WebUI image is pinned to IDEA's `0.12.5-idea.0.11`
 release by digest. Its first start upgrades the existing Open WebUI database.
-Automatic pre-upgrade backups are disabled for all environments to prevent
-deployment backups from accumulating on the host disk. To create a backup
-manually before an upgrade, run
-`bash deployment/backup_openwebui_before_upgrade.sh` from the repository root.
-The helper stops Open WebUI when a backup is needed and leaves it stopped after
-a successful backup; run the deployment afterward to start it again. Backups
-are stored under `.local-validation/openwebui-deploy-backups`. Retain the backup
-and previous image when rollback is needed: rollback may require restoring both.
+Before changing the Open WebUI image tag configured in Compose, deployment
+stops the running container and copies `/app/backend/data` **except `cache/`**.
+This preserves SQLite (including WAL files if present), uploads, vectors, and
+functions together. The copied SQLite database must pass an integrity check
+before deployment continues. The previous image ID and volume name are recorded;
+the image itself is not exported, so retain that image for rollback.
+
+Backups are stored under `.local-validation/openwebui-deploy-backups`. Before
+stopping Open WebUI, the helper requires free space for 120% of the measured
+non-cache data plus a 1 GiB reserve. This is a preflight estimate, not a disk
+quota; concurrent writes or other processes can still consume space. A failed
+copy is removed and the previous container is restarted. After successful
+verification, only the newest verified backup is retained. Existing
+backups are preserved if the new backup fails; space is required for the new
+copy alongside retained backups before pruning. Unknown directories are not
+pruned. Repeated deployments using the same image tag skip the backup; changes
+under an unchanged tag do not trigger it.
+
+For a manual pre-upgrade backup, run
+`bash deployment/backup_openwebui_before_upgrade.sh` from the repository root
+while Open WebUI is running. The same image-tag check applies. A successful
+backup leaves Open WebUI stopped; run deployment afterward to start it again.
+Rollback may require restoring both the data and previous image.
+
 The normal deploy reconciles repository-managed official
 Assistants, including their terminal and raw-file capabilities; custom
 Assistants retain their own settings. Test the published image in the target
