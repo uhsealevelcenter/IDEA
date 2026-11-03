@@ -2,6 +2,17 @@
 
 This directory houses all infrastructure, provisioning, database initialization, and deployment configuration for IDEA across all environments (`dev`, `staging`, `next-dev`, `prod`).
 
+The `next-dev` Open WebUI image is pinned to IDEA's `0.12.5-idea.0.11`
+release by digest. Its first start upgrades the existing Open WebUI database.
+Before changing the image, the deploy script stops the existing container,
+backs up its named data volume under `.local-validation/openwebui-deploy-backups`,
+and verifies the copied SQLite database. It aborts on backup failure and attempts
+to restart the previous container. Retain the backup and previous image: rollback
+may require restoring both. The normal deploy reconciles repository-managed official
+Assistants, including their terminal and raw-file capabilities; custom
+Assistants retain their own settings. Test the published image in the target
+environment before promoting this change to `main`.
+
 ---
 
 ## Directory Overview

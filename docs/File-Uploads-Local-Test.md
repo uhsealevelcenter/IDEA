@@ -1,5 +1,9 @@
 # Local file upload testing
 
+This is the historical procedure for the `0.11.0-idea.0.9` file-upload fix.
+The normal Compose service now uses `0.12.5-idea.0.11`, which includes that fix.
+Do not use the legacy frontend-only override below with the new backend.
+
 Local testing passed, as reported by the user on 2026-09-06, after building
 with the 4 GB heap and reconciling the official assistant capabilities.
 
@@ -93,10 +97,9 @@ to `process=false` uploads.
 
 ## Published integration
 
-The tested customization is published as `v0.11.0-idea.0.9`. The normal IDEA
-wrapper pins its immutable GHCR digest and retains the Open Sharing patch. The
-local override remains available for testing uncommitted Open WebUI changes;
-routine testing should use the normal pinned image.
+The file-upload fix was published in `v0.11.0-idea.0.9` and is included in the
+current `v0.12.5-idea.0.11` image. The old local override is retained for this
+historical test only; routine testing should use the normal pinned image.
 
 To return to the current pinned image locally:
 

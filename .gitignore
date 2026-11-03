@@ -232,3 +232,6 @@ local_scripts/
 # Production TLS certificates, private keys, and ACME account material
 /certbot/
 openwebui/open-webui/
+
+# Private local validation contexts, backups, and logs
+.local-validation/
