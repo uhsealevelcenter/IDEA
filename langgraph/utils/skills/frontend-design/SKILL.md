@@ -25,7 +25,7 @@ Then implement working code (HTML/CSS/JS, React, Vue, etc.) that is:
 
 ## Review Tooling
 
-Playwright is available in IDEA primarily through the system `playwright` CLI with Chromium support. Use CLI commands such as `playwright screenshot` and `playwright test` for screenshots, browser checks, and frontend validation. Do not assume the Node.js `playwright` package or Python `playwright` package is importable in the active runtime unless you have checked first. For lightweight visual validation, capture a screenshot with `playwright screenshot`; for DOM/text assertions, create a minimal Playwright test and run it with `playwright test`.
+Playwright is available in IDEA primarily through the system `playwright` CLI with only Chromium installed. Explicitly select Chromium for browser checks (`--browser chromium` for screenshots; `browserName: 'chromium'` in test configuration). For responsive checks, vary viewport dimensions rather than using device presets that select an uninstalled browser. Do not assume the Node.js `playwright` package or Python `playwright` package is importable in the active runtime unless you have checked first. For lightweight visual validation, capture a screenshot with `playwright screenshot --browser chromium`; for DOM/text assertions, create a minimal Playwright test and run it with `playwright test`.
 
 ## Frontend Aesthetics Guidelines
 
