@@ -104,11 +104,6 @@ if [[ -n "${GHCR_USER}" && -n "${GHCR_TOKEN}" ]]; then
   echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin >/dev/null 2>&1 || true
 fi
 
-echo "    Checking whether Open WebUI needs a pre-upgrade backup..."
-bash "${SCRIPT_DIR}/backup_openwebui_before_upgrade.sh" || fail \
-  "Open WebUI pre-upgrade backup failed." \
-  "Review the data volume and available disk space before retrying."
-
 echo "    Launching containers..."
 DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --build --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for build or container errors."
 success "Docker containers started in background."

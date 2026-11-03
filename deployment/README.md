@@ -4,11 +4,15 @@ This directory houses all infrastructure, provisioning, database initialization,
 
 The `next-dev` Open WebUI image is pinned to IDEA's `0.12.5-idea.0.11`
 release by digest. Its first start upgrades the existing Open WebUI database.
-Before changing the image, the deploy script stops the existing container,
-backs up its named data volume under `.local-validation/openwebui-deploy-backups`,
-and verifies the copied SQLite database. It aborts on backup failure and attempts
-to restart the previous container. Retain the backup and previous image: rollback
-may require restoring both. The normal deploy reconciles repository-managed official
+Automatic pre-upgrade backups are disabled for all environments to prevent
+deployment backups from accumulating on the host disk. To create a backup
+manually before an upgrade, run
+`bash deployment/backup_openwebui_before_upgrade.sh` from the repository root.
+The helper stops Open WebUI when a backup is needed and leaves it stopped after
+a successful backup; run the deployment afterward to start it again. Backups
+are stored under `.local-validation/openwebui-deploy-backups`. Retain the backup
+and previous image when rollback is needed: rollback may require restoring both.
+The normal deploy reconciles repository-managed official
 Assistants, including their terminal and raw-file capabilities; custom
 Assistants retain their own settings. Test the published image in the target
 environment before promoting this change to `main`.
