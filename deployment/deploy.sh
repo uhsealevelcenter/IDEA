@@ -78,6 +78,10 @@ fi
 # credentials remain in their respective env_file entries in Compose.
 echo "    Exporting parameters from deployment/config.yaml for '${TARGET_ENV}'..."
 eval "$(python3 "${SCRIPT_DIR}/load_env.py" "${TARGET_ENV}")" || fail "load_env.py failed." "Check deployment/config.yaml syntax."
+# Keep production's canonical URL consistent on subsequent deployments.
+if [[ -n "${LANGFUSE_PUBLIC_URL:-}" ]]; then
+  python3 "${SCRIPT_DIR}/set_langfuse_url.py" "${LANGFUSE_PUBLIC_URL}"
+fi
 success "Environment configuration loaded."
 
 # ------------------------------------------------------------------------------
@@ -304,7 +308,7 @@ echo "=========================================================="
 echo "==> Deployment for [${TARGET_ENV}] completed successfully!"
 echo "=========================================================="
 echo " - Chat Web UI:            http://localhost (or http://localhost:3001)"
-echo " - Langfuse Observability: http://localhost:3050"
+echo " - Langfuse Observability: ${LANGFUSE_PUBLIC_URL:-http://localhost:3050}"
 echo " - LiteLLM Admin / Health: http://localhost:8030/health"
 echo " - LangGraph Health:       http://localhost:8010/health"
 echo "=========================================================="
