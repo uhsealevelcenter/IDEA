@@ -15,6 +15,7 @@ from urllib.parse import quote
 import requests
 import yaml
 from langchain_core.tools import tool
+from idea_config import IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES
 
 
 BUILTIN_SKILLS_DIR = Path(__file__).parent / "skills"
@@ -935,6 +936,141 @@ class OpenWebUISkillLoader:
         )
 
 
+def _skill_result_page(
+    result: str,
+    *,
+    document: str = "",
+    section: str = "",
+    offset: int = 0,
+    expected_sha256: str = "",
+) -> str:
+    """Fit skill responses inside the agent's observation limit, without losing
+    JSON structure or the ability to retrieve omitted instructions.
+
+    Loaders still validate and authorize the entire selection before this
+    presentation layer selects a document, heading, or character range.
+    """
+    payload = json.loads(result)
+    selection_hash = payload["sha256"]
+    if expected_sha256 and expected_sha256 != selection_hash:
+        raise SkillLoadError("Skill content changed; review the current skill before continuing.")
+    if offset < 0:
+        raise SkillLoadError("Skill offset must be non-negative")
+    limit = IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES
+    if (
+        not document and not section and offset == 0
+        and len(result.encode("utf-8")) <= limit
+    ):
+        return result
+
+    is_plan = payload.get("detail") == "plan"
+    documents = payload.get("documents") or []
+    selected_index = 0
+    if is_plan:
+        if document or section:
+            raise SkillLoadError("Use detail='full' to read a package document or section.")
+        # Large plans are paged as metadata, never passed off as instructions.
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+        document_id = ""
+        document_hash = selection_hash
+    elif documents:
+        document_id = document or "root"
+        selected_index = next((
+            index for index, item in enumerate(documents)
+            if item["component"] == document_id
+        ), -1)
+        if selected_index < 0:
+            raise SkillLoadError(f"Document {document_id!r} is not in this package selection")
+        selected = documents[selected_index]
+        text = selected["content"]
+        document_hash = selected["sha256"]
+    else:
+        if document and document != "root":
+            raise SkillLoadError("Flat skills have only the 'root' document")
+        document_id = "root"
+        text = payload["content"]
+        document_hash = selection_hash
+
+    # Ignore headings inside fenced examples. Offsets are Unicode character
+    # indices into the original document, not UTF-8 byte offsets.
+    headings = []
+    cursor = 0
+    fence = ""
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        marker = re.match(r"(`{3,}|~{3,})", stripped)
+        if marker:
+            token = marker.group(1)
+            if not fence:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence):
+                fence = ""
+        elif not fence and not is_plan:
+            match = re.match(r"^(#{1,6})\s+(.+?)\s*#*\s*$", line.rstrip())
+            if match:
+                headings.append({"heading": match.group(2), "offset": cursor, "level": len(match.group(1))})
+        cursor += len(line)
+
+    start, end = 0, len(text)
+    if section:
+        matches = [item for item in headings if item["heading"] == section]
+        if len(matches) != 1:
+            raise SkillLoadError("Section must match one unique heading exactly; use an offset for duplicate headings.")
+        heading = matches[0]
+        start = heading["offset"]
+        end = next((
+            item["offset"] for item in headings
+            if item["offset"] > start and item["level"] <= heading["level"]
+        ), len(text))
+    position = offset or start
+    if position < start or position > end:
+        raise SkillLoadError("Skill offset is outside the requested document or section")
+    page = {
+        "source": payload["source"], "id": payload["id"],
+        "sha256": selection_hash, "document": document_id,
+        "document_sha256": document_hash,
+        "detail": "plan" if is_plan else "page",
+        "content_format": "json metadata" if is_plan else "markdown",
+        "total_chars": len(text), "section": section or None,
+        "offset": position, "end_offset": position,
+        "next_offset": None, "range_complete": False,
+        "document_count": len(documents) if documents else 1,
+        "next_document": (
+            documents[selected_index + 1]["component"]
+            if not is_plan and selected_index + 1 < len(documents) else None
+        ),
+        "sections": [
+            {"heading": item["heading"], "offset": item["offset"]}
+            for item in headings if item["offset"] >= position
+        ][:12],
+        "content": "",
+    }
+
+    def encode(stop: int) -> str:
+        page.update(
+            content=text[position:stop], end_offset=stop,
+            next_offset=stop if stop < end else None,
+            range_complete=stop == end,
+        )
+        return json.dumps(page, ensure_ascii=False)
+
+    # Heading indexes are optional navigation; retain room for actual content.
+    while page["sections"] and len(encode(position).encode("utf-8")) > limit // 2:
+        page["sections"].pop()
+    low, high = position, min(end, position + limit)
+    if len(encode(low).encode("utf-8")) > limit:
+        raise SkillLoadError("Skill metadata exceeds the model observation limit")
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(encode(middle).encode("utf-8")) <= limit:
+            low = middle
+        else:
+            high = middle - 1
+    if low == position and position < end:
+        raise SkillLoadError("Model observation limit leaves no room for skill content")
+    return encode(low)
+
+
 def make_view_skill_tool(
     builtin_loader: BuiltinSkillLoader,
     workspace_loader: OpenWebUISkillLoader,
@@ -948,6 +1084,10 @@ def make_view_skill_tool(
         route: str = "",
         components: list[str] | None = None,
         detail: Literal["plan", "full"] = "plan",
+        document: str = "",
+        section: str = "",
+        offset: int = 0,
+        expected_sha256: str = "",
     ) -> str:
         """
         Inspect or load instructions for an available skill/package.
@@ -961,7 +1101,21 @@ def make_view_skill_tool(
         only needed exact components with detail="full" and components=[...].
         Dependencies are resolved automatically. Use detail="full" on a whole
         route only when every component is immediately necessary. Do not pass
-        both route and components. Flat skills always return their full text.
+        both route and components. Review the task-wide constraints and next
+        step, then start work; defer unrelated references. Reuse inline or
+        already loaded instructions instead of fetching another copy.
+
+        Long responses return bounded pages with heading offsets and hashes.
+        To read further, keep source/id/route/components/detail unchanged and
+        pass section (an exact heading) or offset (a Unicode character index).
+        For a package use document='root' or an exact component id from its
+        plan, with detail='full'. Dependencies remain validated automatically.
+        Pass the returned sha256 as expected_sha256 to detect changed content.
+        next_offset continues the requested range; next_document identifies
+        the next dependency-ordered document in a large full selection.
+        range_complete covers only the requested document/section, not the
+        whole package. Plan pages contain metadata, not execution instructions.
+        Do not read every page or reference unless the task requires it.
         """
         loader = builtin_loader if source == "builtin" else workspace_loader
         normalized_route = route.strip() if isinstance(route, str) else ""
@@ -975,15 +1129,17 @@ def make_view_skill_tool(
                 route=normalized_route or None,
                 components=components,
             )
-            return (
+            result = (
                 bundle.to_tool_result()
                 if detail == "full"
                 else bundle.to_plan_result()
             )
-        # Preserve the long-standing flat/root result shape for callers that
-        # request only source + id. Package roots act as routing instructions;
-        # a route/component selection returns the structured bundle shape.
-        return loader.load(id).to_tool_result()
+        else:
+            result = loader.load(id).to_tool_result()
+        return _skill_result_page(
+            result, document=document, section=section, offset=offset,
+            expected_sha256=expected_sha256,
+        )
 
     return view_skill
 
@@ -996,6 +1152,13 @@ def summarize_skill_result(result: str) -> str:
         return "Skill load failed before structured content was returned"
     if not isinstance(payload, dict):
         return "Skill load failed before structured content was returned"
+    if "end_offset" in payload:
+        return (
+            f"Loaded {payload.get('source', 'unknown')} skill {payload.get('id')!r} "
+            f"document {payload.get('document')!r} "
+            f"(characters {payload.get('offset')}:{payload.get('end_offset')}, "
+            f"detail={payload.get('detail')}, sha256={payload.get('sha256')})"
+        )
     if "documents" in payload:
         documents = payload.get("documents")
         if not isinstance(documents, list) or not all(
