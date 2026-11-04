@@ -53,7 +53,16 @@ model_list:
       # Retained as an explicit Advanced-agent rollback route.
       mode: responses
 
-  # Standard IDEA Agent and IDEA Codex use Responses with medium reasoning.
+  # Standard IDEA Agent uses Responses with medium reasoning.
+  - model_name: gpt-6.1-sol
+    litellm_params:
+      model: openai/gpt-6.1-sol
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: responses
+
+  # IDEA Codex and the standard-agent rollback route.
   - model_name: gpt-6-sol
     litellm_params:
       model: openai/gpt-6-sol

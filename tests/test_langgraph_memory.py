@@ -54,7 +54,7 @@ class FakeRuntime:
             messages.insert(1, SystemMessage(content=block))
         return messages
 
-    def call_model(self, messages, *, cancellation=None):
+    def call_model(self, messages, *, cancellation=None, allow_tools=True):
         self.model_inputs.append(messages)
         self.model_calls += 1
         if self.model_calls == 1:
@@ -106,7 +106,7 @@ class RepeatingRuntime(FakeRuntime):
         super().__init__()
         self.finish_after = finish_after
 
-    def call_model(self, messages, *, cancellation=None):
+    def call_model(self, messages, *, cancellation=None, allow_tools=True):
         self.model_inputs.append(messages)
         self.model_calls += 1
         if self.finish_after and self.model_calls > self.finish_after:
@@ -122,8 +122,37 @@ class RepeatingRuntime(FakeRuntime):
         )
 
 
+class BudgetRuntime(RepeatingRuntime):
+    def __init__(self, final_error=False, cancellation=None):
+        super().__init__()
+        self.final_error = final_error
+        self.cancellation = cancellation
+        self.finalized = []
+        self.tool_permissions = []
+
+    def call_model(self, messages, *, cancellation=None, allow_tools=True):
+        self.tool_permissions.append(allow_tools)
+        if allow_tools:
+            return super().call_model(messages, cancellation=cancellation)
+        self.model_calls += 1
+        self.model_inputs.append(messages)
+        if self.cancellation:
+            self.cancellation.request("user_requested")
+            from idea_graph.runtime import ModelCallCancelled
+            raise ModelCallCancelled("user_requested")
+        if self.final_error:
+            raise TimeoutError("provider unavailable")
+        text = "Saved the plot. The report remains unfinished. Would you like me to continue?"
+        self.emit(text)
+        return AIMessage(content=text)
+
+    def finalize(self, state):
+        self.finalized.append(state)
+        return []
+
+
 class CodexRuntime(FakeRuntime):
-    def call_model(self, messages, *, cancellation=None):
+    def call_model(self, messages, *, cancellation=None, allow_tools=True):
         self.model_inputs.append(messages)
         self.model_calls += 1
         if self.model_calls == 1:
@@ -167,13 +196,79 @@ class AttachedInputRuntime(FakeRuntime):
             ))],
         }
 
-    def call_model(self, messages, *, cancellation=None):
+    def call_model(self, messages, *, cancellation=None, allow_tools=True):
         self.model_inputs.append(messages)
         self.model_calls += 1
         return AIMessage(content="I can inspect the attached dataset.")
 
 
 class LangGraphMemoryTests(unittest.TestCase):
+    def invoke_budget_graph(self, runtime, max_iterations=20, **kwargs):
+        return build_idea_graph(runtime, max_iterations=max_iterations, **kwargs).invoke({
+            "conversation_messages": [{"role": "user", "content": "Create a report"}],
+            "run_id": "budget-run", "thread_id": "budget-thread",
+            "workspace_id": "workspace", "kernel_id": "kernel",
+        }, config={"recursion_limit": 240})
+
+    def test_advance_warnings_and_reserved_check_in_preserve_unfinished_work(self):
+        runtime = BudgetRuntime()
+        result = self.invoke_budget_graph(runtime)
+        self.assertEqual(runtime.model_calls, 20)
+        self.assertEqual(runtime.tool_permissions, [True] * 19 + [False])
+        self.assertNotIn("IDEA execution budget", str(runtime.model_inputs[14]))
+        self.assertIn("5 call(s) remain", runtime.model_inputs[15][-1].content)
+        self.assertIn("Wrap up now", runtime.model_inputs[17][-1].content)
+        self.assertIn("Use no tools", runtime.model_inputs[19][-1].content)
+        self.assertEqual(result["final_status"], "stopped")
+        self.assertEqual(result["continuation"]["iteration"], 20)
+        self.assertEqual(result["plan"][0]["status"], "deferred")
+        self.assertIn("report remains unfinished", result["final_response"])
+        self.assertEqual(runtime.events.count(result["final_response"]), 1)
+        self.assertEqual(len(runtime.finalized), 1)
+        self.assertEqual(runtime.finalized[0]["final_response"], result["final_response"])
+        self.assertFalse(any(
+            "IDEA execution budget" in str(message.content)
+            for message in result["turn_messages"]
+        ))
+
+    def test_failed_check_in_falls_back_and_still_finalizes_outputs(self):
+        runtime = BudgetRuntime(final_error=True)
+        result = self.invoke_budget_graph(runtime, max_iterations=2)
+        self.assertEqual(runtime.model_calls, 2)
+        self.assertEqual(len(runtime.executed), 1)
+        self.assertEqual(result["continuation"]["reason"], "iteration_limit")
+        self.assertIn("Completed:", result["final_response"])
+        self.assertIn("Usable outputs:", result["final_response"])
+        self.assertEqual(len(runtime.finalized), 1)
+
+    def test_final_call_cannot_execute_tools_even_if_provider_ignores_choice(self):
+        runtime = RepeatingRuntime()
+        result = self.invoke_budget_graph(runtime, max_iterations=2)
+        self.assertEqual(runtime.model_calls, 2)
+        self.assertEqual(len(runtime.executed), 1)
+        self.assertEqual(result["pending_tool_calls"], [])
+        self.assertIn("Paused at the iteration safety limit", result["final_response"])
+
+    def test_stop_during_reserved_check_in_takes_precedence(self):
+        control = RunCancellation()
+        runtime = BudgetRuntime(cancellation=control)
+        result = self.invoke_budget_graph(runtime, max_iterations=2, cancellation=control)
+        self.assertEqual(result["stop_reason"], "user_requested")
+        self.assertIsNone(result["continuation"])
+        self.assertIn("Stopped at your request", result["final_response"])
+
+    def test_single_call_budget_and_natural_completion(self):
+        runtime = BudgetRuntime()
+        result = self.invoke_budget_graph(runtime, max_iterations=1)
+        self.assertEqual(runtime.tool_permissions, [False])
+        self.assertFalse(runtime.executed)
+        self.assertEqual(result["final_status"], "stopped")
+        runtime = FakeRuntime()
+        result = self.invoke_budget_graph(runtime, max_iterations=3)
+        self.assertEqual(runtime.model_calls, 2)
+        self.assertEqual(result["final_status"], "completed")
+        self.assertIsNone(result["continuation"])
+
     def make_attachment_runtime(self, synced_files):
         runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
         runtime.agent = Mock()
@@ -578,7 +673,7 @@ class LangGraphMemoryTests(unittest.TestCase):
 
     def test_iteration_limit_saves_resumable_continuation(self):
         saver = InMemorySaver()
-        runtime = RepeatingRuntime()
+        runtime = BudgetRuntime()
         graph = build_idea_graph(runtime, checkpointer=saver, max_iterations=2)
         config = {"configurable": {"thread_id": "thread-limit"}}
         result = graph.invoke({

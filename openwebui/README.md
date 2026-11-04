@@ -56,7 +56,7 @@ tags, follow-up suggestions, and search queries. IDEA keeps this separate
 from the user-facing Pipe model:
 
 - `IDEA Agent` remains the default visible chat model and uses the centrally
-  configured `IDEA_AGENT_MODEL` (`gpt-6-sol` with medium reasoning by
+  configured `IDEA_AGENT_MODEL` (`gpt-6.1-sol` with medium reasoning by
   default).
 - `IDEA Agent Advanced` uses `gpt-6-sol-priority` with medium reasoning through the
   Responses API. It is publicly readable so assigned Assistants work for their
@@ -127,18 +127,21 @@ Chat Completions with Luna's reasoning effort set to `none` for tool calls.
 
 ## Unified IDEA and Open WebUI Skills
 
-IDEA exposes one `view_skill(source, id, route="", components=None)` tool for
+IDEA exposes one `view_skill` tool for
 two authoritative skill stores. Flat built-in skills are discovered from
 `langgraph/utils/skills/*/SKILL.md`, with their catalog generated from YAML
 frontmatter on each run. A built-in directory becomes a hierarchical package
 when it also contains `manifest.yaml` with `schema_version: 1`. The manifest
 may declare shared `references`, modular `components`, dependency edges, and
 named `routes`. The LangGraph process reads these files directly; skill
-content never passes through the sandbox terminal or its output truncation.
+content never passes through the sandbox terminal. Model-facing responses
+fit within `IDEA_MAX_MODEL_TOOL_OBSERVATION_BYTES` (6,000 bytes by default).
 
 For a package, the generated catalog advertises its named routes. A route
-load always returns the root `SKILL.md` followed by the complete dependency
-closure in deterministic dependency-first order. Shared documents are
+selection resolves the root `SKILL.md` followed by the complete dependency
+closure in deterministic dependency-first order. Inspect its metadata with
+`detail="plan"`, then load only components needed for the current step using
+`components=[...]` and `detail="full"`. Shared documents are
 deduplicated. Unknown IDs, dependency cycles, excessive depth/count/size,
 path traversal, and symlinks fail the entire request; no partial package is
 returned. Package-root policy takes precedence if component instructions
@@ -176,11 +179,32 @@ remain single-document skills: package route/component requests are rejected
 until Open WebUI can store and return a package atomically under one
 authorization and version boundary.
 
-Skill documents are returned to the model in full, subject to the per-document
-limit. Hierarchical selections also have aggregate document-count,
-dependency-depth, and byte limits. Oversized skills and packages fail
-explicitly instead of being partially returned. Application logs record only
-skill source, ID, route, document/byte count, and SHA-256—not private skill
+Short skill responses retain their complete result shape. Long responses
+return valid JSON pages instead of being cut off by the agent's generic
+tool-output limit. Pages include content, a heading index, Unicode character
+offsets, `next_offset`, and hashes. Request an exact heading with `section`
+or continue at `next_offset`; keep the original source, ID, route/components,
+and detail arguments. Pass the returned `sha256` as `expected_sha256` to
+reject continuation against changed content. Every request rechecks access
+and validates the selection; pages do not bypass size or dependency checks.
+
+For large full package selections, `document` chooses `root` or a component
+in the resolved dependency closure. `next_document` identifies the next
+document in dependency order. `range_complete` means only the requested
+document or section is complete, not the whole package. Large plan responses
+are paged as JSON metadata and never presented as procedure instructions.
+Duplicate headings can be addressed by their offsets. No filesystem search
+or alternate skill source is used to recover missing text.
+
+The agent reviews the relevant skill's purpose, task-wide constraints, and
+next procedure, then begins useful work when sufficiently specified. It
+consults additional sections only when needed, rather than treating all
+linked references as mandatory reading. Inline skills are reused without
+another fetch. The same reading strategy applies to user-supplied skill files.
+
+Per-document and aggregate package size/count/depth limits still apply;
+oversized inputs fail explicitly before paging. Application logs record only
+skill identifiers, document/range metadata, and SHA-256—not private skill
 instructions or user credentials.
 
 ## Automatic file sync (`/outputs` → Open WebUI Files)

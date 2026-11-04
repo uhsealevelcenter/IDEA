@@ -175,7 +175,7 @@ if [[ -n "${current_key}" ]]; then
   # which models this key can see without putting the key in a query string.
   if printf '%s' "${current_key}" | docker compose exec -T langgraph python -c '
 import json, sys, urllib.request
-required = {"gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "text-embedding-3-small"}
+required = {"gpt-6.1-sol", "gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "text-embedding-3-small"}
 key = sys.stdin.read().strip()
 request = urllib.request.Request(
     "http://litellm:8080/v1/models",
@@ -207,7 +207,7 @@ headers = {
 }
 data = json.dumps({
     "max_budget": 100,
-    "models": ["gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-6-astra", "text-embedding-3-small"],
+    "models": ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-6-astra", "text-embedding-3-small"],
     "key_alias": f"idea-langgraph-shared-{int(time.time())}",
 }).encode()
 request = urllib.request.Request(url, data=data, headers=headers, method="POST")

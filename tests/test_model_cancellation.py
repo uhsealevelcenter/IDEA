@@ -5,7 +5,7 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from langchain_core.messages import AIMessageChunk
 
@@ -124,6 +124,17 @@ class PartialThenTimeoutLLM:
 
 
 class ModelCancellationTests(unittest.TestCase):
+    def test_check_in_disables_provider_tool_choice_and_streams_normally(self):
+        llm = Mock()
+        llm.bind.return_value = DelayedLLM()
+        runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)
+        runtime.agent = SimpleNamespace(llm=llm)
+        runtime.event_callback = Mock()
+        response = runtime.call_model([], allow_tools=False)
+        llm.bind.assert_called_once_with(tool_choice="none")
+        self.assertEqual(response.content, "Done")
+        runtime.event_callback.assert_called_with("Done")
+
     def test_streams_text_and_announces_tool_before_arguments_finish(self):
         events = []
         runtime = TerminalGraphRuntime.__new__(TerminalGraphRuntime)

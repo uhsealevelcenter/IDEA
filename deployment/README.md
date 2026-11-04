@@ -114,7 +114,7 @@ cp openwebui/.env.example openwebui/.env
 - `CERTBOT_WWW_DIR`: Mount path for Certbot HTTP-01 renewal challenges (`./certbot/www`).
 
 #### 4. `langgraph/.env` (LangGraph Agent Runtime)
-- `IDEA_AGENT_MODEL`: Primary conversational model identifier (e.g. `gpt-6-sol`).
+- `IDEA_AGENT_MODEL`: Primary conversational model identifier (e.g. `gpt-6.1-sol`).
 - `IDEA_AGENT_REASONING_EFFORT`: Reasoning depth/effort for the agent model (`low`, `medium`, `high`).
 - `IDEA_TOOL_MODEL`: Auxiliary model used for sub-agent tool evaluation.
 - `IDEA_ADVANCED_AGENT_MODEL`: Model used for advanced agent tasks using the Responses API (e.g. `gpt-6-sol-priority`).

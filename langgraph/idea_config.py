@@ -23,8 +23,8 @@ IDEA_AGENT_RUNTIME = os.getenv("IDEA_AGENT_RUNTIME", "manual").strip().lower()
 # own stable setting below so changing the primary does not silently change
 # auxiliary inference.
 IDEA_AGENT_MODEL = (
-    os.getenv("IDEA_AGENT_MODEL", "gpt-6-sol").strip()
-    or "gpt-6-sol"
+    os.getenv("IDEA_AGENT_MODEL", "gpt-6.1-sol").strip()
+    or "gpt-6.1-sol"
 )
 IDEA_AGENT_REASONING_EFFORT = (
     os.getenv("IDEA_AGENT_REASONING_EFFORT", "medium").strip().lower()

@@ -65,6 +65,7 @@ from idea_config import (
     LITELLM_VIRTUAL_KEY,
 )
 from idea_graph.memory import bounded_text_bytes
+from iteration_budget import iteration_budget_message
 from progress import (
     progress_chunk,
     tool_call_chunk_names,
@@ -108,7 +109,7 @@ def _prompt_cache_key(model: str, session_id: str) -> str:
 def _supports_prompt_caching(model: str) -> bool:
     """Return whether IDEA may attach explicit prompt-cache request fields."""
     normalized = str(model or "").strip().lower()
-    return normalized.startswith(("gpt-5.6", "gpt-6-"))
+    return normalized.startswith(("gpt-5.6", "gpt-6-", "gpt-6.1-"))
 
 
 def _model_api_kwargs(
@@ -1210,92 +1211,121 @@ class TerminalAgent:
         input_tokens = 0
         output_tokens = 0
         sensitive_tool_call_ids: set[str] = set()
+        paused_for_limit = False
 
         while iterations < self.max_iterations and not task_complete:
             iterations += 1
+            final_call = iterations == self.max_iterations
+            budget = iteration_budget_message(iterations, self.max_iterations)
+            model_messages = [*messages, SystemMessage(content=budget)] if budget else messages
+            iteration_llm = self.llm.bind(tool_choice="none") if final_call else self.llm
             print(f"\n{'='*60}")
             print(f"Iteration {iterations}")
             print(f"{'='*60}")
-            emit_progress("thinking", "Thinking…")
+            emit_progress(
+                "wrapping_up" if final_call else "thinking",
+                "Wrapping up and saving progress…" if final_call else "Thinking…",
+            )
             
-            # Get LLM response with streaming
-            if stream_callback:
-                response_content = ""
-                aggregated_chunks = None
-                chunk_count = 0
-                announced_tool_names: set[str] = set()
-                for chunk in self._iter_with_heartbeat(self.llm.stream(messages), stream_callback):
-                    chunk_count += 1
-                    if hasattr(chunk, 'content') and chunk.content:
-                        response_content += chunk.content
-                        stream_callback(chunk.content)
-                    for tool_name in tool_call_chunk_names(chunk):
-                        if tool_name in announced_tool_names:
-                            continue
-                        announced_tool_names.add(tool_name)
-                        emit_progress(
-                            "preparing_tool",
-                            tool_status_description(
-                                tool_name,
-                                preparing=True,
-                            ),
-                            tool_name=tool_name,
-                        )
-                    # Accumulate chunks properly for tool calls
-                    if aggregated_chunks is None:
-                        aggregated_chunks = chunk
-                    else:
-                        aggregated_chunks = aggregated_chunks + chunk
+            try:
+                # Get LLM response with streaming
+                if stream_callback:
+                    response_content = ""
+                    aggregated_chunks = None
+                    chunk_count = 0
+                    announced_tool_names: set[str] = set()
+                    for chunk in self._iter_with_heartbeat(iteration_llm.stream(model_messages), stream_callback):
+                        chunk_count += 1
+                        if hasattr(chunk, 'content') and chunk.content:
+                            response_content += chunk.content
+                            stream_callback(chunk.content)
+                        for tool_name in tool_call_chunk_names(chunk):
+                            if tool_name in announced_tool_names:
+                                continue
+                            announced_tool_names.add(tool_name)
+                            emit_progress(
+                                "preparing_tool",
+                                tool_status_description(
+                                    tool_name,
+                                    preparing=True,
+                                ),
+                                tool_name=tool_name,
+                            )
+                        # Accumulate chunks properly for tool calls
+                        if aggregated_chunks is None:
+                            aggregated_chunks = chunk
+                        else:
+                            aggregated_chunks = aggregated_chunks + chunk
                 
-                # Use the aggregated chunk which has properly accumulated tool calls
-                tool_calls = []
-                if aggregated_chunks and hasattr(aggregated_chunks, 'tool_calls'):
-                    tool_calls = aggregated_chunks.tool_calls or []
+                    # Use the aggregated chunk which has properly accumulated tool calls
+                    tool_calls = []
+                    if aggregated_chunks and hasattr(aggregated_chunks, 'tool_calls'):
+                        tool_calls = aggregated_chunks.tool_calls or []
                 
-                print(f"\n🔍 DEBUG: Received {chunk_count} chunks")
-                print(f"🔍 DEBUG: response_content length: {len(response_content)}")
-                print(f"🔍 DEBUG: tool_calls count: {len(tool_calls)}")
+                    print(f"\n🔍 DEBUG: Received {chunk_count} chunks")
+                    print(f"🔍 DEBUG: response_content length: {len(response_content)}")
+                    print(f"🔍 DEBUG: tool_calls count: {len(tool_calls)}")
                 
-                if tool_calls:
-                    print(f"🔍 DEBUG: tool_calls type: {type(tool_calls)}")
-                    for i, tc in enumerate(tool_calls):
-                        print(f"🔍 DEBUG: tool_call[{i}] type: {type(tc)}")
-                        print(f"🔍 DEBUG: tool_call[{i}]: {tc}")
-                        if isinstance(tc, dict):
-                            print(f"  - name: {tc.get('name')}")
-                            print(f"  - args: {tc.get('args')}")
-                        elif hasattr(tc, 'name'):
-                            print(f"  - name: {tc.name}")
-                            print(f"  - args: {getattr(tc, 'args', 'NO ARGS ATTR')}")
+                    if tool_calls:
+                        print(f"🔍 DEBUG: tool_calls type: {type(tool_calls)}")
+                        for i, tc in enumerate(tool_calls):
+                            print(f"🔍 DEBUG: tool_call[{i}] type: {type(tc)}")
+                            print(f"🔍 DEBUG: tool_call[{i}]: {tc}")
+                            if isinstance(tc, dict):
+                                print(f"  - name: {tc.get('name')}")
+                                print(f"  - args: {tc.get('args')}")
+                            elif hasattr(tc, 'name'):
+                                print(f"  - name: {tc.name}")
+                                print(f"  - args: {getattr(tc, 'args', 'NO ARGS ATTR')}")
                 
-                response = AIMessage(content=response_content)
+                    response = AIMessage(content=response_content)
                 
-                # Filter out invalid/empty tool calls
-                valid_tool_calls = []
-                if tool_calls:
-                    for tc in tool_calls:
-                        # Ensure tool call has required fields
-                        if isinstance(tc, dict):
-                            if tc.get('name') and tc.get('args') is not None:
-                                valid_tool_calls.append(tc)
-                                print(f"✅ Valid tool call (dict): {tc.get('name')}")
-                            else:
-                                print(f"❌ Invalid tool call (dict): name={tc.get('name')}, args={tc.get('args')}")
-                        elif hasattr(tc, 'name') and hasattr(tc, 'args'):
-                            if tc.name and tc.args is not None:
-                                valid_tool_calls.append(tc)
-                                print(f"✅ Valid tool call (obj): {tc.name}")
-                            else:
-                                print(f"❌ Invalid tool call (obj): name={getattr(tc, 'name', None)}, args={getattr(tc, 'args', None)}")
+                    # Filter out invalid/empty tool calls
+                    valid_tool_calls = []
+                    if tool_calls:
+                        for tc in tool_calls:
+                            # Ensure tool call has required fields
+                            if isinstance(tc, dict):
+                                if tc.get('name') and tc.get('args') is not None:
+                                    valid_tool_calls.append(tc)
+                                    print(f"✅ Valid tool call (dict): {tc.get('name')}")
+                                else:
+                                    print(f"❌ Invalid tool call (dict): name={tc.get('name')}, args={tc.get('args')}")
+                            elif hasattr(tc, 'name') and hasattr(tc, 'args'):
+                                if tc.name and tc.args is not None:
+                                    valid_tool_calls.append(tc)
+                                    print(f"✅ Valid tool call (obj): {tc.name}")
+                                else:
+                                    print(f"❌ Invalid tool call (obj): name={getattr(tc, 'name', None)}, args={getattr(tc, 'args', None)}")
                 
-                if valid_tool_calls:
-                    response.tool_calls = valid_tool_calls
+                    if valid_tool_calls:
+                        response.tool_calls = valid_tool_calls
                     
-                # Preserve response metadata if available
-                if aggregated_chunks and hasattr(aggregated_chunks, 'response_metadata'):
-                    response.response_metadata = aggregated_chunks.response_metadata
-            else:
-                response = self.llm.invoke(messages)
+                    # Preserve response metadata if available
+                    if aggregated_chunks and hasattr(aggregated_chunks, 'response_metadata'):
+                        response.response_metadata = aggregated_chunks.response_metadata
+                else:
+                    response = iteration_llm.invoke(model_messages)
+
+            except Exception:
+                if not final_call:
+                    raise
+                response = AIMessage(content=(
+                    "Paused at the iteration safety limit. Your workspace and "
+                    "usable outputs are preserved. Would you like me to continue?"
+                ))
+                if stream_callback:
+                    stream_callback(response.content)
+
+            if final_call:
+                paused_for_limit = True
+                if response.tool_calls or not response.content:
+                    response = AIMessage(content=(
+                        "Paused at the iteration safety limit. Your workspace and "
+                        "usable outputs are preserved. Would you like me to continue?"
+                    ))
+                    if stream_callback:
+                        stream_callback(response.content)
             
             messages.append(response)
             
@@ -1311,6 +1341,9 @@ class TerminalAgent:
                 print(f"\n📊 Tokens this iteration: {iter_input} input + {iter_output} output = {iter_total} total")
                 print(f"📊 Cumulative: {input_tokens} input + {output_tokens} output = {total_tokens} total")
             
+            if paused_for_limit:
+                break
+
             # Check if LLM wants to use tools
             if response.tool_calls:
                 print(f"\n🔧 LLM wants to use {len(response.tool_calls)} tool(s)")
@@ -1691,7 +1724,11 @@ class TerminalAgent:
                     'start': True,
                     'end': True
                 })
-        emit_progress("completed", "Finished", done=True)
+        emit_progress(
+            "stopped" if paused_for_limit else "completed",
+            "Paused; ready to continue" if paused_for_limit else "Finished",
+            done=True,
+        )
         
         # Determine success based on completion
         success = task_complete or iterations < self.max_iterations
