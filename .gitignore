@@ -235,3 +235,6 @@ openwebui/open-webui/
 
 # Private local validation contexts, backups, and logs
 .local-validation/
+
+# Local production infrastructure plan
+/deployment/production-storage-plan.md
