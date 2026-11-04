@@ -67,7 +67,7 @@ checkpointed thread by working directory. See
 ## Model routing
 
 The primary IDEA model is selected with `IDEA_AGENT_MODEL` and defaults to
-`gpt-6-sol` with medium reasoning on the Responses API. `IDEA_TOOL_MODEL`
+`gpt-6.1-sol` with medium reasoning on the Responses API. `IDEA_TOOL_MODEL`
 keeps station and web helper inference on `gpt-6-luna`. Primary chat uses the internal
 LiteLLM proxy and `LITELLM_VIRTUAL_KEY`; the end user's email is forwarded for
 usage attribution. The station/web helpers currently use the direct

@@ -108,7 +108,7 @@ def _prompt_cache_key(model: str, session_id: str) -> str:
 def _supports_prompt_caching(model: str) -> bool:
     """Return whether IDEA may attach explicit prompt-cache request fields."""
     normalized = str(model or "").strip().lower()
-    return normalized.startswith(("gpt-5.6", "gpt-6-"))
+    return normalized.startswith(("gpt-5.6", "gpt-6-", "gpt-6.1-"))
 
 
 def _model_api_kwargs(
