@@ -7,7 +7,8 @@ import re
 import uuid
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from iteration_budget import iteration_budget_message
 from langgraph.graph import END, START, StateGraph
 
 from idea_config import (
@@ -178,6 +179,8 @@ def build_idea_graph(
     max_iterations: int = 20,
     result_excerpt_bytes: int = 12000,
 ):
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be at least 1")
     cancellation = cancellation or RunCancellation()
     python_ledger_bytes = max(1, IDEA_MAX_STATE_BYTES * 2 // 3)
     action_ledger_bytes = max(1, IDEA_MAX_STATE_BYTES - python_ledger_bytes)
@@ -279,6 +282,23 @@ def build_idea_graph(
             "codex_usage": list(state.get("codex_usage") or [])[-100:],
         }
 
+    def pause_at_limit(state: IDEAState) -> dict[str, Any]:
+        return {
+            "stop_requested": True,
+            "stop_reason": "iteration_limit",
+            "final_status": "stopping",
+            "continuation": {
+                "reason": "iteration_limit",
+                "next_step": "Resume from this checkpoint and continue the pending objective.",
+                "iteration": int(state.get("iteration") or 0),
+                "pending_tool_calls": list(state.get("pending_tool_calls") or []),
+                "completed_action_ids": [
+                    item.get("execution_id")
+                    for item in (state.get("completed_actions") or [])[-20:]
+                ],
+            },
+        }
+
     def call_model(state: IDEAState) -> dict[str, Any]:
         if cancellation.requested:
             return {
@@ -288,36 +308,47 @@ def build_idea_graph(
             }
         iteration = int(state.get("iteration") or 0) + 1
         if iteration > max_iterations:
-            return {
-                "warnings": [
-                    *(state.get("warnings") or [])[-19:],
-                    f"Stopped after the {max_iterations}-iteration safety limit.",
-                ],
-                "stop_requested": True,
-                "stop_reason": "iteration_limit",
-                "final_status": "stopping",
-                "continuation": {
-                    "reason": "iteration_limit",
-                    "next_step": "Resume from this checkpoint and continue the pending objective.",
-                    "iteration": int(state.get("iteration") or 0),
-                    "pending_tool_calls": list(state.get("pending_tool_calls") or []),
-                    "completed_action_ids": [
-                        item.get("execution_id")
-                        for item in (state.get("completed_actions") or [])[-20:]
-                    ],
-                },
-            }
+            return pause_at_limit(state)
+        final_call = iteration == max_iterations
         runtime.emit({
-            "type": "status", "phase": "thinking",
-            "description": "Thinking…", "done": False,
+            "type": "status", "phase": "wrapping_up" if final_call else "thinking",
+            "description": "Wrapping up and saving progress…" if final_call else "Thinking…",
+            "done": False,
         })
         messages = runtime.model_messages(state)  # type: ignore[attr-defined]
+        budget = iteration_budget_message(iteration, max_iterations)
+        if budget:
+            # Transient guidance, never accumulated in the checkpoint transcript.
+            messages = [*messages, SystemMessage(content=budget)]
         try:
-            response = runtime.call_model(messages, cancellation=cancellation)
+            if final_call:
+                response = runtime.call_model(
+                    messages, cancellation=cancellation, allow_tools=False
+                )
+            else:
+                response = runtime.call_model(messages, cancellation=cancellation)
         except ModelCallCancelled as exc:
             return {
                 "stop_requested": True,
                 "stop_reason": str(exc) or cancellation.reason or "user_requested",
+                "final_status": "stopping",
+            }
+        except Exception:
+            if not final_call:
+                raise
+            # A provider failure must not lose the checkpoint or usable outputs.
+            if cancellation.requested:
+                return {
+                    "stop_requested": True, "stop_reason": cancellation.reason,
+                    "final_status": "stopping",
+                }
+            return {
+                **pause_at_limit({**state, "iteration": iteration}),
+                "iteration": iteration,
+            }
+        if cancellation.requested:
+            return {
+                "stop_requested": True, "stop_reason": cancellation.reason,
                 "final_status": "stopping",
             }
         usage_record = _model_usage_record(
@@ -327,6 +358,16 @@ def build_idea_graph(
             messages=messages,
         )
         runtime.emit({"type": "model_usage", **usage_record})
+        if final_call:
+            # Never execute tools from the reserved check-in, even if a provider
+            # ignores tool_choice=none. stopped_summary supplies a safe fallback.
+            return {
+                **pause_at_limit({**state, "iteration": iteration}),
+                "iteration": iteration,
+                "pending_tool_calls": [],
+                "final_response": response.text.strip() if not response.tool_calls else None,
+                "model_usage": [*(state.get("model_usage") or []), usage_record][-100:],
+            }
         tool_calls = []
         for raw in response.tool_calls or []:
             call = dict(raw)
@@ -598,6 +639,10 @@ def build_idea_graph(
         return "call_model"
 
     def stopped_summary(state: IDEAState) -> dict[str, Any]:
+        check_in = (
+            state.get("final_response")
+            if state.get("stop_reason") == "iteration_limit" else None
+        )
         completed = [
             action for action in state.get("completed_actions") or []
             if action.get("status") == "completed"
@@ -631,14 +676,16 @@ def build_idea_graph(
         if artifacts:
             lines.append("\nUsable outputs:")
             lines.extend(f"- {item.get('path')}" for item in artifacts[-8:])
-        response = "\n".join(lines)
-        runtime.emit(response)
+        response = str(check_in) if check_in else "\n".join(lines)
+        if not check_in:
+            runtime.emit(response)
         return {
             "final_status": "stopped",
             "final_response": response,
             "plan": [{
                 **item,
                 "status": (
+                    item.get("status") if item.get("status") == "completed" else
                     "deferred" if state.get("stop_reason") == "iteration_limit"
                     else "blocked"
                 ),
@@ -668,7 +715,11 @@ def build_idea_graph(
         runtime.finalize(state)
         runtime.emit({
             "type": "status", "phase": "stopped",
-            "description": "Stopped", "done": True,
+            "description": (
+                "Paused; ready to continue"
+                if state.get("stop_reason") == "iteration_limit" else "Stopped"
+            ),
+            "done": True,
         })
         return {}
 
