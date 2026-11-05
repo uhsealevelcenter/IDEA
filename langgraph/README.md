@@ -46,6 +46,19 @@ State limits are configured through the `IDEA_MAX_*` variables in
 `example.env`. Large tool output is archived in the sandbox and represented to
 the model by bounded excerpts.
 
+Each turn has a 20-call model budget. Starting at call 16, the agent receives
+remaining-budget guidance; calls 18–19 emphasize finishing essential work and
+saving outputs. Call 20 disables tool use and asks for a concise progress
+summary, remaining work, and a check-in with the user. This reserved call is
+included in the limit. Smaller budgets use the same remaining-call thresholds.
+
+A budget pause keeps the objective, deferred plan, execution records, and
+artifacts checkpointed. Ask `continue` to resume with a fresh turn budget.
+Outputs are synchronized even if the check-in model request fails, in which
+case IDEA supplies a deterministic progress summary. User cancellation takes
+precedence over wrap-up. The manual rollback runtime shares the same budget
+guidance and reserved tool-free call, without graph checkpoint persistence.
+
 ## Tools
 
 `agents/terminal_agent.py` registers the current tool surface:
@@ -67,7 +80,7 @@ checkpointed thread by working directory. See
 ## Model routing
 
 The primary IDEA model is selected with `IDEA_AGENT_MODEL` and defaults to
-`gpt-6-sol` with medium reasoning on the Responses API. `IDEA_TOOL_MODEL`
+`gpt-6.1-sol` with medium reasoning on the Responses API. `IDEA_TOOL_MODEL`
 keeps station and web helper inference on `gpt-6-luna`. Primary chat uses the internal
 LiteLLM proxy and `LITELLM_VIRTUAL_KEY`; the end user's email is forwarded for
 usage attribution. The station/web helpers currently use the direct
@@ -126,6 +139,7 @@ Run the focused unit suite from the repository root:
 
 ```bash
 pytest -q \
+  tests/test_iteration_budget.py \
   tests/test_langgraph_memory.py \
   tests/test_chat_run_events.py \
   tests/test_model_cancellation.py \

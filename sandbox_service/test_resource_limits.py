@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from msb_sandbox import MicrosandboxTerminal, _positive_int_env
+from msb_sandbox import MicrosandboxTerminal, WORKSPACE_INIT_COMMAND, _positive_int_env
 
 
 class ResourceLimitConfigurationTests(unittest.TestCase):
@@ -55,6 +55,13 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
                     "upper_size_mib": upper_size_mib,
                 }
 
+        class FakeHandle:
+            async def shell(self, command):
+                calls.append(command)
+                return types.SimpleNamespace(exit_code=0, stderr_text="")
+
+        handle = FakeHandle()
+
         class FakeSandbox:
             @staticmethod
             async def get(_name):
@@ -63,7 +70,7 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
             @staticmethod
             async def create(name, **kwargs):
                 calls.append((name, kwargs))
-                return "sandbox-handle"
+                return handle
 
         microsandbox = types.ModuleType("microsandbox")
         microsandbox.Image = FakeImage
@@ -91,8 +98,9 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         ):
             terminal._connect_or_create()
 
-        self.assertEqual(terminal._sandbox, "sandbox-handle")
-        self.assertEqual(len(calls), 1)
+        self.assertIs(terminal._sandbox, handle)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1], WORKSPACE_INIT_COMMAND)
         name, kwargs = calls[0]
         self.assertEqual(name, "resource-test")
         self.assertEqual(kwargs["cpus"], 2)
@@ -106,6 +114,8 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         )
 
     def test_existing_sandbox_is_reconnected_without_reprovisioning(self):
+        calls = []
+
         class SandboxNotFoundError(Exception):
             pass
 
@@ -116,7 +126,13 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
                 return None
 
             async def connect(self):
-                return "existing-sandbox-handle"
+                return self
+
+            async def shell(self, command):
+                calls.append(command)
+                return types.SimpleNamespace(exit_code=0, stderr_text="")
+
+        handle = ExistingSandbox()
 
         class FakeImage:
             @staticmethod
@@ -126,7 +142,7 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         class FakeSandbox:
             @staticmethod
             async def get(_name):
-                return ExistingSandbox()
+                return handle
 
             @staticmethod
             async def create(*_args, **_kwargs):
@@ -151,7 +167,53 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         ):
             terminal._connect_or_create()
 
-        self.assertEqual(terminal._sandbox, "existing-sandbox-handle")
+        self.assertIs(terminal._sandbox, handle)
+        self.assertEqual(calls, [WORKSPACE_INIT_COMMAND])
+
+    def test_existing_stopped_sandbox_is_initialized_after_resume(self):
+        calls = []
+
+        class ExistingSandbox:
+            status = "stopped"
+
+            async def refresh(self):
+                return None
+
+        class ResumedSandbox:
+            async def shell(self, command):
+                calls.append(command)
+                return types.SimpleNamespace(exit_code=0, stderr_text="")
+
+        handle = ResumedSandbox()
+
+        class FakeSandbox:
+            @staticmethod
+            async def get(_name):
+                return ExistingSandbox()
+
+            @staticmethod
+            async def start(_name, detached):
+                self.assertTrue(detached)
+                return handle
+
+            @staticmethod
+            async def create(*_args, **_kwargs):
+                raise AssertionError("existing sandbox must not be recreated")
+
+        microsandbox = types.ModuleType("microsandbox")
+        microsandbox.Image = None
+        microsandbox.Sandbox = FakeSandbox
+        errors = types.ModuleType("microsandbox.errors")
+        errors.SandboxNotFoundError = type("SandboxNotFoundError", (Exception,), {})
+        terminal = MicrosandboxTerminal.__new__(MicrosandboxTerminal)
+        terminal.session_id = "stopped-resource-test"
+        terminal._run = lambda factory: asyncio.run(factory())
+
+        with patch.dict(sys.modules, {"microsandbox": microsandbox, "microsandbox.errors": errors}):
+            terminal._connect_or_create()
+
+        self.assertIs(terminal._sandbox, handle)
+        self.assertEqual(calls, [WORKSPACE_INIT_COMMAND])
 
     def test_compose_profiles_define_expected_defaults(self):
         repository = Path(__file__).resolve().parents[1]
@@ -159,9 +221,9 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         deployment_config = (repository / "deployment" / "config.yaml").read_text()
 
         for setting in (
-            "SANDBOX_CPUS=${SANDBOX_CPUS:-1}",
-            "SANDBOX_MEMORY_MB=${SANDBOX_MEMORY_MB:-1024}",
-            "SANDBOX_DISK_MB=${SANDBOX_DISK_MB:-4096}",
+            'SANDBOX_CPUS: "${SANDBOX_CPUS:-1}"',
+            'SANDBOX_MEMORY_MB: "${SANDBOX_MEMORY_MB:-1024}"',
+            'SANDBOX_DISK_MB: "${SANDBOX_DISK_MB:-4096}"',
         ):
             self.assertIn(setting, base)
         for setting in (

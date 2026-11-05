@@ -13,6 +13,23 @@ SPEC.loader.exec_module(migration)
 
 
 class MigrateGpt6EnvTests(unittest.TestCase):
+    def test_upgrades_standard_sol_without_changing_other_profiles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text(
+                "IDEA_AGENT_MODEL=gpt-6-sol\n"
+                "IDEA_ADVANCED_AGENT_MODEL=gpt-6-sol-priority\n"
+                "IDEA_CODEX_MODEL=gpt-6-sol\n"
+            )
+            migration.migrate(path, migration.MIGRATIONS["langgraph/.env"])
+            result = path.read_text()
+            self.assertIn("IDEA_AGENT_MODEL=gpt-6.1-sol\n", result)
+            self.assertIn("IDEA_ADVANCED_AGENT_MODEL=gpt-6-sol-priority\n", result)
+            self.assertIn("IDEA_CODEX_MODEL=gpt-6-sol\n", result)
+            path.write_text("IDEA_AGENT_MODEL=custom-deployment\n")
+            migration.migrate(path, migration.MIGRATIONS["langgraph/.env"])
+            self.assertIn("IDEA_AGENT_MODEL=custom-deployment\n", path.read_text())
+
     def test_replaces_old_defaults_and_preserves_secrets_and_custom_models(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".env"
@@ -29,10 +46,29 @@ class MigrateGpt6EnvTests(unittest.TestCase):
         self.assertIn("IDEA_AGENT_MODEL", changed)
         self.assertIn("IDEA_CODEX_REASONING_EFFORT", changed)
         self.assertIn("OPENAI_API_KEY=private-value\n", result)
-        self.assertIn("IDEA_AGENT_MODEL=gpt-6-sol\n", result)
+        self.assertIn("IDEA_AGENT_MODEL=gpt-6.1-sol\n", result)
         self.assertIn("IDEA_TOOL_MODEL=my-custom-model\n", result)
         self.assertIn("IDEA_CODEX_MODEL=gpt-6-sol\n", result)
         self.assertIn("IDEA_CODEX_REASONING_EFFORT=medium\n", result)
+
+    def test_migrates_legacy_slim_sandbox_image_to_research_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text(
+                "SANDBOX_IMAGE=ghcr.io/uhsealevelcenter/idea-oi-kernel:slim\n"
+                "INTERNAL_SERVICE_TOKEN=keep-me\n"
+            )
+            changed = migration.migrate(
+                path, migration.MIGRATIONS["sandbox_service/.env"]
+            )
+            result = path.read_text()
+
+        self.assertEqual(changed, ["SANDBOX_IMAGE"])
+        self.assertIn(
+            "SANDBOX_IMAGE=ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2\n",
+            result,
+        )
+        self.assertIn("INTERNAL_SERVICE_TOKEN=keep-me\n", result)
 
 
 if __name__ == "__main__":

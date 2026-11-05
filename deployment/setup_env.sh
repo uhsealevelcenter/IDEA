@@ -86,7 +86,7 @@ if [[ -z "${GHCR_USER}" && -t 0 ]]; then
 fi
 
 if [[ -n "${GHCR_USER}" && -n "${GHCR_TOKEN}" ]]; then
-  SANDBOX_IMG="ghcr.io/uhsealevelcenter/idea-oi-kernel:slim"
+  SANDBOX_IMG="ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2"
 else
   SANDBOX_IMG="python"
 fi
@@ -302,7 +302,7 @@ POSTGRES_DB=${PG_DB}
 NEXTAUTH_SECRET=${LF_NEXTAUTH}
 SALT=${LF_SALT}
 ENCRYPTION_KEY=${LF_ENC}
-NEXTAUTH_URL=http://localhost:3050
+NEXTAUTH_URL=${LANGFUSE_PUBLIC_URL:-http://localhost:3050}
 AUTH_DISABLE_SIGNUP=true
 TELEMETRY_ENABLED=false
 

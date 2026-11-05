@@ -78,6 +78,10 @@ fi
 # credentials remain in their respective env_file entries in Compose.
 echo "    Exporting parameters from deployment/config.yaml for '${TARGET_ENV}'..."
 eval "$(python3 "${SCRIPT_DIR}/load_env.py" "${TARGET_ENV}")" || fail "load_env.py failed." "Check deployment/config.yaml syntax."
+# Keep production's canonical URL consistent on subsequent deployments.
+if [[ -n "${LANGFUSE_PUBLIC_URL:-}" ]]; then
+  python3 "${SCRIPT_DIR}/set_langfuse_url.py" "${LANGFUSE_PUBLIC_URL}"
+fi
 success "Environment configuration loaded."
 
 # ------------------------------------------------------------------------------
@@ -104,12 +108,13 @@ if [[ -n "${GHCR_USER}" && -n "${GHCR_TOKEN}" ]]; then
   echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin >/dev/null 2>&1 || true
 fi
 
+echo "    Checking whether Open WebUI needs a pre-upgrade backup..."
+bash "${SCRIPT_DIR}/backup_openwebui_before_upgrade.sh" || fail \
+  "Open WebUI pre-upgrade backup failed." \
+  "Review the data volume and available disk space before retrying."
+
 echo "    Launching containers..."
-if [[ "${TARGET_ENV}" == "dev" ]]; then
-  DOCKER_BUILDKIT=1 docker compose up -d --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for container errors."
-else
-  DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --build --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for build or container errors."
-fi
+DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans --quiet-pull >/dev/null 2>&1 || docker compose up -d --build --remove-orphans || fail "docker compose up failed." "Check 'docker compose logs' for build or container errors."
 success "Docker containers started in background."
 
 # ------------------------------------------------------------------------------
@@ -174,7 +179,7 @@ if [[ -n "${current_key}" ]]; then
   # which models this key can see without putting the key in a query string.
   if printf '%s' "${current_key}" | docker compose exec -T langgraph python -c '
 import json, sys, urllib.request
-required = {"gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "text-embedding-3-small"}
+required = {"gpt-6.1-sol", "gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "text-embedding-3-small"}
 key = sys.stdin.read().strip()
 request = urllib.request.Request(
     "http://litellm:8080/v1/models",
@@ -206,7 +211,7 @@ headers = {
 }
 data = json.dumps({
     "max_budget": 100,
-    "models": ["gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-6-astra", "text-embedding-3-small"],
+    "models": ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-sol-priority", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-6-astra", "text-embedding-3-small"],
     "key_alias": f"idea-langgraph-shared-{int(time.time())}",
 }).encode()
 request = urllib.request.Request(url, data=data, headers=headers, method="POST")
@@ -276,7 +281,7 @@ ow_api_key="$(grep -E "^OPENWEBUI_API_KEY=" openwebui/.env 2>/dev/null | cut -d=
 
 if [[ -z "${ow_api_key}" || "${ow_api_key}" == *"your_"* ]]; then
   echo "    OPENWEBUI_API_KEY is unset; automatically generating and syncing admin API key..."
-  "${SCRIPT_DIR}/update_openwebui_key.sh" >/dev/null 2>&1 || true
+  "${SCRIPT_DIR}/update_openwebui_key.sh" || true
   ow_api_key="$(grep -E "^OPENWEBUI_API_KEY=" openwebui/.env 2>/dev/null | cut -d= -f2- || true)"
   export OPENWEBUI_API_KEY="${ow_api_key}"
 fi
@@ -286,11 +291,7 @@ if [[ -n "${ow_api_key}" && "${ow_api_key}" != *"your_"* ]]; then
   OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/register_idea_pipe.sh" || fail "Failed to register IDEA pipe." "Check OPENWEBUI_API_KEY validity or ensure the admin user exists."
   OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/configure_openwebui.py" || fail "Failed to configure Open WebUI settings." "Check LiteLLM connection."
   
-  if [[ "${TARGET_ENV}" == "prod" ]]; then
-    OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/deploy_assistants_openwebui.py" --reconcile || fail "Failed to seed assistants." "Check assistants/manifest.json."
-  else
-    OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/deploy_assistants_openwebui.py" || fail "Failed to seed assistants." "Check assistants/manifest.json."
-  fi
+  OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/deploy_assistants_openwebui.py" --reconcile || fail "Failed to seed assistants." "Check assistants/manifest.json."
 
   echo "    Restarting Nginx to apply routing..."
   docker compose restart nginx >/dev/null 2>&1 || true
@@ -304,7 +305,7 @@ echo "=========================================================="
 echo "==> Deployment for [${TARGET_ENV}] completed successfully!"
 echo "=========================================================="
 echo " - Chat Web UI:            http://localhost (or http://localhost:3001)"
-echo " - Langfuse Observability: http://localhost:3050"
+echo " - Langfuse Observability: ${LANGFUSE_PUBLIC_URL:-http://localhost:3050}"
 echo " - LiteLLM Admin / Health: http://localhost:8030/health"
 echo " - LangGraph Health:       http://localhost:8010/health"
 echo "=========================================================="

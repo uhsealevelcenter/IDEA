@@ -2,6 +2,37 @@
 
 This directory houses all infrastructure, provisioning, database initialization, and deployment configuration for IDEA across all environments (`dev`, `staging`, `next-dev`, `prod`).
 
+The `next-dev` Open WebUI image is pinned to IDEA's `0.12.5-idea.0.11`
+release by digest. Its first start upgrades the existing Open WebUI database.
+Before changing the Open WebUI image tag configured in Compose, deployment
+stops the running container and copies `/app/backend/data` **except `cache/`**.
+This preserves SQLite (including WAL files if present), uploads, vectors, and
+functions together. The copied SQLite database must pass an integrity check
+before deployment continues. The previous image ID and volume name are recorded;
+the image itself is not exported, so retain that image for rollback.
+
+Backups are stored under `.local-validation/openwebui-deploy-backups`. Before
+stopping Open WebUI, the helper requires free space for 120% of the measured
+non-cache data plus a 1 GiB reserve. This is a preflight estimate, not a disk
+quota; concurrent writes or other processes can still consume space. A failed
+copy is removed and the previous container is restarted. After successful
+verification, only the newest verified backup is retained. Existing
+backups are preserved if the new backup fails; space is required for the new
+copy alongside retained backups before pruning. Unknown directories are not
+pruned. Repeated deployments using the same image tag skip the backup; changes
+under an unchanged tag do not trigger it.
+
+For a manual pre-upgrade backup, run
+`bash deployment/backup_openwebui_before_upgrade.sh` from the repository root
+while Open WebUI is running. The same image-tag check applies. A successful
+backup leaves Open WebUI stopped; run deployment afterward to start it again.
+Rollback may require restoring both the data and previous image.
+
+The normal deploy reconciles repository-managed official
+Assistants, including their terminal and raw-file capabilities; custom
+Assistants retain their own settings. Test the published image in the target
+environment before promoting this change to `main`.
+
 ---
 
 ## Directory Overview
@@ -83,7 +114,7 @@ cp openwebui/.env.example openwebui/.env
 - `CERTBOT_WWW_DIR`: Mount path for Certbot HTTP-01 renewal challenges (`./certbot/www`).
 
 #### 4. `langgraph/.env` (LangGraph Agent Runtime)
-- `IDEA_AGENT_MODEL`: Primary conversational model identifier (e.g. `gpt-6-sol`).
+- `IDEA_AGENT_MODEL`: Primary conversational model identifier (e.g. `gpt-6.1-sol`).
 - `IDEA_AGENT_REASONING_EFFORT`: Reasoning depth/effort for the agent model (`low`, `medium`, `high`).
 - `IDEA_TOOL_MODEL`: Auxiliary model used for sub-agent tool evaluation.
 - `IDEA_ADVANCED_AGENT_MODEL`: Model used for advanced agent tasks using the Responses API (e.g. `gpt-6-sol-priority`).
@@ -118,7 +149,7 @@ Chat Completions tool calls and temperature setting.
 - `KVM_DEVICE_PATH`: Host virtualization device. **Notice: Microsandbox microVMs require hardware `/dev/kvm` support on Linux (e.g. Jetstream2). On macOS or Windows, leave this as `/dev/null`, and the service will automatically fall back to the safe local terminal backend.**
 - `SANDBOX_BACKEND`: Sandbox mode (`auto`, `microsandbox`, or `local`).
 - `SANDBOX_CPUS` / `SANDBOX_MEMORY_MB` / `SANDBOX_DISK_MB`: Hardware resource limits allocated per microVM (overridden per environment via `deployment/config.yaml`).
-- `SANDBOX_IMAGE`: OCI container image booted for user sessions (`ghcr.io/uhsealevelcenter/idea-oi-kernel:slim`).
+- `SANDBOX_IMAGE`: OCI container image booted for user sessions (`ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2`).
 - `GHCR_USERNAME` / `GHCR_PAT`: GitHub Container Registry credentials if pulling private sandbox images.
 - `INTERNAL_SERVICE_TOKEN`: Must match the `INTERNAL_SERVICE_TOKEN` set in `langgraph/.env`.
 - `SANDBOX_IDLE_TIMEOUT_SECONDS`: Seconds of inactivity before an idle microVM is suspended.
@@ -135,7 +166,7 @@ Chat Completions tool calls and temperature setting.
 - `NEXTAUTH_SECRET`: Secret key used by NextAuth to sign session cookies.
 - `SALT`: Salt string used for password hashing.
 - `ENCRYPTION_KEY`: 64-character hex value (32 bytes) for encrypting stored credentials at rest.
-- `NEXTAUTH_URL`: Canonical public URL of the Langfuse service (`http://localhost:3050`).
+- `NEXTAUTH_URL`: Canonical public URL of Langfuse (`http://localhost:3050` locally; `https://langfuse.ideaxiom.org` in production). Production deploys update only this value from `LANGFUSE_PUBLIC_URL` in `deployment/config.yaml`.
 - `AUTH_DISABLE_SIGNUP`: Disables open account registration on the Langfuse UI (`true`).
 - `LANGFUSE_INIT_*`: Optional bootstrap variables to pre-create the organization, project, and administrator user.
 
@@ -226,3 +257,10 @@ In GitHub Actions (`.github/workflows/deploy.yml`), deployments execute:
 ./deployment/deploy.sh <environment>
 ```
 This handles loading the environment parameters, restarting services, verifying health, and running the post-deployment Open WebUI reconciliation scripts automatically.
+
+
+## Production Langfuse HTTPS
+
+Langfuse is available at **https://langfuse.ideaxiom.org**. See
+[the deployment and rollback runbook](langfuse-https.md) for DNS, initial
+certificate issuance, targeted updates, renewal, validation, and rollback.

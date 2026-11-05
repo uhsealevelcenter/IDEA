@@ -1,8 +1,8 @@
-# Minimal compatibility fix on the pinned IDEA Open WebUI release.
-FROM ghcr.io/uhsealevelcenter/idea-open-webui:0.11.0-idea.0.9@sha256:1ec23855573f3a146b8d18d70bf8248f242b202e46907ad39d3da8f9591e2a6e
+# The published IDEA customization includes Open Sharing and terminal support.
+# Apply IDEA's preprocessing rules while retaining the published frontend.
+FROM ghcr.io/uhsealevelcenter/idea-open-webui:0.12.5-idea.0.11@sha256:28b9230d601628fe2ea879a41f751015999863467f8aa63197528f2360e4de76
 
-# The UI and chat access checks support Open sharing, but this release's
-# default-permissions request/response schema drops sharing.open_chats.
-# Fail the build if the upstream schema changes; review/remove this patch
-# when upgrading the base release.
-RUN python -c 'from pathlib import Path; p = Path("/app/backend/open_webui/routers/users.py"); s = p.read_text(); old = "    public_chats: bool = False\n    public_calendars: bool = False"; assert s.count(old) == 1, "Review Open sharing schema patch for this release"; p.write_text(s.replace(old, "    public_chats: bool = False\n    open_chats: bool = False\n    public_calendars: bool = False"))'
+COPY patch_preprocessing.py test_preprocessing.py /tmp/idea-preprocessing/
+RUN python /tmp/idea-preprocessing/patch_preprocessing.py /app/backend/open_webui/utils/middleware.py \
+    && python /tmp/idea-preprocessing/test_preprocessing.py \
+    && rm -r /tmp/idea-preprocessing

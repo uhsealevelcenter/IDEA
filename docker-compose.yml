@@ -38,6 +38,7 @@ services:
       dockerfile: Dockerfile
     image: idea-langgraph
     container_name: idea_langgraph
+    restart: unless-stopped
     ports:
       - "${LANGGRAPH_HOST_PORT:-127.0.0.1:8010:8010}"
     env_file:
@@ -60,6 +61,7 @@ services:
       dockerfile: Dockerfile
     image: idea-sandbox
     container_name: idea_sandbox
+    restart: unless-stopped
     ports:
       - "${SANDBOX_HOST_PORT:-127.0.0.1:8020:8020}"
     env_file:
@@ -124,7 +126,7 @@ services:
     build:
       context: ./openwebui
       dockerfile: Dockerfile
-    image: idea-openwebui:0.11.0-idea.0.9-open-sharing-fix
+    image: idea-openwebui:0.12.5-idea.0.11
     container_name: idea_openwebui
     restart: unless-stopped
     ports:
