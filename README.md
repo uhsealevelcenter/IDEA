@@ -216,7 +216,7 @@ wiring.
 ```
    **Note**: Ensure that the initialization and LiteLLM variables contain the corresponding matching keys. The initialization variables must use the names expected by your Langfuse version, and the LiteLLM variables must match the environment variable references in your Docker Compose configuration. 
 
-5. Start or restart the Docker Compose stack. Once the environment variables are configured, start or restart the stack to initialize Langfuse. In development, the Langfuse UI is available at port `3050`, as configured in `docker-compose.override.yml`. In production, access Langfuse through the URL configured for your deployment. See the Quick Deploy documentation for details. 
+5. Start or restart the Docker Compose stack. Once the environment variables are configured, start or restart the stack to initialize Langfuse. In development, the Langfuse UI is available at port `3050`, as configured in `docker-compose.override.yml`. In production, access Langfuse at https://langfuse.ideaxiom.org. See [the HTTPS deployment runbook](deployment/langfuse-https.md) for details.
 
 6. Navigate to http://localhost:3050 in your browser.
 
