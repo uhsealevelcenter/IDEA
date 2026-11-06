@@ -145,6 +145,7 @@ pytest -q \
   tests/test_model_cancellation.py \
   tests/test_terminal_output_archiving.py \
   tests/test_vision.py \
+  tests/test_prompt_cache.py \
   tests/test_codex_integration.py
 ```
 

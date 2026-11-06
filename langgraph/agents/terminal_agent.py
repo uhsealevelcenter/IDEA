@@ -128,13 +128,18 @@ def _model_api_kwargs(
     return kwargs
 
 
-def _cacheable_system_message(content: str, model: str) -> SystemMessage:
+def _cacheable_system_message(
+    content: str, model: str, *, use_responses_api: bool = True,
+) -> SystemMessage:
     """Mark the stable IDEA instructions as the explicit cache prefix, only
     for models that support it (see _supports_prompt_caching)."""
     if not _supports_prompt_caching(model):
         return SystemMessage(content=content)
+    # Responses needs a native block: langchain-openai rebuilds generic
+    # "text" blocks with only type/text, dropping prompt_cache_breakpoint.
+    # Chat Completions accepts "text" and preserves its extra fields.
     return SystemMessage(content=[{
-        "type": "text",
+        "type": "input_text" if use_responses_api else "text",
         "text": content,
         "prompt_cache_breakpoint": {"mode": "explicit"},
     }])
@@ -1178,7 +1183,9 @@ class TerminalAgent:
         
         # Initialize conversation
         messages = [
-            _cacheable_system_message(system_prompt, self.model),
+            _cacheable_system_message(
+                system_prompt, self.model, use_responses_api=self.use_responses_api,
+            ),
             self._user_message_with_attached_images(
                 user_prompt,
                 synced_inputs,

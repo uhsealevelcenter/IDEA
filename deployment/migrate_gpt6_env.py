@@ -15,7 +15,7 @@ MIGRATIONS = {
         "IDEA_TOOL_MODEL": ("gpt-6-luna", {"gpt-5.5", "gpt-5.6-terra"}),
         "IDEA_ADVANCED_AGENT_MODEL": ("gpt-6-sol-priority", {"gpt-5.5", "gpt-5.6-sol"}),
         "IDEA_ADVANCED_REASONING_EFFORT": ("medium", {"medium"}),
-        "IDEA_CODEX_MODEL": ("gpt-6-sol", {"gpt-5.5", "gpt-5.6-terra"}),
+        "IDEA_CODEX_MODEL": ("gpt-6.1-sol", {"gpt-6-sol", "gpt-5.5", "gpt-5.6-terra"}),
         "IDEA_CODEX_REASONING_EFFORT": ("medium", {"medium"}),
         "PQA_LLM_MODEL": ("gpt-6-luna", {"gpt-5.6-terra", "gpt-5.6-luna"}),
     },

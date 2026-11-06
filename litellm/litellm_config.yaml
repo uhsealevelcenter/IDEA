@@ -62,7 +62,7 @@ model_list:
     model_info:
       mode: responses
 
-  # IDEA Codex and the standard-agent rollback route.
+  # Rollback route for the former standard-agent and Codex model.
   - model_name: gpt-6-sol
     litellm_params:
       model: openai/gpt-6-sol
