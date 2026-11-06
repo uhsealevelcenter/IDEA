@@ -45,7 +45,7 @@ Both focused suites pass (29 tests). The six other suites listed in
 loop`. Those two errors also reproduce when the output-archiving suite is
 run alone; that suite does not import the changed agent module.
 
-## Deployment verification still required
+## Local dependency validation
 
 The local virtual environment was upgraded from LiteLLM `1.83.14` to the
 repository pin, `1.101.0`. All 29 focused tests pass after the upgrade.
@@ -59,13 +59,40 @@ The upgrade exposes a dependency conflict: installed `fhlmi==1.0.5`
 LiteLLM pin. The cache tests do not establish PaperQA runtime compatibility;
 the conflicting dependency constraints still need reconciliation.
 
-After deploying the fix, capture an application request at the upstream
-provider boundary and verify that both `prompt_cache_options` and the
-system block's `prompt_cache_breakpoint` survive the deployed proxy.
-Repeat application calls in one conversation with identical instructions
-and tools, then inspect provider cache-read/write usage and IDEA's
-`cached_input_tokens` telemetry. A preserved breakpoint alone does not
-prove a provider cache hit.
+## Live local verification — November 5, 2026
 
-This change was validated locally; no deployment or live traffic
-verification was performed.
+Three live requests through `TerminalGraphRuntime.model_messages()` and
+`call_model()` confirmed provider prompt-cache reads on `gpt-6.1-sol` with
+medium reasoning. The test used IDEA's actual system prompt, built-in skill
+manifest, and 14 bound tools, through the local LiteLLM proxy. Tool choice
+was disabled and output limited to 256 tokens for this diagnostic; no tools
+were executed.
+
+| Request | Input tokens | Cached input tokens | Duration |
+| --- | ---: | ---: | ---: |
+| 1 | 7,608 | 0 | 3.89 s |
+| 2 | 7,608 | 7,484 | 1.17 s |
+| 3 | 7,608 | 7,484 | 1.20 s |
+
+Both repeat requests read approximately 98.4% of input tokens from the
+provider cache. All three outgoing HTTP bodies preserved explicit mode and
+one system-prompt breakpoint, with identical system/tool prefix hashes.
+User messages differed for every request and provider response IDs were
+distinct. These were separate model calls, not replayed proxy responses.
+Provider cache-write token counts were not exposed in the returned usage.
+IDEA's `_model_usage_record()` reported the cache reads shown above.
+
+Run ID: `cache-verification-3a6808aad01b4dca8d35a7b0c1a5fa55`.
+
+The first attempts exposed two local configuration issues: the existing
+virtual key lacked `gpt-6.1-sol` access, and the running proxy had not loaded
+the already-configured route. The model was added to the existing key's
+allowlist while preserving its prior models and budget/rate limits.
+Restarting the proxy encountered a stale Docker Desktop bind-mount source;
+recreating only the LiteLLM container from its existing image restored the
+mount and loaded the route. The proxy was healthy afterward.
+
+This verifies the updated application model-call path through the local
+proxy and upstream provider. It does not verify the Open WebUI/chat-run
+endpoint flow or production traffic. After deploying the fix, repeat this
+check against production and inspect `cached_input_tokens` telemetry.
