@@ -25,6 +25,8 @@ import urllib.parse
 import uuid
 from typing import Callable, Optional
 
+from lifecycle_recovery import clear_stale_runtime_pid
+
 # ioctl request number for KVM_GET_API_VERSION (arch-independent, see
 # linux/kvm.h) - used by _kvm_functional() below. Imported lazily inside
 # that function instead since fcntl doesn't exist on non-POSIX platforms.
@@ -217,7 +219,13 @@ class MicrosandboxTerminal:
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._thread.start()
 
-        self._connect_or_create()
+        try:
+            self._connect_or_create()
+        except Exception:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join()
+            self._loop.close()
+            raise
 
     def _run(self, coro_factory, timeout: Optional[float] = None):
         """
@@ -319,10 +327,18 @@ class MicrosandboxTerminal:
                 return await handle.connect()
             # Resumes an existing stopped-but-not-removed sandbox of this
             # name with its filesystem state intact.
+            await asyncio.to_thread(clear_stale_runtime_pid, self.session_id)
             try:
                 return await Sandbox.start(self.session_id, detached=True)
             except SandboxStillRunningError:
-                return await handle.connect()
+                # Another start may have won. Never connect to a stopped VM,
+                # or provision a replacement disk to hide a lifecycle error.
+                await handle.refresh()
+                if handle.status == "running":
+                    return await handle.connect()
+                if await asyncio.to_thread(clear_stale_runtime_pid, self.session_id):
+                    return await Sandbox.start(self.session_id, detached=True)
+                raise
 
         self._sandbox = self._run(_get_sandbox)
         result = self._run(lambda: self._sandbox.shell(WORKSPACE_INIT_COMMAND))
