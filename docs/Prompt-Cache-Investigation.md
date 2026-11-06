@@ -20,17 +20,22 @@ defect underlying those observations; it does not establish a live hit rate.
 
 ## Fix and regression coverage
 
-The system prompt now uses a native `input_text` block. LangChain passes
-that block through, preserving the breakpoint. Both manual and graph
-execution use the same system-message helper. Unsupported models continue
-to receive plain system-message text.
+The system prompt uses a native `input_text` block for Responses requests.
+LangChain passes that block through, preserving the breakpoint. Chat
+Completions requests use `text`, which retains the breakpoint on that API.
+Both manual and graph execution pass their configured API choice to the
+same system-message helper. Unsupported models continue to receive plain
+system-message text.
 
-`tests/test_prompt_cache.py` constructs a real `TerminalAgent` and captures
-the serialized HTTP body for streamed Responses requests with tools bound.
+`tests/test_prompt_cache.py` constructs a real `TerminalGraphRuntime` and
+`TerminalAgent` and captures serialized HTTP bodies for streamed Responses
+and Chat Completions requests with tools bound, including manual execution.
 It checks the breakpoint, explicit mode, and session cache key for
 `gpt-5.6-terra`, `gpt-6-astra`, and `gpt-6.1-sol`, across changing user
 requests. It fails on the missing breakpoint before the fix and passes
-afterward. No provider requests are made by this test.
+afterward. The Chat Completions regression test also reproduced the
+incorrect `input_text` block before the endpoint-aware fix and passes
+afterward. No provider requests are made by these tests.
 
 Run the focused tests with:
 
@@ -39,7 +44,7 @@ LITELLM_LOCAL_MODEL_COST_MAP=True .venv/bin/python -m unittest discover -s tests
 LITELLM_LOCAL_MODEL_COST_MAP=True .venv/bin/python -m unittest discover -s tests -p test_vision.py
 ```
 
-Both focused suites pass (29 tests). The six other suites listed in
+Both focused suites pass (31 tests). The six other suites listed in
 `langgraph/README.md` produced 71 passes and two errors in unchanged
 `MicrosandboxPythonStreamingTests` cleanup: `Cannot close a running event
 loop`. Those two errors also reproduce when the output-archiving suite is

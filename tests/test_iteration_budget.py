@@ -23,6 +23,7 @@ class IterationBudgetTests(unittest.TestCase):
     def make_agent(self):
         agent = TerminalAgent.__new__(TerminalAgent)
         agent.model = "gpt-6.1-sol"
+        agent.use_responses_api = True
         agent.sandbox_id = "test-user"
         agent._shown_image_hashes = set()
         agent.assistant_id = None
