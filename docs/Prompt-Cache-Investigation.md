@@ -47,10 +47,17 @@ run alone; that suite does not import the changed agent module.
 
 ## Deployment verification still required
 
-The locally installed LiteLLM is `1.83.14`, while the repository pins
-`1.101.0`. An offline check of the local OpenAI Responses parameter mapping
+The local virtual environment was upgraded from LiteLLM `1.83.14` to the
+repository pin, `1.101.0`. All 29 focused tests pass after the upgrade.
+An offline check of the pinned version's OpenAI Responses parameter mapping
 and request transformation preserved both cache options and breakpoint
 with `drop_params=True`; this does not verify the deployed proxy path.
+
+The upgrade exposes a dependency conflict: installed `fhlmi==1.0.5`
+(required by `paper-qa==2026.1.5`) declares
+`litellm>=1.83.9,<=1.84.1`. Consequently `pip check` fails with the repository's
+LiteLLM pin. The cache tests do not establish PaperQA runtime compatibility;
+the conflicting dependency constraints still need reconciliation.
 
 After deploying the fix, capture an application request at the upstream
 provider boundary and verify that both `prompt_cache_options` and the
