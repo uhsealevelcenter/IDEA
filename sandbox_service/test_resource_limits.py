@@ -12,6 +12,11 @@ from msb_sandbox import MicrosandboxTerminal, WORKSPACE_INIT_COMMAND, _positive_
 
 
 class ResourceLimitConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        guard = patch("msb_sandbox.require_native_pid_guard")
+        guard.start()
+        self.addCleanup(guard.stop)
+
     def test_positive_integer_environment_setting(self):
         with patch.dict(os.environ, {"SANDBOX_TEST_LIMIT": "2048"}):
             self.assertEqual(
