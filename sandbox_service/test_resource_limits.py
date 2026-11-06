@@ -77,6 +77,7 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         microsandbox.Sandbox = FakeSandbox
         errors = types.ModuleType("microsandbox.errors")
         errors.SandboxNotFoundError = SandboxNotFoundError
+        errors.SandboxStillRunningError = type("SandboxStillRunningError", (Exception,), {})
 
         terminal = MicrosandboxTerminal.__new__(MicrosandboxTerminal)
         terminal.session_id = "resource-test"
@@ -153,6 +154,7 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         microsandbox.Sandbox = FakeSandbox
         errors = types.ModuleType("microsandbox.errors")
         errors.SandboxNotFoundError = SandboxNotFoundError
+        errors.SandboxStillRunningError = type("SandboxStillRunningError", (Exception,), {})
 
         terminal = MicrosandboxTerminal.__new__(MicrosandboxTerminal)
         terminal.session_id = "existing-resource-test"
@@ -205,6 +207,7 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         microsandbox.Sandbox = FakeSandbox
         errors = types.ModuleType("microsandbox.errors")
         errors.SandboxNotFoundError = type("SandboxNotFoundError", (Exception,), {})
+        errors.SandboxStillRunningError = type("SandboxStillRunningError", (Exception,), {})
         terminal = MicrosandboxTerminal.__new__(MicrosandboxTerminal)
         terminal.session_id = "stopped-resource-test"
         terminal._run = lambda factory: asyncio.run(factory())

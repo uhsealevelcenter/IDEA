@@ -101,6 +101,11 @@ jobs:
             echo "==> Deployed commit:"
             git --no-pager log -1 --oneline
 
+            echo "==> Checking sandbox lifecycle regressions before deployment"
+            python3 -m unittest \
+              sandbox_service/test_lifecycle_recovery.py \
+              sandbox_service/test_resource_limits.py
+
             echo "==> Logging in to ghcr.io (ephemeral, run-scoped token) to pull private image(s) (e.g. openwebui)"
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 

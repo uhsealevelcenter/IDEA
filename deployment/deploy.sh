@@ -146,6 +146,14 @@ if [[ "${lg_ready}" != "true" ]]; then
 fi
 success "LangGraph service is healthy."
 
+# Check a real microVM, including stale-PID recovery and persistent file access.
+# The reserved probe never replaces or modifies a user's sandbox.
+echo "    Checking sandbox lifecycle and persistent filesystem..."
+docker compose exec -T sandbox python /app/lifecycle_smoke.py || fail \
+  "Sandbox lifecycle/filesystem check failed." \
+  "Inspect docker compose logs sandbox; user sandbox disks have not been reset."
+success "Sandbox lifecycle and filesystem check passed."
+
 # 4c. LiteLLM & Virtual Key Generation
 echo "    Waiting for LiteLLM proxy to become healthy (up to 3 min)..."
 litellm_ready=false
