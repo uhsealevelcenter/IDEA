@@ -170,6 +170,7 @@ class InspectImageToolTests(unittest.TestCase):
         )
         agent.sandbox_id = "test-user"
         agent.model = "gpt-5.6-terra"
+        agent.use_responses_api = True
         agent._shown_image_hashes = set()
         agent.assistant_id = None
         agent.assistant_system_prompt = None
@@ -543,7 +544,7 @@ class LangGraphKernelImageTests(unittest.TestCase):
         })
 
         self.assertEqual(messages[0].content, [{
-            "type": "text",
+            "type": "input_text",
             "text": "stable IDEA instructions",
             "prompt_cache_breakpoint": {"mode": "explicit"},
         }])

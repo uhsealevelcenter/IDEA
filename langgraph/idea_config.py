@@ -88,8 +88,8 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # and use a separate, revocable, model-restricted, low-budget virtual key.
 IDEA_CODEX_ENABLED = _env_bool("IDEA_CODEX_ENABLED", True)
 IDEA_CODEX_MODEL = (
-    os.getenv("IDEA_CODEX_MODEL", "gpt-6-sol").strip()
-    or "gpt-6-sol"
+    os.getenv("IDEA_CODEX_MODEL", "gpt-6.1-sol").strip()
+    or "gpt-6.1-sol"
 )
 IDEA_CODEX_REASONING_EFFORT = (
     os.getenv("IDEA_CODEX_REASONING_EFFORT", "medium").strip().lower()

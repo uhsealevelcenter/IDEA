@@ -122,7 +122,7 @@ cp openwebui/.env.example openwebui/.env
 - `IDEA_MODEL_REQUEST_TIMEOUT_SECONDS`: Maximum request timeout for model completions.
 - `IDEA_MODEL_MAX_RETRIES`: Number of retry attempts for failed model requests.
 - `IDEA_CODEX_ENABLED`: Toggle for delegating code-generation tasks to Codex (`true`/`false`).
-- `IDEA_CODEX_MODEL`: Model used for Codex generation (`gpt-6-sol`).
+- `IDEA_CODEX_MODEL`: Model used for Codex generation (`gpt-6.1-sol`).
 - `IDEA_CODEX_REASONING_EFFORT`: Codex reasoning depth (`medium`).
 - `IDEA_CODEX_BASE_URL` / `IDEA_CODEX_API_KEY`: Dedicated upstream credentials for Codex (optional).
 - `LANGGRAPH_DB_PASSWORD`: Dedicated PostgreSQL password for the `idea_langgraph` role.
