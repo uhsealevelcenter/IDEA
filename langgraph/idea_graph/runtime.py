@@ -10,6 +10,7 @@ import posixpath
 import time
 import uuid
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -152,7 +153,9 @@ class TerminalGraphRuntime:
             assistant_system_prompt,
             self.agent.builtin_skill_loader.render_manifest(),
         )
-        self.cacheable_system_message = _cacheable_system_message
+        self.cacheable_system_message = partial(
+            _cacheable_system_message, use_responses_api=use_responses_api,
+        )
         self.attached_files_context = _attached_files_context
         self.is_model_image_candidate = _is_model_image_candidate
         self.vision_max_image_bytes = VISION_MAX_IMAGE_BYTES
