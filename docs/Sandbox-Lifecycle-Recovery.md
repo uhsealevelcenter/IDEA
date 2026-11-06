@@ -1,65 +1,60 @@
 # Sandbox lifecycle recovery
 
-IDEA's pinned Microsandbox 0.7.2 start path checks whether the previous run's
-PID exists, even when that run is Terminated. After a container replacement,
-Linux may reuse that number for an API worker thread or another user's VM.
-Starting the stopped sandbox then fails with SandboxStillRunningError.
+IDEA pins Microsandbox 0.7.2 and applies `sandbox_service/native/pid-identity.patch`
+to upstream commit `60d4dc8a436fb9365491567ec21d073e924e3c6d` when building the
+sandbox image. The SDK's Linux start guard now checks the recorded process's
+thread group, executable, sandbox name, and sandbox ID under its existing
+native lifecycle locks. An unrelated reused PID no longer blocks resume.
+Matching or ambiguous runtime identities remain protected. No catalog schema,
+guest protocol, image format, or user disk is changed by the patch.
 
-## Compatibility guard
+The native extension exports an IDEA capability marker. The service refuses to
+attach with an unpatched SDK, rather than silently reverting to PID-only checks.
+The existing reconnect handler refreshes state and connects only to Running VMs.
+Failed initialization releases its background event-loop thread.
 
-Before resuming an existing sandbox, IDEA's `lifecycle_recovery.py` uses the
-same per-name transition and lifecycle flock files as Microsandbox. Under
-those locks and a SQLite write transaction, it examines only the latest run.
-It clears that run's PID only if the sandbox is Stopped/Crashed, the run is
-Terminated, and `/proc` proves the PID is absent or belongs to an unrelated
-thread/process. Live matching runtimes and ambiguous/unreadable identities
-are preserved. Lock contention leaves recovery to the SDK. No processes are
-signalled and no guest disk, file, image, or sandbox definition is replaced.
-Every successful repair logs the sandbox, run ID, and old PID.
+## SQLite safety
 
-The SDK then performs its normal locked start. If another start wins, IDEA
-refreshes state and connects only when it is Running. A second stale-PID
-repair permits one retry; other lifecycle failures propagate without creating
-a replacement sandbox. Failed terminal initialization also releases its event
-loop thread.
+The old Python compatibility guard and deployment probe opened the live native
+catalog through `sqlite3`. That design was unsafe: journal files held by the
+native SDK could be unlinked, followed by delayed catalog corruption. Native
+and Python database interoperability must not be assumed, even across separate
+processes. All Python SQLite catalog access has been removed from live service
+modules. Runtime/catalog changes use the native SDK exclusively.
 
-The adapter is Linux-only and explicitly limited to SDK version 0.7.2 because
-it uses private schema and lock conventions. The upstream source used to
-validate those conventions is tag v0.7.2, commit
-`60d4dc8a436fb9365491567ec21d073e924e3c6d`:
+Do not run Python SQLite integrity checks or metadata repairs against a live
+Microsandbox catalog. First stop all SDK, CLI, and VM catalog writers and retain
+the complete database/journal set. User `upper.ext4` disks are separate from the
+catalog and must not be recreated as a metadata recovery shortcut.
 
-- `sdk/rust/lib/backend/local/sandbox/mod.rs`: start ordering and previous PID guard
-- `crates/runtime/lib/client/ipc.rs`: lifecycle and transition locks
-- `sdk/rust/lib/config/mod.rs`: home/run paths
+The entrypoint runs `offline_catalog_check.py` before loading the native SDK or
+starting Uvicorn. It refuses to open the catalog if another Python/API/msb
+process is present in the container. Integrity or foreign-key failures prevent
+startup. This checker is a separate, startup-only process and must never be
+called from an API handler or a live health check.
 
-On a Microsandbox upgrade, review this adapter and the integration probe
-against upstream. Prefer removing the adapter when upstream fixes runtime
-identity validation. Rolling back application code preserves disks but
-reintroduces the original resume failure; already cleared PIDs remain valid
-terminal history.
+## Verification
 
-## Verification and deployment
+- The native patch includes Rust tests for recycled worker TIDs, unrelated
+  processes, another sandbox's PID, matching ownership, and ambiguous metadata.
+- Python regressions reject an unpatched native extension, verify state-aware
+  reconnect and thread cleanup, and prohibit `sqlite3` imports in live modules.
+- Deployment runs `/app/lifecycle_smoke.py` against the reserved
+  `idea-lifecycle-smoke` sandbox (1 vCPU, 1024 MiB, 4096 MiB sparse upper disk).
+  It checks the previous deployment's marker, performs three stop/resume cycles,
+  verifies the marker and working directory each time, and rejects unlinked
+  catalog/journal descriptors in its own process or the API process. It leaves
+  the probe stopped. It never injects faults into a live database.
+- Corruption recovery validation must include repeated native SDK operations,
+  process/container restarts, then an **offline** integrity and foreign-key check.
+  An immediate successful resume alone does not establish long-term integrity.
 
-Run focused regressions with:
+The extension is compiled reproducibly in a Rust 1.94 builder using the pinned
+upstream lockfile. The installed `msb` CLI remains v0.7.2. On any SDK/runtime
+upgrade, revalidate the patch and remove it when upstream provides equivalent
+process-identity validation. Reinstalling the stock Python wheel requires
+rebuilding the service image to restore the native patch.
 
-```sh
-python3 -m unittest sandbox_service/test_lifecycle_recovery.py sandbox_service/test_resource_limits.py
-```
-
-The deploy workflow runs these before replacing containers. Deployment then
-runs `/app/lifecycle_smoke.py` in the sandbox service. This uses only the
-reserved `idea-lifecycle-smoke` sandbox (1 vCPU, 1024 MiB, 4096 MiB sparse
-upper disk). It checks the previous deployment's marker if the probe already
-exists, writes a new marker, stops the VM, deliberately sets its terminated
-run's PID to the live probe process, resumes it, and verifies the file and
-working directory. It leaves the probe stopped and retains its disk for the
-next deployment. Production deployment fails if the probe fails. Local-shell
-deployments skip the microVM check.
-
-The same real-VM probe was run before pushing: deployed code reproduced the
-original SandboxStillRunningError/SandboxNotRunningError failure; the proposed
-guard recovered the deliberate collision and preserved the marker.
-
-This change addresses runtime resume and deployment detection. The separate
-FileNav POST `/files/cwd` compatibility and outer-container listing fallback
-issues are not changed here.
+This fix does not address the separate FileNav POST `/files/cwd` compatibility
+or outer-container filesystem fallback behavior. A listing HTTP 200 alone is
+insufficient evidence of successful guest attachment.

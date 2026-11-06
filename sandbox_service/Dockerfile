@@ -1,6 +1,24 @@
 # Dockerfile for the Sandbox Service - owns all persistent terminal/sandbox
 # state (see terminal_registry.py). Kept separate from the langgraph service
 # so langgraph itself can stay stateless with respect to terminal execution.
+FROM rust:1.94-bookworm AS native-sdk
+ARG MICROSANDBOX_COMMIT=60d4dc8a436fb9365491567ec21d073e924e3c6d
+WORKDIR /src
+RUN apt-get update && apt-get install -y libcap-ng-dev && rm -rf /var/lib/apt/lists/*
+RUN git init . && git remote add origin https://github.com/microsandbox/microsandbox.git \
+    && git fetch --depth 1 origin ${MICROSANDBOX_COMMIT} && git checkout --detach FETCH_HEAD
+COPY native/pid-identity.patch /tmp/pid-identity.patch
+RUN git apply --check /tmp/pid-identity.patch && git apply /tmp/pid-identity.patch
+# Build the original 0.7.2 SDK with only native process-identity validation.
+# Catalog schema, guest protocol, and installed msb runtime remain unchanged.
+RUN CARGO_BUILD_JOBS=4 cargo build --locked -p microsandbox-py --profile ci --features pyo3/extension-module \
+    && strip /src/target/ci/lib_microsandbox.so \
+    && cp /src/target/ci/lib_microsandbox.so /idea-microsandbox.so
+RUN tail -n +$(grep -n '^// PID numbers survive' sdk/rust/lib/backend/local/sandbox/mod.rs | cut -d: -f1) \
+      sdk/rust/lib/backend/local/sandbox/mod.rs > /tmp/identity-tests.rs \
+    && rustc --edition 2024 --test /tmp/identity-tests.rs -o /tmp/identity-tests \
+    && /tmp/identity-tests
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -12,6 +30,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     build-essential \
+    libcap-ng0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the microsandbox (msb) runtime used for per-user isolated microVM
@@ -37,11 +56,14 @@ ENV PATH="/root/.microsandbox/bin:/root/.local/bin:${PATH}"
 # Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=native-sdk /idea-microsandbox.so /usr/local/lib/python3.11/site-packages/microsandbox/_microsandbox.abi3.so
+RUN python -c 'from microsandbox import _microsandbox; assert _microsandbox.idea_pid_identity_guard()'
 
 # Copy service code
 COPY msb_sandbox.py .
 COPY lifecycle_recovery.py .
 COPY lifecycle_smoke.py .
+COPY offline_catalog_check.py .
 COPY terminal_registry.py .
 COPY main.py .
 COPY entrypoint.sh .

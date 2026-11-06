@@ -25,7 +25,7 @@ import urllib.parse
 import uuid
 from typing import Callable, Optional
 
-from lifecycle_recovery import clear_stale_runtime_pid
+from lifecycle_recovery import require_native_pid_guard
 
 # ioctl request number for KVM_GET_API_VERSION (arch-independent, see
 # linux/kvm.h) - used by _kvm_functional() below. Imported lazily inside
@@ -289,6 +289,8 @@ class MicrosandboxTerminal:
         from microsandbox import Image, Sandbox
         from microsandbox.errors import SandboxNotFoundError, SandboxStillRunningError
 
+        require_native_pid_guard()
+
         async def _get_sandbox():
             # Explicitly branch on the sandbox's actual current state
             # instead of a blind try/except-fallback-to-create(): calling
@@ -327,7 +329,6 @@ class MicrosandboxTerminal:
                 return await handle.connect()
             # Resumes an existing stopped-but-not-removed sandbox of this
             # name with its filesystem state intact.
-            await asyncio.to_thread(clear_stale_runtime_pid, self.session_id)
             try:
                 return await Sandbox.start(self.session_id, detached=True)
             except SandboxStillRunningError:
@@ -336,8 +337,6 @@ class MicrosandboxTerminal:
                 await handle.refresh()
                 if handle.status == "running":
                     return await handle.connect()
-                if await asyncio.to_thread(clear_stale_runtime_pid, self.session_id):
-                    return await Sandbox.start(self.session_id, detached=True)
                 raise
 
         self._sandbox = self._run(_get_sandbox)

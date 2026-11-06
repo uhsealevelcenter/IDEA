@@ -1,0 +1,157 @@
+diff --git a/sdk/python/src/lib.rs b/sdk/python/src/lib.rs
+index 0d84378..1b1223b 100644
+--- a/sdk/python/src/lib.rs
++++ b/sdk/python/src/lib.rs
+@@ -48,6 +48,7 @@ struct PyBackendInfo {
+ #[pymodule]
+ fn _microsandbox(m: &Bound<'_, PyModule>) -> PyResult<()> {
+     m.add_function(wrap_pyfunction!(version, m)?)?;
++    m.add_function(wrap_pyfunction!(idea_pid_identity_guard, m)?)?;
+     m.add_function(wrap_pyfunction!(setup::resolve_runtime, m)?)?;
+     m.add_function(wrap_pyfunction!(setup::is_runtime_installed, m)?)?;
+     m.add_function(wrap_pyfunction!(setup::install_runtime, m)?)?;
+@@ -282,3 +283,8 @@ impl Drop for PyBackendScope {
+         self.restore_inner();
+     }
+ }
++
++#[pyfunction]
++fn idea_pid_identity_guard() -> bool {
++    cfg!(target_os = "linux")
++}
+diff --git a/sdk/rust/lib/backend/local/sandbox/mod.rs b/sdk/rust/lib/backend/local/sandbox/mod.rs
+index a00930d..2eaa396 100644
+--- a/sdk/rust/lib/backend/local/sandbox/mod.rs
++++ b/sdk/rust/lib/backend/local/sandbox/mod.rs
+@@ -162,6 +162,10 @@ impl LocalBackend {
+             .flatten();
+         if let Some(pid) = previous_run.and_then(|run| run.pid) {
+             let alive = || -> MicrosandboxResult<bool> {
++                #[cfg(target_os = "linux")]
++                if !recorded_runtime_matches(pid, name, model.id) {
++                    return Ok(false);
++                }
+                 #[cfg(windows)]
+                 if let Some(owner) = &previous_owner {
+                     return Ok(owner
+@@ -2485,3 +2489,120 @@ mod tests {
+         waiter.join().unwrap();
+     }
+ }
++
++// PID numbers survive in terminal history and can be reused after a container
++// restart. This check runs under the existing native lifecycle/transition locks;
++// it never edits catalog rows or signals the process behind a recycled number.
++#[cfg(target_os = "linux")]
++fn recorded_runtime_matches(pid: i32, name: &str, sandbox_id: i32) -> bool {
++    let directory = std::path::PathBuf::from(format!("/proc/{pid}"));
++    let status = match std::fs::read_to_string(directory.join("status")) {
++        Ok(value) => value,
++        Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
++    };
++    let arguments = match std::fs::read(directory.join("cmdline")) {
++        Ok(value) => value,
++        Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
++    };
++    runtime_identity_matches(&status, &arguments, pid, name, sandbox_id)
++}
++
++#[cfg(target_os = "linux")]
++fn runtime_identity_matches(
++    status: &str,
++    arguments: &[u8],
++    pid: i32,
++    name: &str,
++    sandbox_id: i32,
++) -> bool {
++    if let Some(tgid) = status.lines().find_map(|line| line.strip_prefix("Tgid:")) {
++        if let Ok(tgid) = tgid.trim().parse::<i32>() {
++            if tgid != pid {
++                return false;
++            }
++        }
++    }
++    let args: Vec<&[u8]> = arguments.split(|byte| *byte == 0).collect();
++    if args.first().is_none_or(|value| value.is_empty()) {
++        return true; // Unreadable/ambiguous ownership is never permission to start.
++    }
++    let executable = String::from_utf8_lossy(args[0]);
++    if std::path::Path::new(executable.as_ref()).file_name() != Some(std::ffi::OsStr::new("msb"))
++        || args.get(1).copied() != Some(b"machine".as_slice())
++    {
++        return false;
++    }
++    for (flag, expected) in [
++        (b"--name".as_slice(), name.to_owned()),
++        (b"--sandbox-id".as_slice(), sandbox_id.to_string()),
++    ] {
++        if let Some(index) = args.iter().position(|value| *value == flag) {
++            if let Some(actual) = args.get(index + 1) {
++                if *actual != expected.as_bytes() {
++                    return false;
++                }
++            }
++        }
++    }
++    true
++}
++
++#[cfg(all(test, target_os = "linux"))]
++mod recorded_runtime_identity_tests {
++    use super::runtime_identity_matches;
++
++    #[test]
++    fn recycled_thread_and_unrelated_process_do_not_block_resume() {
++        assert!(!runtime_identity_matches(
++            "Tgid: 1",
++            b"python\0uvicorn\0",
++            37,
++            "alice",
++            5
++        ));
++        assert!(!runtime_identity_matches(
++            "Tgid: 37",
++            b"python\0worker\0",
++            37,
++            "alice",
++            5
++        ));
++    }
++
++    #[test]
++    fn another_sandbox_is_not_the_previous_owner() {
++        assert!(!runtime_identity_matches(
++            "Tgid: 37",
++            b"/bin/msb\0machine\0--name\0bob\0--sandbox-id\06\0",
++            37,
++            "alice",
++            5
++        ));
++        assert!(!runtime_identity_matches(
++            "Tgid: 37",
++            b"/bin/msb\0machine\0--name\0alice\0--sandbox-id\06\0",
++            37,
++            "alice",
++            5
++        ));
++    }
++
++    #[test]
++    fn matching_or_ambiguous_runtime_is_preserved() {
++        assert!(runtime_identity_matches(
++            "Tgid: 37",
++            b"/bin/msb\0machine\0--name\0alice\0--sandbox-id\05\0",
++            37,
++            "alice",
++            5
++        ));
++        assert!(runtime_identity_matches(
++            "Tgid: 37",
++            b"/bin/msb\0machine\0",
++            37,
++            "alice",
++            5
++        ));
++        assert!(runtime_identity_matches("Tgid: 37", b"", 37, "alice", 5));
++    }
++}
