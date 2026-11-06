@@ -44,4 +44,7 @@ EOF
   echo "Configured microsandbox registry auth for ghcr.io (user: ${GHCR_USERNAME:-uhsealevelcenter})"
 fi
 
+# This Python process exits before the native SDK is loaded. Never move this
+# check into the live API: Python/native SQLite interoperability is unsafe.
+python /app/offline_catalog_check.py
 exec uvicorn main:app --host 0.0.0.0 --port 8020
