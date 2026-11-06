@@ -133,8 +133,10 @@ def _cacheable_system_message(content: str, model: str) -> SystemMessage:
     for models that support it (see _supports_prompt_caching)."""
     if not _supports_prompt_caching(model):
         return SystemMessage(content=content)
+    # Use a native Responses block: langchain-openai rebuilds generic "text"
+    # blocks with only type/text, silently dropping prompt_cache_breakpoint.
     return SystemMessage(content=[{
-        "type": "text",
+        "type": "input_text",
         "text": content,
         "prompt_cache_breakpoint": {"mode": "explicit"},
     }])

@@ -543,7 +543,7 @@ class LangGraphKernelImageTests(unittest.TestCase):
         })
 
         self.assertEqual(messages[0].content, [{
-            "type": "text",
+            "type": "input_text",
             "text": "stable IDEA instructions",
             "prompt_cache_breakpoint": {"mode": "explicit"},
         }])
