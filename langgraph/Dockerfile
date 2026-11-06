@@ -41,6 +41,7 @@ COPY multi_agent.py .
 COPY langgraph_service.py .
 COPY idea_config.py .
 COPY progress.py .
+COPY iteration_budget.py .
 
 # Fail the image build if a root module is omitted or the service import graph
 # is otherwise incomplete. This runs without contacting Redis/PostgreSQL.

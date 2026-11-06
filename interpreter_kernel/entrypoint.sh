@@ -24,6 +24,9 @@ export OPEN_TERMINAL_API_KEY
 OPEN_TERMINAL_API_KEY="$(cat "$KEY_PATH")"
 chmod 644 "$KEY_PATH"
 
+export OPEN_TERMINAL_FILE_BROWSER_ROOT="filesystem"
+export OPEN_TERMINAL_CWD="/workspace"
+
 # Open Terminal's own entrypoint ends in `exec`, which is fine backgrounded
 # here - it just replaces this background job's process, not our script.
 /app/entrypoint-slim.sh run &

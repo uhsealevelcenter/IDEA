@@ -53,7 +53,16 @@ model_list:
       # Retained as an explicit Advanced-agent rollback route.
       mode: responses
 
-  # Standard IDEA Agent and IDEA Codex use Responses with medium reasoning.
+  # Standard IDEA Agent uses Responses with medium reasoning.
+  - model_name: gpt-6.1-sol
+    litellm_params:
+      model: openai/gpt-6.1-sol
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: responses
+
+  # IDEA Codex and the standard-agent rollback route.
   - model_name: gpt-6-sol
     litellm_params:
       model: openai/gpt-6-sol
@@ -133,6 +142,7 @@ general_settings:
 litellm_settings:
   set_verbose: false # Disable debug logging in production.
   json_logs: true # Structured (JSON) logs.
+  drop_params: true
   # Send every request/response (langgraph's TerminalAgent, PaperQA, and Open
   # WebUI's background-task model all route through this proxy - see
   # docker-compose.yml's `litellm` service) to the self-hosted `langfuse`

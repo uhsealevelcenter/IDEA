@@ -176,7 +176,7 @@ def migration_values(legacy: dict[str, str]) -> dict[str, dict[str, str]]:
             "SANDBOX_IMAGE": first(
                 legacy,
                 "SANDBOX_IMAGE",
-                default="ghcr.io/uhsealevelcenter/idea-oi-kernel:slim",
+                default="ghcr.io/uhsealevelcenter/idea-oi-kernel:research-2026.08.17-2",
             ),
             "GHCR_USERNAME": first(legacy, "GHCR_USERNAME"),
             "GHCR_PAT": first(legacy, "GHCR_PAT"),

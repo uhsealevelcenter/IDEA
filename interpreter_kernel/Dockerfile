@@ -117,6 +117,8 @@ RUN playwright install-deps chromium \
     && ln -s /opt/guarddog-venv/bin/guarddog /usr/local/bin/guarddog \
     && ln -s "$(find /opt/ms-playwright -type f -name chrome | head -n 1)" /usr/local/bin/chromium
 
+RUN mkdir -p /workspace /outputs && chown -R user:user /workspace /outputs && chmod 777 /workspace /outputs
+
 WORKDIR /opt/oi_kernel
 
 # Vendored, unmodified Open Interpreter execution engine. Only the leaf Python

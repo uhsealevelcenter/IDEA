@@ -86,7 +86,7 @@ class ToolOutcome:
 
 class GraphRuntime(Protocol):
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]: ...
-    def call_model(self, messages: list[BaseMessage], *, cancellation: Any = None) -> AIMessage: ...
+    def call_model(self, messages: list[BaseMessage], *, cancellation: Any = None, allow_tools: bool = True) -> AIMessage: ...
     def model_messages(self, state: dict[str, Any]) -> list[BaseMessage]: ...
     def execute_tool(self, tool_call: dict[str, Any], state: dict[str, Any]) -> ToolOutcome: ...
     def persist_python_source(self, execution_id: str, code: str, state: dict[str, Any]) -> str: ...
@@ -305,7 +305,8 @@ class TerminalGraphRuntime:
             result.append(HumanMessage(content=vision_content))
         return result
 
-    def call_model(self, messages: list[BaseMessage], *, cancellation: Any = None) -> AIMessage:
+    def call_model(self, messages: list[BaseMessage], *, cancellation: Any = None, allow_tools: bool = True) -> AIMessage:
+        llm = self.agent.llm if allow_tools else self.agent.llm.bind(tool_choice="none")
         async def consume_stream(activity: dict[str, bool]) -> AIMessage:
             aggregated = None
             pending_text = ""
@@ -390,7 +391,7 @@ class TerminalGraphRuntime:
                     })
 
             try:
-                async for chunk in self.agent.llm.astream(messages):
+                async for chunk in llm.astream(messages):
                     activity["received_chunk"] = True
                     aggregated = chunk if aggregated is None else aggregated + chunk
                     text = str(getattr(chunk, "text", "") or "")

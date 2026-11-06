@@ -22,7 +22,7 @@ class ChatRunEventTests(unittest.TestCase):
         )
 
         self.assertEqual(request.agent_variant, "standard")
-        self.assertEqual(langgraph_service.IDEA_AGENT_MODEL, "gpt-6-sol")
+        self.assertEqual(langgraph_service.IDEA_AGENT_MODEL, "gpt-6.1-sol")
         profile = langgraph_service.resolve_idea_agent_profile("standard")
         self.assertEqual(profile.reasoning_effort, "medium")
         self.assertTrue(profile.use_responses_api)
