@@ -2,7 +2,7 @@
 # Run daily as the deployment user, which has access to Docker.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-# Renew all lineages (IDEA and Langfuse) using their saved webroot settings.
+# Renew all lineages (IDEA, Langfuse, and LiteLLM) using their saved webroot settings.
 # Accept options such as --dry-run for staging validation; do not reload on failure.
 docker run --rm \
   -v "$PWD/certbot/conf:/etc/letsencrypt" \

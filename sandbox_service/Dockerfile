@@ -40,6 +40,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy service code
 COPY msb_sandbox.py .
+COPY lifecycle_recovery.py .
+COPY lifecycle_smoke.py .
 COPY terminal_registry.py .
 COPY main.py .
 COPY entrypoint.sh .
