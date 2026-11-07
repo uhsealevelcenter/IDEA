@@ -41,7 +41,6 @@ run could not complete because the Let's Encrypt staging service returned
 `rateLimited: Service busy; retry later`. Automatic renewal is scheduled, but
 repeat the dry-run command above when staging is available.
 
-LiteLLM's direct host port is restricted to loopback at `127.0.0.1:8030`.
-Nginx also reaches the service over the Compose network at `idea_litellm:8080`,
-and public API clients use `https://litellm.ideaxiom.org` (or append `/v1` when
-their SDK expects an OpenAI-compatible base URL).
+Direct public HTTP access on port 8030 remains enabled as previously requested.
+API clients can now use `https://litellm.ideaxiom.org` as their proxy origin
+(or append `/v1` when their SDK expects an OpenAI-compatible base URL).
