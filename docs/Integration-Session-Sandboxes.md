@@ -18,13 +18,14 @@ Session IDs are opaque: 1–256 UTF-8 bytes, no control characters, never trimme
 
 **End a conversation** (website "End" / "New conversation") by sending the same model the same session with `X-IDEA-Integration-Action: end` (or `"action": "end"` in `idea_integration`). Later messages with that session receive "This conversation has ended."
 
-### Transport spike (must be done on the deployed versions)
+### n8n setup
 
-The n8n model nodes may not be able to send per-request headers or body fields built from expressions. Before relying on either transport:
+The OpenAI Chat Model node has no per-request header or body option, but its `openAiApi` credential has a custom header whose value is evaluated as an expression on every call. Verified on n8n 2.26.8 with Open WebUI 0.12.5-idea.0.11: give every model node (coordinator and specialists) a credential with
 
-1. `curl` Open WebUI's `/api/chat/completions` with the integration account token, model `idea_terminal_agent.idea-terminal-agent-integration`, and each transport above; confirm the reply is not the "requires an integration session ID" error.
-2. Confirm the chosen n8n node sends the value on **every** specialist call, from `{{$('Chat Trigger').item.json.sessionId}}`, not a model-generated argument.
-3. If a node cannot, use an HTTP Request node or a small adapter for those calls, preserving tool-call, streaming, and error behaviour.
+- API key: the integration account's Open WebUI API key; base URL: `https://<idea-host>/api`;
+- custom header `X-IDEA-Integration-Session` with value `={{ $("When chat message received").first().json.sessionId }}` (use the Chat Trigger node's name).
+
+Specialist Assistants (for example `sea`, `mars-assistant`) can stay as the model IDs; requests from an account listed in `INTEGRATION_ACCOUNT_IDS` run in the session VM with per-Assistant history. Non-IDEA models (for example a LiteLLM coordinator) ignore the header. Re-verify after upgrading n8n or Open WebUI: if the header stops arriving, every request from the integration account fails with "requires an integration session ID" rather than falling back to a shared VM.
 
 ## Identity
 
