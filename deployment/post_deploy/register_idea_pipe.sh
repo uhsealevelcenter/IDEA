@@ -114,7 +114,19 @@ INTERNAL_TOKEN="$(grep -E '^INTERNAL_SERVICE_TOKEN=' "${REPO_ROOT}/langgraph/.en
 INTERNAL_TOKEN="${INTERNAL_TOKEN:-${INTERNAL_SERVICE_TOKEN:-}}"
 if [ -n "${INTERNAL_TOKEN}" ]; then
   echo "==> Setting INTERNAL_SERVICE_TOKEN Valve on '${FUNCTION_ID}'..."
-  VALVE_PAYLOAD="$(python3 -c 'import json, sys; print(json.dumps({"INTERNAL_SERVICE_TOKEN": sys.argv[1]}))' "${INTERNAL_TOKEN}")"
+  # Open WebUI replaces the whole Valves object, so merge into the current
+  # values to keep operator settings such as the integration model.
+  CURRENT_VALVES="$(curl -s -H "${AUTH_HEADER}" "${API_BASE}/id/${FUNCTION_ID}/valves" || true)"
+  VALVE_PAYLOAD="$(CURRENT_VALVES="${CURRENT_VALVES}" python3 -c '
+import json, os, sys
+try:
+    valves = json.loads(os.environ.get("CURRENT_VALVES") or "{}")
+except ValueError:
+    valves = {}
+valves = valves if isinstance(valves, dict) else {}
+valves["INTERNAL_SERVICE_TOKEN"] = sys.argv[1]
+print(json.dumps(valves))
+' "${INTERNAL_TOKEN}")"
   curl -s -o /dev/null -w '%{http_code}\n' \
     -X POST "${API_BASE}/id/${FUNCTION_ID}/valves/update" \
     -H "${AUTH_HEADER}" \

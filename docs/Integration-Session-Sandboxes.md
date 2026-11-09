@@ -4,7 +4,7 @@ Each public n8n conversation runs in its own temporary microVM, owned by the ded
 
 ## Request envelope
 
-Use the Pipe model `idea-terminal-agent-integration` (enable the Pipe valve `INTEGRATION_MODEL_ENABLED`, and restrict model access to the integration account). Every request to it must carry the Chat Trigger `sessionId`, unchanged, through **one** of:
+Use the Pipe model `idea-terminal-agent-integration` (enable the Pipe valve `INTEGRATION_MODEL_ENABLED`, restrict model access to the integration account, and list that account's user ID in the valve `INTEGRATION_ACCOUNT_IDS` so it cannot use browser models or Assistants). Every request to it must carry the Chat Trigger `sessionId`, unchanged, through **one** of:
 
 | Transport | Field |
 |---|---|

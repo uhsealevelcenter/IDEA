@@ -915,6 +915,15 @@ class Pipe:
                 "model. Must be listed in LangGraph's IDEA_INTEGRATION_IDS."
             ),
         )
+        INTEGRATION_ACCOUNT_IDS: str = Field(
+            default="",
+            description=(
+                "Comma-separated Open WebUI user IDs of integration accounts. "
+                "These accounts may use only the integration model, so a "
+                "public conversation can never reach the account's personal "
+                "sandbox through a browser model or Assistant."
+            ),
+        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -975,6 +984,14 @@ class Pipe:
     ) -> AsyncGenerator[str, None]:
         user = __user__ or {}
         integration_model = _is_integration_model(body.get("model"))
+        integration_accounts = {
+            item.strip()
+            for item in self.valves.INTEGRATION_ACCOUNT_IDS.split(",")
+            if item.strip()
+        }
+        if not integration_model and str(user.get("id") or "") in integration_accounts:
+            yield "**Error:** integration accounts may only use the integration model."
+            return
         try:
             integration = _integration_request_context(
                 body, __metadata__, __request__, self.valves.INTEGRATION_ID,

@@ -267,10 +267,14 @@ class PipeTransportTests(unittest.TestCase):
         client.get = AsyncMock(return_value=finished)
         return client
 
-    def _run(self, *, model, body_extra=None, headers=None, metadata=None, enabled=True):
+    def _run(
+        self, *, model, body_extra=None, headers=None, metadata=None,
+        enabled=True, integration_accounts="",
+    ):
         pipe = idea_pipe.Pipe()
         pipe.valves.INTEGRATION_MODEL_ENABLED = enabled
         pipe.valves.INTEGRATION_ID = "n8n-test"
+        pipe.valves.INTEGRATION_ACCOUNT_IDS = integration_accounts
         client = self._client()
         body = {"model": model, "messages": [{"role": "user", "content": "hi"}]}
         body.update(body_extra or {})
@@ -349,6 +353,23 @@ class PipeTransportTests(unittest.TestCase):
             output, client = self._run(**case)
             self.assertTrue(output and output[0].startswith("**Error:**"), case)
             client.post.assert_not_called()
+
+    def test_integration_accounts_cannot_use_browser_models(self):
+        for model in ("idea-terminal-agent", "idea_terminal_agent.idea-terminal-agent-advanced"):
+            output, client = self._run(model=model, integration_accounts="other, owner-1")
+            self.assertEqual(
+                output, ["**Error:** integration accounts may only use the integration model."],
+            )
+            client.post.assert_not_called()
+
+        _, client = self._run(
+            model="idea-terminal-agent-integration",
+            headers={"x-idea-integration-session": "visitor-1"},
+            integration_accounts="owner-1",
+        )
+        self.assertEqual(
+            client.post.call_args.kwargs["json"]["integration_session_id"], "visitor-1",
+        )
 
     def test_end_action_closes_the_session_without_running_the_agent(self):
         output, client = self._run(
