@@ -516,6 +516,18 @@ class IntegrationExportTests(unittest.TestCase):
         self._export()
         self.assertEqual(self.reads, [])
 
+    def test_public_download_uses_only_the_object_id(self):
+        self._export("ws_a")
+        [item] = self.store.manifest("ws_a")
+        found = self.store.resolve_public(item.object_id)
+        self.assertEqual(found[1].read_bytes(), b"12345")
+        self.assertIsNone(self.store.resolve_public("../" + item.object_id))
+        self.assertIsNone(self.store.resolve_public(item.object_id + "A"))
+        self.assertIsNone(self.store.get_object("ws_b", item.object_id))
+        self.clock.advance(101)
+        self.assertEqual(self.store.purge_expired(), 1)
+        self.assertIsNone(self.store.resolve_public(item.object_id))
+
     def test_downloads_resolve_only_through_the_owning_manifest(self):
         self._export("ws_a")
         [item] = self.store.manifest("ws_a")

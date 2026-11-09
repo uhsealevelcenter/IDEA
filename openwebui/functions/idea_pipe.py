@@ -8,7 +8,7 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.4.0
+version: 0.4.1
 """
 
 import asyncio
@@ -161,8 +161,21 @@ def _is_python_console_chunk(chunk: dict) -> bool:
     )
 
 
-def _python_console_stream_close() -> str:
+def _python_console_stream_close(plain_tools: bool = False) -> str:
+    if plain_tools:
+        return "\n````\n\n"
     return f"\n````\n{TOOL_OUTPUT_END}\n\n"
+
+
+def _tool_edges(plain_tools: bool) -> tuple[str, str]:
+    """Open WebUI hides tool chrome between reference-definition markers.
+
+    Other clients, including n8n, render those markers and the block between
+    them as ordinary text, so integration replies omit the markers.
+    """
+    if plain_tools:
+        return "", ""
+    return f"{TOOL_OUTPUT_START}\n", TOOL_OUTPUT_END
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -741,14 +754,7 @@ def _file_url(
     return _download_url(file_id, public_base_url)
 
 
-def _file_link(
-    file_id: str,
-    filename: str,
-    public_base_url: str = "",
-) -> str:
-    """Return a filename-only link that opens the output in a new tab."""
-    display_name = PurePosixPath(filename).name or "file"
-    url = _file_url(file_id, filename, public_base_url)
+def _markdown_link(display_name: str, url: str) -> str:
     markdown_label = (
         display_name.replace("\\", "\\\\")
         .replace("[", "\\[")
@@ -760,6 +766,32 @@ def _file_link(
     return f"[{markdown_label}]({url})"
 
 
+def _file_link(
+    file_id: str,
+    filename: str,
+    public_base_url: str = "",
+) -> str:
+    """Return a filename-only link that opens the output in a new tab."""
+    display_name = PurePosixPath(filename).name or "file"
+    return _markdown_link(
+        display_name, _file_url(file_id, filename, public_base_url),
+    )
+
+
+def _public_export_url(
+    object_id: str,
+    filename: str,
+    public_base_url: str = "",
+) -> str:
+    """Capability URL for one exported file. The filename is cosmetic."""
+    display_name = PurePosixPath(filename).name or "file"
+    path = (
+        f"/integration-exports/{quote(object_id, safe='')}/"
+        f"{quote(display_name, safe='')}"
+    )
+    return f"{public_base_url.rstrip('/')}{path}" if public_base_url else path
+
+
 def _normalized_output_path(filepath: str) -> str:
     """Normalize URL-encoded model placeholders for exact file-map lookup."""
     return posixpath.normpath(unquote(filepath))
@@ -769,8 +801,14 @@ def _resolve_output_links(
     content: str,
     synced_files: list[dict],
     public_base_url: str = "",
+    export_urls: dict[str, str] | None = None,
 ) -> tuple[str, set[str]]:
-    """Replace sandbox output URLs with their real Open WebUI file URLs."""
+    """Replace sandbox output URLs with downloadable links.
+
+    ``export_urls`` is the integration-session map of output path to public
+    capability URL. When it is set, Open WebUI file URLs are not used: those
+    belong to the shared integration account and are not a visitor boundary.
+    """
     files_by_path = {
         item.get("filename"): item.get("openwebui_file_id")
         for item in synced_files
@@ -781,6 +819,13 @@ def _resolve_output_links(
     def replace_markdown(match: re.Match) -> str:
         label, filepath = match.groups()
         normalized_path = _normalized_output_path(filepath)
+        if export_urls is not None:
+            url = export_urls.get(normalized_path)
+            if not url:
+                return f"⚠️ {label} (output link unavailable)"
+            referenced_file_ids.add(normalized_path)
+            display_name = PurePosixPath(normalized_path).name or label
+            return _markdown_link(display_name, url)
         file_id = files_by_path.get(normalized_path)
         if not file_id:
             return f"⚠️ {label} (output link unavailable)"
@@ -792,6 +837,13 @@ def _resolve_output_links(
     def replace_url(match: re.Match) -> str:
         filepath = match.group(1)
         normalized_path = _normalized_output_path(filepath)
+        if export_urls is not None:
+            url = export_urls.get(normalized_path)
+            display_name = PurePosixPath(filepath).name or filepath
+            if not url:
+                return f"⚠️ {display_name} (output link unavailable)"
+            referenced_file_ids.add(normalized_path)
+            return _markdown_link(display_name, url)
         file_id = files_by_path.get(normalized_path)
         if not file_id:
             display_name = PurePosixPath(filepath).name or filepath
@@ -806,8 +858,9 @@ def _resolve_displayed_images(
     image_paths: list[str],
     synced_files: list[dict],
     public_base_url: str = "",
+    export_urls: dict[str, str] | None = None,
 ) -> tuple[str, set[str]]:
-    """Render displayed sandbox images through durable Open WebUI files."""
+    """Render displayed sandbox images through durable file URLs."""
     files_by_path = {
         item.get("filename"): item.get("openwebui_file_id")
         for item in synced_files
@@ -826,6 +879,29 @@ def _resolve_displayed_images(
         if path in seen:
             continue
         seen.add(path)
+        if export_urls is not None:
+            url = export_urls.get(path)
+            resolved = path
+            if url is None and path.startswith("/workspace/"):
+                published = "/outputs/" + path.removeprefix("/workspace/")
+                if published in export_urls:
+                    resolved = published
+                    url = export_urls[published]
+            if url is None:
+                matches = [
+                    item for item in export_urls
+                    if PurePosixPath(item).name == PurePosixPath(path).name
+                ]
+                if len(matches) == 1:
+                    resolved = matches[0]
+                    url = export_urls[resolved]
+            display_name = PurePosixPath(resolved).name or path
+            if not url:
+                rendered.append(f"⚠️ {display_name} (image preview unavailable)")
+            else:
+                referenced_file_ids.add(resolved)
+                rendered.append(f"![generated image]({url})")
+            continue
         resolved_path = path
         file_id = files_by_path.get(resolved_path)
         if not file_id and path.startswith("/workspace/"):
@@ -970,6 +1046,35 @@ class Pipe:
             message = _backend_error_message(exc) or "Unable to end the conversation."
             return f"**Error:** {message}"
         return "Conversation ended."
+
+    async def _integration_export_urls(
+        self, user_id: str, integration: dict, public_base_url: str,
+    ) -> dict[str, str]:
+        """Map /outputs paths to public capability URLs for this session."""
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    f"{self.valves.LANGGRAPH_SERVICE_URL}/integration-sessions/status",
+                    json={
+                        "user_id": user_id,
+                        "integration_id": integration["integration_id"],
+                        "integration_session_id": integration["integration_session_id"],
+                    },
+                    headers=self._service_headers(),
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return {}
+        urls: dict[str, str] = {}
+        for item in payload.get("exports") or []:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            object_id = item.get("object_id")
+            if isinstance(path, str) and isinstance(object_id, str) and object_id:
+                urls[path] = _public_export_url(object_id, path, public_base_url)
+        return urls
 
     async def pipe(
         self,
@@ -1179,12 +1284,14 @@ class Pipe:
             last_model_text_character = text[-1]
             return text
 
+        plain_tools = integration is not None
+
         def close_python_console_stream() -> str:
             nonlocal python_console_stream_open
             if not python_console_stream_open:
                 return ""
             python_console_stream_open = False
-            return _python_console_stream_close()
+            return _python_console_stream_close(plain_tools)
 
         await emit_status({
             "action": "idea_agent",
@@ -1321,7 +1428,9 @@ class Pipe:
                             continue
                         if message_buffer:
                             yield flush_message_buffer()
-                        for translated in self._translate_chunk(chunk, public_base_url):
+                        for translated in self._translate_chunk(
+                            chunk, public_base_url, plain_tools=plain_tools,
+                        ):
                             yield translated
 
                     status = str(response_data.get("status") or "")
@@ -1387,11 +1496,17 @@ class Pipe:
         closure = close_python_console_stream()
         if closure:
             yield closure
+        export_urls = None
+        if integration is not None:
+            export_urls = await self._integration_export_urls(
+                str(user.get("id") or ""), integration, public_base_url,
+            )
         if message_buffer:
             resolved_message, referenced_file_ids = _resolve_output_links(
                 message_buffer,
                 pending_files,
                 public_base_url,
+                export_urls,
             )
             message_buffer = ""
             yield resolved_message
@@ -1400,12 +1515,22 @@ class Pipe:
             pending_images,
             pending_files,
             public_base_url,
+            export_urls,
         )
         referenced_file_ids.update(image_file_ids)
         if rendered_images:
             yield rendered_images
 
         for file_chunk in pending_files:
+            filename = file_chunk.get("filename")
+            if export_urls is not None:
+                if filename in referenced_file_ids:
+                    continue
+                url = export_urls.get(filename or "")
+                if url:
+                    display_name = PurePosixPath(filename).name or "file"
+                    yield f"\n\n📎 {_markdown_link(display_name, url)}\n\n"
+                continue
             if file_chunk.get("openwebui_file_id") in referenced_file_ids:
                 continue
             for translated in self._translate_chunk(
@@ -1440,6 +1565,8 @@ class Pipe:
     def _translate_chunk(
         chunk: dict,
         public_base_url: str = "",
+        *,
+        plain_tools: bool = False,
     ) -> Generator[str, None, None]:
         """
         Converts one langgraph_service SSE chunk into markdown text for Open
@@ -1455,6 +1582,7 @@ class Pipe:
         chunk_type = chunk.get("type")
         content = chunk.get("content", "")
         fmt = chunk.get("format")
+        tool_start, tool_end = _tool_edges(plain_tools)
 
         if chunk_type == "message":
             # Plain assistant text - stream through unchanged.
@@ -1462,16 +1590,16 @@ class Pipe:
         elif chunk_type == "python_code_start":
             # Four backticks keep ordinary Markdown fences embedded in Python
             # string literals from prematurely closing the streamed block.
-            yield f"\n\n{TOOL_OUTPUT_START}\n\n````python\n"
+            yield f"\n\n{tool_start}\n````python\n"
         elif chunk_type == "python_code_delta":
             yield content
         elif chunk_type == "python_code_end":
-            yield f"\n````\n{TOOL_OUTPUT_END}\n\n"
+            yield f"\n````\n{tool_end}\n\n"
         elif chunk_type == "code":
             lang = fmt or ""
             yield (
-                f"\n\n{TOOL_OUTPUT_START}\n\n```{lang}\n{content}\n```\n"
-                f"{TOOL_OUTPUT_END}\n\n"
+                f"\n\n{tool_start}\n```{lang}\n{content}\n```\n"
+                f"{tool_end}\n\n"
             )
         elif chunk_type == "console":
             # Current graph events identify Python console streams with their
@@ -1481,6 +1609,11 @@ class Pipe:
             # The delimiters keep the display-only observation out of the
             # next model request without risking a stranded Markdown fence.
             if not _is_python_console_chunk(chunk):
+                # n8n has no tool pane. These blocks are display chrome for
+                # Open WebUI; the model's own reply already states the result,
+                # and the markers that hide them there render as visible text.
+                if plain_tools:
+                    return
                 bounded = _bounded_general_console(content)
                 if bounded:
                     label = "Tool error" if fmt == "error" else "Tool output"
@@ -1498,24 +1631,24 @@ class Pipe:
                         if fmt == "error" else ""
                     )
                     yield (
-                        f"\n\n{TOOL_OUTPUT_START}\n\n{error_label}"
+                        f"\n\n{tool_start}\n{error_label}"
                         "````output\n"
                     )
                 if content:
                     yield content
                 if chunk.get("end"):
-                    yield _python_console_stream_close()
+                    yield _python_console_stream_close(plain_tools)
             elif fmt == "error":
                 yield (
-                    f"\n\n{TOOL_OUTPUT_START}\n\n"
+                    f"\n\n{tool_start}\n"
                     "⚠️ **Python execution error**\n\n"
                     f"````output\n{content}\n````\n"
-                    f"{TOOL_OUTPUT_END}\n\n"
+                    f"{tool_end}\n\n"
                 )
             else:
                 yield (
-                    f"\n\n{TOOL_OUTPUT_START}\n\n````output\n{content}\n````\n"
-                    f"{TOOL_OUTPUT_END}\n\n"
+                    f"\n\n{tool_start}\n````output\n{content}\n````\n"
+                    f"{tool_end}\n\n"
                 )
         elif chunk_type == "image" and content:
             # Backward compatibility for older LangGraph services. Current

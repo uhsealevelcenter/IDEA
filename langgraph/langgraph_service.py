@@ -806,6 +806,7 @@ def _run_chat_job(
                     ],
                 })
                 final_status = result.get("final_status") or "completed"
+                _publish_integration_exports(admission)
                 _update_chat_run_status(
                     run_id,
                     status=final_status,
@@ -867,6 +868,7 @@ def _run_chat_job(
         except Exception as e:
             print(f"Failed to save history: {e}")
         
+        _publish_integration_exports(admission)
         _update_chat_run_status(
             run_id,
             status="completed",
@@ -912,6 +914,7 @@ def _run_chat_job(
                 "checkpoint_source": "failed_run",
             })
         _append_chat_run_event(run_id, {"error": str(exc)})
+        _publish_integration_exports(admission)
         _update_chat_run_status(
             run_id,
             status="failed",
@@ -924,26 +927,38 @@ def _run_chat_job(
             _finish_integration_turn(admission, run_id, model_usage_tokens)
 
 
+def _publish_integration_exports(admission: Admission | None) -> None:
+    """Copy selected outputs before the run is marked finished.
+
+    The Pipe reads the manifest as soon as it sees a terminal status, so the
+    export has to be in place before that status is published.
+    """
+    if admission is None:
+        return
+    try:
+        record = integration_store.get(admission.workspace_id)
+        if (
+            record is None
+            or record.epoch != admission.epoch
+            or not record.vm_resident
+        ):
+            return
+        status = _export_integration_outputs(
+            admission.workspace_id, admission.sandbox_id, record.deadline_at,
+        )
+
+        def remember(current: SessionRecord, now: float) -> None:
+            current.export_status = status
+        integration_store.mutate(admission.workspace_id, remember)
+    except Exception as exc:
+        print(f"Integration export for {admission.workspace_id} failed: {exc}")
+
+
 def _finish_integration_turn(
     admission: Admission, run_id: str, tokens_used: int | None,
 ) -> None:
     """Export this turn's selected results, then release the turn lease."""
-    try:
-        record = integration_store.get(admission.workspace_id)
-        if (
-            record is not None
-            and record.epoch == admission.epoch
-            and record.vm_resident
-        ):
-            status = _export_integration_outputs(
-                admission.workspace_id, admission.sandbox_id, record.deadline_at,
-            )
-
-            def remember(current: SessionRecord, now: float) -> None:
-                current.export_status = status
-            integration_store.mutate(admission.workspace_id, remember)
-    except Exception as exc:
-        print(f"Integration export after run {run_id} failed: {exc}")
+    _publish_integration_exports(admission)
     try:
         integration_store.finish_turn(admission.workspace_id, run_id, tokens_used)
     except Exception as exc:
@@ -1281,12 +1296,53 @@ async def download_integration_export(object_id: str, request: IntegrationSessio
             detail={"code": "export_not_found", "message": "Export not found."},
         )
     item, path = found
+    return _export_file_response(item, path)
+
+
+_INLINE_EXPORT_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+def _export_download_name(path: str) -> str:
+    name = path.rsplit("/", 1)[-1] or "download"
+    name = name.replace("\\", "").replace('"', "").replace("\r", "").replace("\n", "")
+    return name[:180] or "download"
+
+
+def _export_file_response(item, path):
+    """Serve one exported object. Images render inline; everything else downloads.
+
+    HTML and SVG stay attachments so a public link cannot run as a page on
+    this origin.
+    """
+    filename = _export_download_name(item.path)
+    disposition = (
+        "inline" if item.content_type in _INLINE_EXPORT_TYPES else "attachment"
+    )
     return FileResponse(
         path,
         media_type=item.content_type,
-        filename=item.path.rsplit("/", 1)[-1],
-        headers={"X-Content-SHA256": item.sha256, "Cache-Control": "private, no-store"},
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+            "X-Content-SHA256": item.sha256,
+            "Cache-Control": "private, no-store",
+        },
     )
+
+
+@app.get("/integration-exports/{object_id}")
+@app.get("/integration-exports/{object_id}/{filename}")
+async def download_public_integration_export(object_id: str, filename: str | None = None):
+    """Public download. The object id is the capability; the filename is ignored."""
+    del filename
+    found = integration_exports.resolve_public(object_id)
+    if found is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "export_not_found", "message": "Export not found."},
+        )
+    item, path = found
+    return _export_file_response(item, path)
 
 
 @app.get("/integration-sessions/readiness", dependencies=[Depends(require_internal_token)])

@@ -53,12 +53,13 @@ Public traffic is refused until `IDEA_INTEGRATION_SESSIONS_ENABLED=true`, `IDEA_
 |---|---|
 | `POST /integration-sessions/end` | Idempotent close; body `{user_id, integration_id, integration_session_id}` |
 | `POST /integration-sessions/status` | State and export manifest for that session |
-| `POST /integration-sessions/exports/{object_id}` | Download one object from that session's manifest only |
+| `POST /integration-sessions/exports/{object_id}` | Service-token download of one object from that session's manifest |
+| `GET /integration-exports/{object_id}/{filename}` | Public download; the object id alone is the capability |
 
 ## Not covered here
 
 - **Visitor authentication.** The widget's `sessionId` is not a credential. Until a gateway issues signed per-conversation handles, anyone who learns another visitor's `sessionId` can continue that conversation. Per-session limits stand in for per-visitor limits.
-- **Public downloads.** No public route serves exports yet; a gateway should call the export endpoints above after checking the visitor handle. Outputs are also still uploaded to the integration account's Open WebUI file store, which is not a visitor boundary.
+- **Public downloads.** `GET /integration-exports/{object_id}/{filename}` serves one manifest object. The object id is the capability (unguessable; a session id or the shared account token is not accepted, and the filename is ignored). nginx proxies it to LangGraph with no service token. Integration replies link here instead of the integration account's Open WebUI files. Links expire with the export. HTML and SVG are attachments so they cannot run as pages on this origin.
 - **PaperQA** is disabled for integration sessions unless `IDEA_INTEGRATION_PAPERQA_ENABLED=true`.
 - **Multiple sandbox-service replicas** are not supported; boot serialization and host capacity are process-local there.
 - **Real-VM acceptance** (marker files, `/outputs/plot.png` isolation, interrupt of a long run, uncached deletion) must be run on a KVM host before enabling the public workflow.

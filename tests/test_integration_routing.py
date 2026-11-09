@@ -293,6 +293,12 @@ class PipeTransportTests(unittest.TestCase):
             output = asyncio.run(collect())
         return output, client
 
+    def _chat_payload(self, client):
+        for call in client.post.call_args_list:
+            if str(call.args[0]).endswith("/chat-runs"):
+                return call.kwargs["json"]
+        self.fail("chat run was not started")
+
     def test_registers_integration_model_only_when_enabled(self):
         pipe = idea_pipe.Pipe()
         self.assertNotIn(
@@ -308,7 +314,7 @@ class PipeTransportTests(unittest.TestCase):
             model="idea_terminal_agent.idea-terminal-agent-integration",
             headers={"x-idea-integration-session": "visitor-1"},
         )
-        payload = client.post.call_args.kwargs["json"]
+        payload = self._chat_payload(client)
         self.assertEqual(payload["workspace_scope"], "integration_session")
         self.assertEqual(payload["integration_id"], "n8n-test")
         self.assertEqual(payload["integration_session_id"], "visitor-1")
@@ -324,7 +330,7 @@ class PipeTransportTests(unittest.TestCase):
                 model="idea-terminal-agent-integration", body_extra=extra, metadata=metadata,
             )
             self.assertEqual(
-                client.post.call_args.kwargs["json"]["integration_session_id"], "v-2",
+                self._chat_payload(client)["integration_session_id"], "v-2",
             )
 
     def test_missing_conflicting_or_misrouted_context_never_starts_a_run(self):
@@ -354,6 +360,39 @@ class PipeTransportTests(unittest.TestCase):
             self.assertTrue(output and output[0].startswith("**Error:**"), case)
             client.post.assert_not_called()
 
+    def test_integration_replies_omit_hidden_tool_chrome(self):
+        hidden = list(idea_pipe.Pipe._translate_chunk(
+            {"type": "console", "format": "error", "content": "Command failed\nsecret"},
+            plain_tools=True,
+        ))
+        self.assertEqual(hidden, [])
+        shown = "".join(idea_pipe.Pipe._translate_chunk(
+            {"type": "console", "format": "error", "content": "Command failed"},
+        ))
+        self.assertIn("Tool error", shown)
+        self.assertIn(idea_pipe.TOOL_OUTPUT_START, shown)
+
+        code = "".join(idea_pipe.Pipe._translate_chunk(
+            {"type": "code", "format": "python", "content": "print(1)"},
+            plain_tools=True,
+        ))
+        self.assertIn("```python\nprint(1)\n```", code)
+        self.assertNotIn(idea_pipe.RAW_TOOL_OUTPUT_START, code)
+        self.assertNotIn(idea_pipe.RAW_TOOL_OUTPUT_END, code)
+
+    def test_integration_file_links_use_the_public_export(self):
+        rendered, referenced = idea_pipe._resolve_output_links(
+            "[plot](/outputs/plot.png)",
+            [{"filename": "/outputs/plot.png", "openwebui_file_id": "private-file"}],
+            "https://idea.example",
+            {"/outputs/plot.png": "https://idea.example/integration-exports/abc/plot.png"},
+        )
+        self.assertEqual(
+            rendered, "[plot.png](https://idea.example/integration-exports/abc/plot.png)",
+        )
+        self.assertNotIn("private-file", rendered)
+        self.assertEqual(referenced, {"/outputs/plot.png"})
+
     def test_integration_accounts_always_need_session_context(self):
         for model in ("idea-terminal-agent", "idea_terminal_agent.idea-terminal-agent-advanced"):
             output, client = self._run(model=model, integration_accounts="other, owner-1")
@@ -369,7 +408,7 @@ class PipeTransportTests(unittest.TestCase):
             metadata={"model": {"id": "sea"}},
             integration_accounts="owner-1",
         )
-        payload = client.post.call_args.kwargs["json"]
+        payload = self._chat_payload(client)
         self.assertEqual(payload["workspace_scope"], "integration_session")
         self.assertEqual(payload["integration_session_id"], "visitor-1")
         self.assertEqual(payload["assistant_id"], "sea")

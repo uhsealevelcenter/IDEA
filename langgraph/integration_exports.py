@@ -15,6 +15,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import secrets
 import shutil
 import tempfile
@@ -25,8 +26,13 @@ from typing import Any, Callable
 
 OUTPUTS_ROOT = "/outputs"
 EXPORT_KEY_PREFIX = "idea:isess:exports:"
+EXPORT_LOCATOR_PREFIX = "idea:isess:export_locator:"
 EXPORT_TOTAL_BYTES_KEY = "idea:isess:exports_total_bytes"
 EXPORT_EXPIRY_INDEX_KEY = "idea:isess:exports_expiry"
+# The object id is the download capability. It is unguessable, and neither a
+# session id nor a workspace id is accepted in its place.
+_PUBLIC_OBJECT_ID = re.compile(r"^[A-Za-z0-9_-]{22,64}$")
+_PUBLIC_WORKSPACE_ID = re.compile(r"^ws_[A-Za-z0-9_-]{1,80}$")
 
 STATUS_COMPLETE = "complete"
 STATUS_PARTIAL = "partial"
@@ -138,8 +144,34 @@ class IntegrationExportStore:
                 objects.append(item)
         return sorted(objects, key=lambda item: item.path)
 
+    def resolve_public(self, object_id: str) -> tuple[ExportedObject, Path] | None:
+        """Resolve a download by its unguessable object id alone.
+
+        A session id, workspace id, or Open WebUI file id is not a credential
+        here, and the object id is never treated as a filesystem path.
+        """
+        if not isinstance(object_id, str) or not _PUBLIC_OBJECT_ID.fullmatch(object_id):
+            return None
+        workspace_id = self.redis.get(f"{EXPORT_LOCATOR_PREFIX}{object_id}")
+        if (
+            not isinstance(workspace_id, str)
+            or not _PUBLIC_WORKSPACE_ID.fullmatch(workspace_id)
+        ):
+            return None
+        found = self.get_object(workspace_id, object_id)
+        if found is None:
+            return None
+        item, path = found
+        root = self.root.resolve()
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root):
+            return None
+        return item, resolved
+
     def get_object(self, workspace_id: str, object_id: str) -> tuple[ExportedObject, Path] | None:
         for item in self.manifest(workspace_id):
+            if len(item.object_id) != len(object_id):
+                continue
             if secrets.compare_digest(item.object_id, object_id):
                 path = self._object_path(workspace_id, item.object_id)
                 if path.is_file():
@@ -192,6 +224,7 @@ class IntegrationExportStore:
             if previous and previous.signature == signature:
                 previous.expires_at = max(previous.expires_at, expires_at)
                 self.redis.hset(manifest_key, previous.object_id, json.dumps(asdict(previous)))
+                self._remember_locator(workspace_id, previous)
                 selected += 1
                 session_bytes += previous.size
                 continue
@@ -212,6 +245,7 @@ class IntegrationExportStore:
             if previous:
                 self._delete_object(workspace_id, previous)
             self.redis.hset(manifest_key, item.object_id, json.dumps(asdict(item)))
+            self._remember_locator(workspace_id, item)
             self.redis.incrby(EXPORT_TOTAL_BYTES_KEY, item.size)
             exported.append(path)
             selected += 1
@@ -243,7 +277,7 @@ class IntegrationExportStore:
             temporary = Path(handle.name)
         temporary.replace(directory / object_id)
         content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-        return ExportedObject(
+        item = ExportedObject(
             object_id=object_id,
             path=path,
             size=len(data),
@@ -253,9 +287,21 @@ class IntegrationExportStore:
             exported_at=now,
             expires_at=expires_at,
         )
+        return item
+
+    def _remember_locator(self, workspace_id: str, item: ExportedObject) -> None:
+        if not _PUBLIC_OBJECT_ID.fullmatch(item.object_id):
+            return
+        if not _PUBLIC_WORKSPACE_ID.fullmatch(workspace_id):
+            return
+        ttl = max(1, int(item.expires_at - self.clock()))
+        self.redis.set(
+            f"{EXPORT_LOCATOR_PREFIX}{item.object_id}", workspace_id, ex=ttl,
+        )
 
     def _delete_object(self, workspace_id: str, item: ExportedObject) -> None:
         self.redis.hdel(self._manifest_key(workspace_id), item.object_id)
+        self.redis.delete(f"{EXPORT_LOCATOR_PREFIX}{item.object_id}")
         try:
             self._object_path(workspace_id, item.object_id).unlink()
         except FileNotFoundError:
