@@ -1088,7 +1088,7 @@ def list_sandbox_names(prefix: str) -> list[str]:
         names: list[str] = []
         cursor = None
         while True:
-            page = await Sandbox.list_with(cursor=cursor, limit=200)
+            page = await Sandbox.list_with(cursor=cursor, limit=100)
             names.extend(
                 handle.name for handle in page.sandboxes
                 if str(handle.name).startswith(prefix)
