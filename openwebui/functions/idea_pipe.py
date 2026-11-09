@@ -919,9 +919,9 @@ class Pipe:
             default="",
             description=(
                 "Comma-separated Open WebUI user IDs of integration accounts. "
-                "These accounts may use only the integration model, so a "
-                "public conversation can never reach the account's personal "
-                "sandbox through a browser model or Assistant."
+                "Every request from these accounts, on any IDEA model or "
+                "Assistant, must carry an integration session ID, so public "
+                "conversations never reach the account's personal sandbox."
             ),
         )
 
@@ -984,14 +984,11 @@ class Pipe:
     ) -> AsyncGenerator[str, None]:
         user = __user__ or {}
         integration_model = _is_integration_model(body.get("model"))
-        integration_accounts = {
+        integration_account = str(user.get("id") or "") in {
             item.strip()
             for item in self.valves.INTEGRATION_ACCOUNT_IDS.split(",")
             if item.strip()
         }
-        if not integration_model and str(user.get("id") or "") in integration_accounts:
-            yield "**Error:** integration accounts may only use the integration model."
-            return
         try:
             integration = _integration_request_context(
                 body, __metadata__, __request__, self.valves.INTEGRATION_ID,
@@ -999,15 +996,15 @@ class Pipe:
         except IntegrationContextError as exc:
             yield f"**Error:** invalid integration session context ({exc})."
             return
-        # Integration context and the integration model must come together:
-        # never fall back to the owner's personal sandbox, and never let a
-        # browser model silently accept external session routing.
-        if integration_model and (
-            not self.valves.INTEGRATION_MODEL_ENABLED or integration is None
-        ):
-            yield "**Error:** this model requires an integration session ID."
-            return
-        if integration is not None and not integration_model:
+        # The integration model and integration accounts (on any IDEA model or
+        # Assistant, so specialists share the session VM) always need session
+        # context: never fall back to the owner's personal sandbox, and never
+        # let a browser chat silently accept external session routing.
+        if integration_model or integration_account:
+            if not self.valves.INTEGRATION_MODEL_ENABLED or integration is None:
+                yield "**Error:** this model requires an integration session ID."
+                return
+        elif integration is not None:
             yield "**Error:** integration sessions must use the integration model."
             return
         if integration is not None and integration["action"] == "end":

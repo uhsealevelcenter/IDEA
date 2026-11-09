@@ -354,22 +354,25 @@ class PipeTransportTests(unittest.TestCase):
             self.assertTrue(output and output[0].startswith("**Error:**"), case)
             client.post.assert_not_called()
 
-    def test_integration_accounts_cannot_use_browser_models(self):
+    def test_integration_accounts_always_need_session_context(self):
         for model in ("idea-terminal-agent", "idea_terminal_agent.idea-terminal-agent-advanced"):
             output, client = self._run(model=model, integration_accounts="other, owner-1")
             self.assertEqual(
-                output, ["**Error:** integration accounts may only use the integration model."],
+                output, ["**Error:** this model requires an integration session ID."],
             )
             client.post.assert_not_called()
 
+    def test_integration_account_specialists_share_the_session(self):
         _, client = self._run(
-            model="idea-terminal-agent-integration",
+            model="idea_terminal_agent.idea-terminal-agent",
             headers={"x-idea-integration-session": "visitor-1"},
+            metadata={"model": {"id": "sea"}},
             integration_accounts="owner-1",
         )
-        self.assertEqual(
-            client.post.call_args.kwargs["json"]["integration_session_id"], "visitor-1",
-        )
+        payload = client.post.call_args.kwargs["json"]
+        self.assertEqual(payload["workspace_scope"], "integration_session")
+        self.assertEqual(payload["integration_session_id"], "visitor-1")
+        self.assertEqual(payload["assistant_id"], "sea")
 
     def test_end_action_closes_the_session_without_running_the_agent(self):
         output, client = self._run(
