@@ -42,6 +42,8 @@ COPY langgraph_service.py .
 COPY idea_config.py .
 COPY progress.py .
 COPY iteration_budget.py .
+COPY integration_sessions.py .
+COPY integration_exports.py .
 
 # Fail the image build if a root module is omitted or the service import graph
 # is otherwise incomplete. This runs without contacting Redis/PostgreSQL.
