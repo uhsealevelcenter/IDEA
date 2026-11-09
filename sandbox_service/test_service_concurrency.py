@@ -12,6 +12,7 @@ registry_stub.run_python = lambda *args, **kwargs: {"chunks": []}
 registry_stub.run_python_stream = lambda *args, **kwargs: iter(())
 registry_stub.interrupt_run = lambda *args, **kwargs: False
 registry_stub.stop_all_terminals = lambda: 0
+registry_stub.SandboxAdmissionError = type("SandboxAdmissionError", (RuntimeError,), {})
 previous_registry = sys.modules.get("terminal_registry")
 sys.modules["terminal_registry"] = registry_stub
 try:

@@ -8,10 +8,12 @@ import json
 import os
 import uuid
 import threading
+import time
+from dataclasses import dataclass
 from typing import Optional, Any, Literal
 from datetime import datetime
 from fastapi import Depends, FastAPI, HTTPException, Request, BackgroundTasks
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import redis
 
@@ -27,9 +29,37 @@ from idea_config import (
 from idea_graph.checkpoints import get_checkpointer
 from idea_graph.control import RunCancellation
 from idea_graph.graph import build_idea_graph
-from idea_graph.identities import derive_execution_identities
+from idea_graph.identities import (
+    BROWSER_SCOPE,
+    INTEGRATION_SESSION_SCOPE,
+    ExecutionIdentities,
+    IntegrationContext,
+    derive_execution_identities,
+    derive_integration_sandbox_id,
+    derive_integration_workspace_id,
+    validate_integration_id,
+    validate_integration_session_id,
+)
 from idea_graph.runtime import TerminalGraphRuntime
-from tools.persistent_terminal import interrupt_run as interrupt_sandbox_run
+from integration_exports import ExportLimits, IntegrationExportStore
+from integration_sessions import (
+    REASON_EXPLICIT_END,
+    Admission,
+    AdmissionError,
+    IntegrationSessionStore,
+    IntegrationSessionSweeper,
+    IntegrationSettings,
+    SessionRecord,
+    SweepActions,
+)
+from tools.persistent_terminal import (
+    delete_integration_sandbox,
+    interrupt_run as interrupt_sandbox_run,
+    list_file_metadata,
+    list_integration_sandboxes,
+    read_file_bytes,
+    stop_sandbox,
+)
 
 app = FastAPI(title="LangGraph Service", version="1.0.0")
 
@@ -54,6 +84,20 @@ def require_internal_token(request: Request) -> None:
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+INTEGRATION_SETTINGS = IntegrationSettings.from_env()
+integration_store = IntegrationSessionStore(redis_client, INTEGRATION_SETTINGS)
+integration_exports = IntegrationExportStore(
+    redis_client,
+    os.getenv("IDEA_INTEGRATION_EXPORT_DIR", "/app/data/integration_exports"),
+    ExportLimits.from_env(),
+)
+INTEGRATION_SWEEP_INTERVAL_SECONDS = float(
+    os.getenv("IDEA_INTEGRATION_SWEEP_INTERVAL_SECONDS", "15")
+)
+INTEGRATION_PAPERQA_ENABLED = os.getenv(
+    "IDEA_INTEGRATION_PAPERQA_ENABLED", ""
+).strip().lower() in {"1", "true", "yes", "on"}
 
 # chat_run_threads intentionally NOT persisted/shared - see
 # IMPLEMENTATION_STATUS.md "item 6" for the plan to close this remaining
@@ -146,6 +190,13 @@ def _branch_thread_id(
     return f"{base_thread_id}:branch:{digest}"
 
 
+def _thread_belongs_to(thread_id: str, base_thread_id: str) -> bool:
+    """True for the derived thread itself or one of its response branches."""
+    return thread_id == base_thread_id or thread_id.startswith(
+        f"{base_thread_id}:branch:"
+    )
+
+
 def _load_message_checkpoint(
     base_thread_id: str,
     message_id: str,
@@ -234,12 +285,16 @@ def _resolve_graph_checkpoint(
     explicit_thread_id: str | None = None,
 ) -> tuple[str, str | None, str]:
     """Resolve the checkpoint belonging to the visible Open WebUI branch."""
-    if explicit_checkpoint_id:
+    if explicit_checkpoint_id and _thread_belongs_to(
+        explicit_thread_id or base_thread_id, base_thread_id
+    ):
         return (
             explicit_thread_id or base_thread_id,
             explicit_checkpoint_id,
             "message_metadata",
         )
+    if explicit_checkpoint_id:
+        print("Ignoring a checkpoint hint outside the derived conversation thread")
 
     visible_assistant_ids = [
         str(item.get("id") or "")
@@ -350,6 +405,12 @@ class ChatRequest(BaseModel):
     attached_files: list[dict[str, Any]] = Field(default_factory=list)
     openwebui_authorization: Optional[str] = None
     paperqa_enabled: bool = False
+    # The legacy endpoint has no session-VM routing; these fields exist only
+    # so an integration request is rejected instead of silently reaching the
+    # owner's personal VM.
+    workspace_scope: Optional[str] = None
+    integration_id: Optional[str] = None
+    integration_session_id: Optional[str] = None
 
 
 class ChatRunRequest(BaseModel):
@@ -367,11 +428,186 @@ class ChatRunRequest(BaseModel):
     attached_files: list[dict[str, Any]] = Field(default_factory=list)
     openwebui_authorization: Optional[str] = None
     paperqa_enabled: bool = False
+    workspace_scope: Literal["browser", "integration_session"] = "browser"
+    integration_id: Optional[str] = None
+    integration_session_id: Optional[str] = None
+    # The real Open WebUI chat, when one exists; kept apart from the
+    # integration workspace identity.
+    openwebui_chat_id: Optional[str] = None
+
+
+class IntegrationSessionRequest(BaseModel):
+    user_id: str
+    integration_id: str
+    integration_session_id: str
 
 
 class HealthResponse(BaseModel):
     status: str
     service: str
+
+
+@dataclass(frozen=True)
+class ResolvedRunContext:
+    """Execution identity resolved once, before any job or VM starts."""
+
+    scope: str
+    user_id: str
+    session_key: str
+    identities: ExecutionIdentities
+    integration: IntegrationContext | None = None
+    admission: Admission | None = None
+
+    @property
+    def sandbox_id(self) -> str:
+        return self.identities.sandbox_id
+
+
+def _admission_http_error(exc: AdmissionError) -> HTTPException:
+    headers = (
+        {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
+    )
+    return HTTPException(
+        status_code=exc.status_code, detail=exc.as_detail(), headers=headers,
+    )
+
+
+def _validated_integration(
+    user_id: str,
+    integration_id: object,
+    integration_session_id: object,
+) -> IntegrationContext:
+    """Validate integration fields at the trusted boundary; raise HTTP 4xx/5xx."""
+    if not INTEGRATION_SETTINGS.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "integration_disabled",
+                    "message": "Integration sessions are not enabled."},
+        )
+    if IDEA_AGENT_RUNTIME != "langgraph":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "integration_requires_langgraph",
+                    "message": "Integration sessions require IDEA_AGENT_RUNTIME=langgraph."},
+        )
+    if not user_id or user_id == "anonymous":
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "unauthenticated",
+                    "message": "An authenticated integration account is required."},
+        )
+    try:
+        integration = IntegrationContext(
+            integration_id=validate_integration_id(integration_id),
+            integration_session_id=validate_integration_session_id(
+                integration_session_id
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_integration_context", "message": str(exc)},
+        )
+    if integration.integration_id not in INTEGRATION_SETTINGS.integration_ids:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "integration_not_allowed", "message": "Unknown integration."},
+        )
+    return integration
+
+
+def _request_input_bytes(request: ChatRunRequest) -> int:
+    latest_user = next(
+        (
+            item for item in reversed(request.messages)
+            if isinstance(item, dict) and item.get("role") == "user"
+        ),
+        {},
+    )
+    return len(json.dumps(latest_user.get("content", ""), default=str).encode("utf-8"))
+
+
+def _resolve_run_context(request: ChatRunRequest, run_id: str) -> ResolvedRunContext:
+    if request.workspace_scope == BROWSER_SCOPE:
+        if request.integration_id or request.integration_session_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_integration_context",
+                        "message": "Integration fields require workspace_scope=integration_session."},
+            )
+        identities = derive_execution_identities(
+            user_id=request.user_id,
+            chat_id=request.session_id,
+            assistant_id=request.assistant_id,
+            run_id=run_id,
+            kernel_scope=IDEA_KERNEL_SCOPE,
+        ) if IDEA_AGENT_RUNTIME == "langgraph" else ExecutionIdentities(
+            thread_id="", workspace_id="", kernel_id="", run_id=run_id,
+            sandbox_id=str(request.user_id), scope=BROWSER_SCOPE,
+        )
+        return ResolvedRunContext(
+            scope=BROWSER_SCOPE,
+            user_id=request.user_id,
+            session_key=f"{request.user_id}:{request.session_id}",
+            identities=identities,
+        )
+
+    integration = _validated_integration(
+        request.user_id, request.integration_id, request.integration_session_id,
+    )
+    identities = derive_execution_identities(
+        user_id=request.user_id,
+        chat_id=request.session_id,
+        assistant_id=request.assistant_id,
+        run_id=run_id,
+        kernel_scope=IDEA_KERNEL_SCOPE,
+        integration=integration,
+    )
+    try:
+        admission = integration_store.admit_turn(
+            owner_user_id=request.user_id,
+            integration_id=integration.integration_id,
+            workspace_id=identities.workspace_id,
+            sandbox_id=identities.sandbox_id,
+            run_id=run_id,
+            input_bytes=_request_input_bytes(request),
+        )
+    except AdmissionError as exc:
+        raise _admission_http_error(exc)
+    return ResolvedRunContext(
+        scope=INTEGRATION_SESSION_SCOPE,
+        user_id=request.user_id,
+        session_key=f"{request.user_id}:{identities.workspace_id}",
+        identities=identities,
+        integration=integration,
+        admission=admission,
+    )
+
+
+def _run_sandbox_id(status: dict[str, Any]) -> str:
+    """The VM a stored run executed in; legacy records used the owner's VM."""
+    sandbox_id = str(status.get("sandbox_id") or "")
+    if sandbox_id:
+        return sandbox_id
+    if status.get("workspace_scope", BROWSER_SCOPE) == BROWSER_SCOPE:
+        return str(status.get("user_id") or "")
+    return ""
+
+
+def _export_integration_outputs(
+    workspace_id: str, sandbox_id: str, deadline_at: float | None,
+) -> str:
+    outcome = integration_exports.export_outputs(
+        workspace_id=workspace_id,
+        list_metadata=lambda directory: list_file_metadata(
+            directory, session_id=sandbox_id,
+        ),
+        read_bytes=lambda path: read_file_bytes(path, session_id=sandbox_id),
+        retention_floor=deadline_at,
+    )
+    for error in outcome.errors:
+        print(f"Integration export issue for {workspace_id}: {error}")
+    return outcome.status
 
 
 def _run_chat_job(
@@ -392,14 +628,19 @@ def _run_chat_job(
     input_checkpoint_id: Optional[str] = None,
     idea_context: Optional[dict[str, Any]] = None,
     response_message_id: Optional[str] = None,
+    resolved: Optional[ResolvedRunContext] = None,
 ):
     """Background job to execute chat and stream events to Redis"""
-    session_key = f"{user_id}:{session_id}"
+    session_key = resolved.session_key if resolved else f"{user_id}:{session_id}"
     graph = None
     graph_thread_id = None
     base_thread_id = None
-    
+    model_usage_tokens: int | None = None
+    admission = resolved.admission if resolved else None
+
     try:
+        if admission is not None and IDEA_AGENT_RUNTIME != "langgraph":
+            raise RuntimeError("Integration sessions require the LangGraph runtime")
         _update_chat_run_status(
             run_id,
             status="running",
@@ -408,12 +649,15 @@ def _run_chat_job(
         )
         
         if IDEA_AGENT_RUNTIME == "langgraph":
-            identities = derive_execution_identities(
-                user_id=user_id,
-                chat_id=session_id,
-                assistant_id=assistant_id,
-                run_id=run_id,
-                kernel_scope=IDEA_KERNEL_SCOPE,
+            identities = (
+                resolved.identities if resolved and resolved.identities.thread_id
+                else derive_execution_identities(
+                    user_id=user_id,
+                    chat_id=session_id,
+                    assistant_id=assistant_id,
+                    run_id=run_id,
+                    kernel_scope=IDEA_KERNEL_SCOPE,
+                )
             )
             base_thread_id = identities.thread_id
             graph_thread_id, resolved_checkpoint_id, checkpoint_source = (
@@ -436,12 +680,34 @@ def _run_chat_job(
                 chat_run_controls[run_id] = control
 
             monitor_done = threading.Event()
+            lease_interval = max(
+                1.0, integration_store.limits.run_lease_seconds / 3
+            )
 
             def _monitor_cancel() -> None:
+                next_renewal = time.monotonic() + lease_interval
                 while not monitor_done.wait(0.25):
                     reason = redis_client.get(_chat_run_cancel_key(run_id))
                     if reason:
                         control.request(reason)
+                        return
+                    if admission is None or time.monotonic() < next_renewal:
+                        continue
+                    next_renewal = time.monotonic() + lease_interval
+                    try:
+                        reason = integration_store.renew_lease(
+                            admission.workspace_id, run_id, admission.epoch,
+                        )
+                    except Exception as exc:
+                        print(f"Integration lease renewal failed for {run_id}: {exc}")
+                        continue
+                    if reason:
+                        redis_client.set(
+                            _chat_run_cancel_key(run_id), reason,
+                            ex=CHAT_RUN_TTL_SECONDS,
+                        )
+                        control.request(reason)
+                        interrupt_sandbox_run(identities.sandbox_id, run_id)
                         return
 
             monitor = threading.Thread(target=_monitor_cancel, daemon=True)
@@ -461,6 +727,7 @@ def _run_chat_job(
                     is_guest=is_guest,
                     paperqa_enabled=paperqa_enabled,
                     event_callback=lambda chunk: _append_chat_run_event(run_id, chunk),
+                    sandbox_id=identities.sandbox_id or None,
                 )
                 graph = build_idea_graph(
                     runtime,
@@ -521,6 +788,8 @@ def _run_chat_job(
                 usage_summary = _summarize_model_usage(
                     list(result.get("model_usage") or []), run_id
                 )
+                if "total_tokens" in usage_summary:
+                    model_usage_tokens = int(usage_summary["total_tokens"])
                 _append_chat_run_event(run_id, {
                     "type": "idea_context",
                     "schema_version": 1,
@@ -651,6 +920,34 @@ def _run_chat_job(
         )
     finally:
         chat_run_threads.pop(run_id, None)
+        if admission is not None:
+            _finish_integration_turn(admission, run_id, model_usage_tokens)
+
+
+def _finish_integration_turn(
+    admission: Admission, run_id: str, tokens_used: int | None,
+) -> None:
+    """Export this turn's selected results, then release the turn lease."""
+    try:
+        record = integration_store.get(admission.workspace_id)
+        if (
+            record is not None
+            and record.epoch == admission.epoch
+            and record.vm_resident
+        ):
+            status = _export_integration_outputs(
+                admission.workspace_id, admission.sandbox_id, record.deadline_at,
+            )
+
+            def remember(current: SessionRecord, now: float) -> None:
+                current.export_status = status
+            integration_store.mutate(admission.workspace_id, remember)
+    except Exception as exc:
+        print(f"Integration export after run {run_id} failed: {exc}")
+    try:
+        integration_store.finish_turn(admission.workspace_id, run_id, tokens_used)
+    except Exception as exc:
+        print(f"Could not release integration turn {run_id}: {exc}")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -664,46 +961,64 @@ async def start_chat_run(request: ChatRunRequest):
     """Start an async chat run and return immediately with run_id"""
     profile = resolve_idea_agent_profile(request.agent_variant)
     run_id = uuid.uuid4().hex
+    # Validation and admission happen before any status record, job, or VM.
+    resolved = _resolve_run_context(request, run_id)
+    integration_scope = resolved.scope == INTEGRATION_SESSION_SCOPE
     status = {
         "run_id": run_id,
-        "session_id": request.session_id,
         "user_id": request.user_id,
+        "workspace_scope": resolved.scope,
+        "sandbox_id": resolved.sandbox_id,
+        "workspace_id": resolved.identities.workspace_id,
+        "base_thread_id": resolved.identities.thread_id,
         "status": "queued",
         "agent_variant": request.agent_variant,
         "created_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat(),
     }
-    _set_chat_run_status(run_id, status)
-    redis_client.delete(_chat_run_events_key(run_id))
-    redis_client.delete(_chat_run_seq_key(run_id))
-    
-    # Start background thread
-    thread = threading.Thread(
-        target=_run_chat_job,
-        kwargs={
-            "run_id": run_id,
-            "session_id": request.session_id,
-            "user_id": request.user_id,
-            "user_email": request.user_email,
-            "is_guest": request.is_guest,
-            "messages": request.messages,
-            "response_message_id": request.response_message_id,
-            "model": profile.model,
-            "reasoning_effort": profile.reasoning_effort,
-            "use_responses_api": profile.use_responses_api,
-            "assistant_id": request.assistant_id,
-            "assistant_system_prompt": request.assistant_system_prompt,
-            "attached_files": request.attached_files,
-            "openwebui_authorization": request.openwebui_authorization,
-            "paperqa_enabled": request.paperqa_enabled,
-            "input_checkpoint_id": request.input_checkpoint_id,
-            "idea_context": request.idea_context,
-        },
-        daemon=True,
-    )
-    chat_run_threads[run_id] = thread
-    thread.start()
-    
+    if integration_scope:
+        status["integration_id"] = resolved.integration.integration_id
+        status["integration_epoch"] = resolved.admission.epoch
+    else:
+        status["session_id"] = request.session_id
+    try:
+        _set_chat_run_status(run_id, status)
+        redis_client.delete(_chat_run_events_key(run_id))
+        redis_client.delete(_chat_run_seq_key(run_id))
+
+        thread = threading.Thread(
+            target=_run_chat_job,
+            kwargs={
+                "run_id": run_id,
+                "session_id": request.session_id,
+                "user_id": request.user_id,
+                "user_email": request.user_email,
+                "is_guest": request.is_guest,
+                "messages": request.messages,
+                "response_message_id": request.response_message_id,
+                "model": profile.model,
+                "reasoning_effort": profile.reasoning_effort,
+                "use_responses_api": profile.use_responses_api,
+                "assistant_id": request.assistant_id,
+                "assistant_system_prompt": request.assistant_system_prompt,
+                "attached_files": request.attached_files,
+                "openwebui_authorization": request.openwebui_authorization,
+                "paperqa_enabled": request.paperqa_enabled and (
+                    not integration_scope or INTEGRATION_PAPERQA_ENABLED
+                ),
+                "input_checkpoint_id": request.input_checkpoint_id,
+                "idea_context": request.idea_context,
+                "resolved": resolved,
+            },
+            daemon=True,
+        )
+        chat_run_threads[run_id] = thread
+        thread.start()
+    except Exception:
+        if resolved.admission is not None:
+            integration_store.finish_turn(resolved.admission.workspace_id, run_id, 0)
+        raise
+
     return {"run_id": run_id, "status": "queued"}
 
 
@@ -738,16 +1053,16 @@ async def stop_chat_run(run_id: str):
         "type": "status", "phase": "stopping",
         "description": "Stopping at the next safe point…", "done": False,
     })
-    user_id = str(status.get("user_id") or "")
+    sandbox_id = _run_sandbox_id(status)
     sandbox_interrupted = None
-    if user_id:
+    if sandbox_id:
         # persistent_terminal is intentionally synchronous because graph jobs
         # execute in worker threads.  Do not call it directly from FastAPI's
         # event loop: a blocked sandbox would otherwise freeze every LangGraph
         # endpoint, including a user's next prompt.
         sandbox_interrupted = await asyncio.to_thread(
             interrupt_sandbox_run,
-            user_id,
+            sandbox_id,
             run_id,
         )
         print(
@@ -797,6 +1112,16 @@ async def chat_endpoint(request: ChatRequest):
     """
     Direct streaming chat endpoint (alternative to /chat-runs)
     """
+    if (
+        (request.workspace_scope or BROWSER_SCOPE) != BROWSER_SCOPE
+        or request.integration_id
+        or request.integration_session_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "integration_not_supported",
+                    "message": "Integration sessions must use /chat-runs."},
+        )
     try:
         session_key = request.session_key
         
@@ -870,6 +1195,176 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         print(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _integration_identity(request: IntegrationSessionRequest) -> tuple[IntegrationContext, str, str]:
+    integration = _validated_integration(
+        request.user_id, request.integration_id, request.integration_session_id,
+    )
+    return (
+        integration,
+        derive_integration_workspace_id(request.user_id, integration),
+        derive_integration_sandbox_id(request.user_id, integration),
+    )
+
+
+def _owned_record(request: IntegrationSessionRequest) -> tuple[SessionRecord, str]:
+    integration, workspace_id, _ = _integration_identity(request)
+    record = integration_store.get(workspace_id)
+    if (
+        record is None
+        or record.owner_user_id != request.user_id
+        or record.integration_id != integration.integration_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "session_not_found", "message": "Session not found."},
+        )
+    return record, workspace_id
+
+
+def _cancel_chat_run(run_id: str, reason: str) -> None:
+    redis_client.set(_chat_run_cancel_key(run_id), reason, ex=CHAT_RUN_TTL_SECONDS)
+
+
+@app.post("/integration-sessions/end", dependencies=[Depends(require_internal_token)])
+async def end_integration_session(request: IntegrationSessionRequest):
+    """Explicitly end a conversation: reject new turns, then export and delete."""
+    integration, workspace_id, sandbox_id = _integration_identity(request)
+    try:
+        record = await asyncio.to_thread(
+            integration_store.request_close,
+            owner_user_id=request.user_id,
+            integration_id=integration.integration_id,
+            workspace_id=workspace_id,
+            sandbox_id=sandbox_id,
+            reason=REASON_EXPLICIT_END,
+        )
+    except AdmissionError as exc:
+        raise _admission_http_error(exc)
+    if record.active_run_id:
+        _cancel_chat_run(record.active_run_id, record.close_reason or REASON_EXPLICIT_END)
+    integration_sweep_wakeup.set()
+    return record.public_status()
+
+
+@app.post("/integration-sessions/status", dependencies=[Depends(require_internal_token)])
+async def integration_session_status(request: IntegrationSessionRequest):
+    record, workspace_id = _owned_record(request)
+    status = record.public_status()
+    status["exports"] = [
+        {
+            "object_id": item.object_id,
+            "filename": item.path.rsplit("/", 1)[-1],
+            "path": item.path,
+            "size": item.size,
+            "sha256": item.sha256,
+            "content_type": item.content_type,
+            "expires_at": datetime.utcfromtimestamp(item.expires_at).isoformat() + "Z",
+        }
+        for item in integration_exports.manifest(workspace_id)
+    ]
+    return status
+
+
+@app.post(
+    "/integration-sessions/exports/{object_id}",
+    dependencies=[Depends(require_internal_token)],
+)
+async def download_integration_export(object_id: str, request: IntegrationSessionRequest):
+    """Serve one object from the requesting session's export manifest only."""
+    _, workspace_id, _ = _integration_identity(request)
+    found = integration_exports.get_object(workspace_id, object_id)
+    if found is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "export_not_found", "message": "Export not found."},
+        )
+    item, path = found
+    return FileResponse(
+        path,
+        media_type=item.content_type,
+        filename=item.path.rsplit("/", 1)[-1],
+        headers={"X-Content-SHA256": item.sha256, "Cache-Control": "private, no-store"},
+    )
+
+
+@app.get("/integration-sessions/readiness", dependencies=[Depends(require_internal_token)])
+async def integration_readiness():
+    errors = INTEGRATION_SETTINGS.readiness_errors()
+    return JSONResponse(
+        status_code=200 if not errors else 503,
+        content={
+            "enabled": INTEGRATION_SETTINGS.enabled,
+            "integration_ids": sorted(INTEGRATION_SETTINGS.integration_ids),
+            "errors": errors,
+        },
+    )
+
+
+def _sweep_export_session(record: SessionRecord, final_attempt: bool) -> str:
+    if not record.vm_resident:
+        # Every turn exported its results before the VM was stopped; booting
+        # it again only to re-export would bypass VM capacity reservations.
+        status = record.export_status or "complete"
+        return "unavailable" if status == "failed" else status
+    return _export_integration_outputs(
+        record.workspace_id, record.sandbox_id, record.deadline_at,
+    )
+
+
+integration_sweeper = IntegrationSessionSweeper(
+    integration_store,
+    SweepActions(
+        stop_vm=stop_sandbox,
+        delete_vm=delete_integration_sandbox,
+        interrupt_run=interrupt_sandbox_run,
+        cancel_run=_cancel_chat_run,
+        export_session=_sweep_export_session,
+        list_vms=list_integration_sandboxes,
+    ),
+    leader_ttl_seconds=max(30, int(INTEGRATION_SWEEP_INTERVAL_SECONDS * 4)),
+)
+integration_sweep_wakeup = threading.Event()
+integration_sweep_stop = threading.Event()
+
+
+def _integration_sweep_loop() -> None:
+    while not integration_sweep_stop.is_set():
+        integration_sweep_wakeup.wait(INTEGRATION_SWEEP_INTERVAL_SECONDS)
+        integration_sweep_wakeup.clear()
+        if integration_sweep_stop.is_set():
+            return
+        try:
+            if (
+                not INTEGRATION_SETTINGS.enabled
+                and not integration_store.indexed_workspace_ids()
+            ):
+                continue
+            if integration_sweeper.acquire_leadership():
+                integration_sweeper.run_once()
+                integration_exports.purge_expired()
+        except Exception as exc:
+            print(f"Integration session sweep failed: {exc}")
+
+
+@app.on_event("startup")
+def _start_integration_sweeper() -> None:
+    # Sessions created while the feature was enabled still need cleanup after
+    # it is disabled, so the sweeper runs whenever records may exist.
+    for error in INTEGRATION_SETTINGS.readiness_errors():
+        print(f"Integration sessions misconfigured: {error}")
+    if os.getenv("IDEA_INTEGRATION_SWEEPER_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    threading.Thread(
+        target=_integration_sweep_loop, name="integration-sweeper", daemon=True,
+    ).start()
+
+
+@app.on_event("shutdown")
+def _stop_integration_sweeper() -> None:
+    integration_sweep_stop.set()
+    integration_sweep_wakeup.set()
 
 
 @app.post("/clear", dependencies=[Depends(require_internal_token)])

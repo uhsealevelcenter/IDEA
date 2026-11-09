@@ -20,7 +20,17 @@ import time
 import uuid
 import pexpect
 
-from msb_sandbox import MicrosandboxTerminal, microsandbox_available
+from msb_sandbox import (
+    DEFAULT_CPUS,
+    DEFAULT_DISK_MB,
+    DEFAULT_IDLE_TIMEOUT,
+    DEFAULT_MAX_DURATION,
+    DEFAULT_MEMORY_MB,
+    MicrosandboxTerminal,
+    list_sandbox_names,
+    microsandbox_available,
+    remove_named_sandbox,
+)
 
 # "auto" picks microsandbox when it's importable and /dev/kvm is available,
 # otherwise falls back to a plain local shell. Override with "local" or
@@ -38,6 +48,104 @@ PYTHON_EXECUTION_TIMEOUT_SECONDS = float(
 PYTHON_RUN_STATUS_TTL_SECONDS = float(
     os.getenv("SANDBOX_PYTHON_RUN_STATUS_TTL_SECONDS", "3600")
 )
+
+# Integration-session VMs (one per public conversation) carry this name
+# prefix; langgraph/idea_graph/identities.py derives it. They require real
+# microVM isolation and a lifecycle reservation from LangGraph's admission
+# control (langgraph/integration_sessions.py) before every boot or resume.
+INTEGRATION_SANDBOX_PREFIX = "sb_n8n_"
+INTEGRATION_RESERVATION_KEY_PREFIX = "idea:isess:vm:"
+INTEGRATION_LABELS = {"idea.scope": "integration_session"}
+
+
+def _optional_int_env(name: str, default):
+    raw = os.getenv(name, "").strip()
+    return int(raw) if raw else default
+
+
+INTEGRATION_CPUS = _optional_int_env("SANDBOX_INTEGRATION_CPUS", DEFAULT_CPUS)
+INTEGRATION_MEMORY_MB = _optional_int_env("SANDBOX_INTEGRATION_MEMORY_MB", DEFAULT_MEMORY_MB)
+INTEGRATION_DISK_MB = _optional_int_env("SANDBOX_INTEGRATION_DISK_MB", DEFAULT_DISK_MB)
+INTEGRATION_IDLE_TIMEOUT = _optional_int_env(
+    "SANDBOX_INTEGRATION_IDLE_TIMEOUT_SECONDS", DEFAULT_IDLE_TIMEOUT
+)
+INTEGRATION_MAX_DURATION = _optional_int_env(
+    "SANDBOX_INTEGRATION_MAX_DURATION_SECONDS", DEFAULT_MAX_DURATION
+)
+# Host-wide ceiling on cached VMs (all kinds) that an integration boot may
+# not exceed, minus headroom kept for regular IDEA users. 0 disables it.
+HOST_MAX_RESIDENT_VMS = _optional_int_env("SANDBOX_HOST_MAX_RESIDENT_VMS", 0)
+HOST_RESERVED_REGULAR_VMS = _optional_int_env("SANDBOX_HOST_RESERVED_REGULAR_VMS", 0)
+INTEGRATION_REQUIRE_RESERVATION = os.getenv(
+    "SANDBOX_INTEGRATION_REQUIRE_RESERVATION", "true"
+).strip().lower() not in {"0", "false", "no", "off"}
+
+
+class SandboxAdmissionError(RuntimeError):
+    """A sandbox the service refuses to boot; main.py maps it to HTTP."""
+
+    def __init__(self, status_code: int, code: str, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+
+
+def is_integration_sandbox(sandbox_id: str) -> bool:
+    return str(sandbox_id).startswith(INTEGRATION_SANDBOX_PREFIX)
+
+
+_reservation_redis = None
+
+
+def _reservation_client():
+    global _reservation_redis
+    if _reservation_redis is None:
+        import redis
+
+        _reservation_redis = redis.Redis(
+            host=os.getenv("REDIS_HOST", "redis"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
+            decode_responses=True,
+            socket_timeout=5,
+            socket_connect_timeout=5,
+        )
+    return _reservation_redis
+
+
+def _require_integration_reservation(sandbox_id: str) -> None:
+    if not INTEGRATION_REQUIRE_RESERVATION:
+        return
+    try:
+        reservation = _reservation_client().get(
+            f"{INTEGRATION_RESERVATION_KEY_PREFIX}{sandbox_id}"
+        )
+    except Exception as exc:
+        raise SandboxAdmissionError(
+            503, "reservation_unavailable",
+            f"Cannot verify the sandbox reservation: {exc}",
+        ) from exc
+    if not reservation:
+        raise SandboxAdmissionError(
+            409, "no_reservation",
+            "This integration session has no active sandbox reservation.",
+        )
+
+
+def _admit_integration_boot_locked(sandbox_id: str) -> None:
+    """Checks before booting/resuming an integration VM; caller holds _registry_lock."""
+    if not _use_microsandbox():
+        raise SandboxAdmissionError(
+            503, "isolation_unavailable",
+            "Integration sessions require the microsandbox backend.",
+        )
+    if HOST_MAX_RESIDENT_VMS > 0:
+        allowed = HOST_MAX_RESIDENT_VMS - HOST_RESERVED_REGULAR_VMS
+        if len(_terminals) >= allowed:
+            raise SandboxAdmissionError(
+                503, "host_capacity",
+                "The sandbox host has no capacity for another public VM.",
+            )
+    _require_integration_reservation(sandbox_id)
 
 
 class PersistentTerminal:
@@ -253,9 +361,22 @@ def _get_lock(sandbox_id: str) -> threading.Lock:
 
 def _get_terminal(sandbox_id: str):
     """Get or create the terminal (sandboxed or local) for a given sandbox_id."""
+    # Holding _registry_lock while booting also serializes VM boots, which
+    # satisfies the one-public-boot-at-a-time policy for this process.
     with _registry_lock:
         if sandbox_id not in _terminals:
-            if _use_microsandbox():
+            if is_integration_sandbox(sandbox_id):
+                _admit_integration_boot_locked(sandbox_id)
+                _terminals[sandbox_id] = MicrosandboxTerminal(
+                    sandbox_id,
+                    cpus=INTEGRATION_CPUS,
+                    memory=INTEGRATION_MEMORY_MB,
+                    disk_mb=INTEGRATION_DISK_MB,
+                    idle_timeout=INTEGRATION_IDLE_TIMEOUT,
+                    max_duration=INTEGRATION_MAX_DURATION,
+                    labels=INTEGRATION_LABELS,
+                )
+            elif _use_microsandbox():
                 _terminals[sandbox_id] = MicrosandboxTerminal(sandbox_id)
             else:
                 _terminals[sandbox_id] = PersistentTerminal()
@@ -312,6 +433,63 @@ def destroy_terminal(sandbox_id: str) -> bool:
             terminal.destroy()
             return True
         return False
+
+
+INTEGRATION_DELETE_LOCK_WAIT_SECONDS = float(
+    os.getenv("SANDBOX_INTEGRATION_DELETE_LOCK_WAIT_SECONDS", "30")
+)
+
+
+def delete_integration_sandbox(sandbox_id: str) -> str:
+    """
+    Permanently delete an integration-session VM, whether or not this
+    process has it cached (a stopped VM survives restarts on disk). This is
+    the automatic-deletion policy for ephemeral public conversations; it
+    refuses every other sandbox so regular IDEA workspaces are never swept.
+
+    Returns "deleted" or "not_found"; raises if deletion is not confirmed.
+    """
+    if not is_integration_sandbox(sandbox_id):
+        raise SandboxAdmissionError(
+            403, "not_integration_sandbox",
+            "Only integration-session sandboxes can be deleted this way.",
+        )
+    # Revoke the reservation first so no concurrent request can boot the VM
+    # again between the kill and the removal.
+    if INTEGRATION_REQUIRE_RESERVATION:
+        try:
+            _reservation_client().delete(
+                f"{INTEGRATION_RESERVATION_KEY_PREFIX}{sandbox_id}"
+            )
+        except Exception as exc:
+            raise SandboxAdmissionError(
+                503, "reservation_unavailable",
+                f"Cannot revoke the sandbox reservation: {exc}",
+            ) from exc
+    lock = _get_lock(sandbox_id)
+    # A command still running past the close grace period must not keep the
+    # VM alive; proceed with the kill even if its lock is still held.
+    acquired = lock.acquire(timeout=INTEGRATION_DELETE_LOCK_WAIT_SECONDS)
+    try:
+        with _registry_lock:
+            terminal = _terminals.pop(sandbox_id, None)
+        if terminal is not None:
+            terminal.destroy()
+        if not _use_microsandbox():
+            return "deleted" if terminal is not None else "not_found"
+        result = remove_named_sandbox(sandbox_id)
+        return "deleted" if terminal is not None else result
+    finally:
+        if acquired:
+            lock.release()
+
+
+def list_integration_sandboxes() -> list[str]:
+    """Every integration-session VM known to the runtime, cached or not."""
+    if not _use_microsandbox():
+        with _registry_lock:
+            return sorted(name for name in _terminals if is_integration_sandbox(name))
+    return sorted(list_sandbox_names(INTEGRATION_SANDBOX_PREFIX))
 
 
 def run_command(command: str, sandbox_id: str) -> tuple[bool, str, float]:

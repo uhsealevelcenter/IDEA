@@ -8,7 +8,7 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.3.0
+version: 0.4.0
 """
 
 import asyncio
@@ -16,6 +16,7 @@ import json
 import os
 import posixpath
 import re
+import unicodedata
 import httpx
 from pydantic import BaseModel, Field
 from pathlib import PurePosixPath
@@ -23,12 +24,20 @@ from typing import AsyncGenerator, Awaitable, Callable, Generator
 from urllib.parse import quote, unquote
 
 
+INTEGRATION_MODEL_ID = "idea-terminal-agent-integration"
 BASE_MODEL_VARIANTS = {
     "idea-terminal-agent": "standard",
     "idea_terminal_agent.idea-terminal-agent": "standard",
     "idea-terminal-agent-advanced": "advanced",
     "idea_terminal_agent.idea-terminal-agent-advanced": "advanced",
+    INTEGRATION_MODEL_ID: "standard",
+    f"idea_terminal_agent.{INTEGRATION_MODEL_ID}": "standard",
 }
+INTEGRATION_SESSION_HEADER = "x-idea-integration-session"
+INTEGRATION_ID_HEADER = "x-idea-integration-id"
+INTEGRATION_ACTION_HEADER = "x-idea-integration-action"
+INTEGRATION_BODY_KEY = "idea_integration"
+MAX_INTEGRATION_SESSION_ID_BYTES = 256
 TERMINAL_RUN_STATUSES = {
     "completed", "stopped", "failed", "cancelled-before-start"
 }
@@ -400,7 +409,118 @@ def _is_base_model_alias(model_id: str) -> bool:
     return readable_id in {
         "idea-terminal-agent",
         "idea-terminal-agent-advanced",
+        INTEGRATION_MODEL_ID,
     }
+
+
+def _is_integration_model(model_id: object) -> bool:
+    return isinstance(model_id, str) and (
+        model_id.rsplit(".", 1)[-1] == INTEGRATION_MODEL_ID
+    )
+
+
+class IntegrationContextError(ValueError):
+    """The request's integration context is missing, malformed, or ambiguous."""
+
+
+def _valid_integration_value(value: object, name: str, max_bytes: int) -> str:
+    # Never strip or normalize: distinct external sessions must stay distinct.
+    if not isinstance(value, str) or not value:
+        raise IntegrationContextError(f"{name} must be a non-empty string")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise IntegrationContextError(f"{name} exceeds {max_bytes} UTF-8 bytes")
+    if any(
+        unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"}
+        for character in value
+    ):
+        raise IntegrationContextError(f"{name} contains control characters")
+    return value
+
+
+def _integration_sources(
+    body: dict, metadata: dict | None, request: object | None,
+) -> list[dict]:
+    """Every place a caller may have supplied integration context."""
+    sources: list[dict] = []
+    headers = getattr(request, "headers", None) or {}
+    header_values = {
+        "integration_session_id": headers.get(INTEGRATION_SESSION_HEADER),
+        "integration_id": headers.get(INTEGRATION_ID_HEADER),
+        "action": headers.get(INTEGRATION_ACTION_HEADER),
+    }
+    if any(value is not None for value in header_values.values()):
+        sources.append(header_values)
+    for container in (body, body.get("metadata"), metadata):
+        if not isinstance(container, dict):
+            continue
+        nested = container.get(INTEGRATION_BODY_KEY)
+        if isinstance(nested, dict):
+            sources.append(nested)
+        flat = {
+            key: container.get(key)
+            for key in ("integration_session_id", "integration_id")
+            if container.get(key) is not None
+        }
+        if flat:
+            sources.append(flat)
+    return sources
+
+
+def _integration_request_context(
+    body: dict,
+    metadata: dict | None,
+    request: object | None,
+    configured_integration_id: str,
+) -> dict | None:
+    """
+    Return {"integration_id", "integration_session_id", "action"} from the
+    verified transport, or None when no integration context was supplied.
+    Conflicting values across headers/body/metadata are rejected.
+    """
+    sources = _integration_sources(body, metadata, request)
+    if not sources:
+        return None
+    resolved: dict[str, str] = {}
+    for source in sources:
+        for key in ("integration_session_id", "integration_id", "action"):
+            value = source.get(key)
+            if value is None:
+                continue
+            if key in resolved and resolved[key] != value:
+                raise IntegrationContextError(f"conflicting {key} values")
+            resolved[key] = value
+    if "integration_session_id" not in resolved:
+        raise IntegrationContextError("integration_session_id is required")
+    session_id = _valid_integration_value(
+        resolved["integration_session_id"],
+        "integration_session_id",
+        MAX_INTEGRATION_SESSION_ID_BYTES,
+    )
+    requested_id = resolved.get("integration_id")
+    if requested_id is not None and requested_id != configured_integration_id:
+        raise IntegrationContextError("integration_id is not allowed")
+    action = resolved.get("action") or "message"
+    if action not in {"message", "end"}:
+        raise IntegrationContextError("unsupported integration action")
+    return {
+        "integration_id": configured_integration_id,
+        "integration_session_id": session_id,
+        "action": action,
+    }
+
+
+def _backend_error_message(exc: httpx.HTTPError) -> str | None:
+    """A user-presentable message from a structured LangGraph rejection."""
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return None
+    if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+        return detail["message"]
+    return None
 
 
 def _selected_agent_variant(model_id: object) -> str:
@@ -779,19 +899,68 @@ class Pipe:
                 "collections and direct PDFs are handled exclusively by PaperQA2."
             ),
         )
+        INTEGRATION_MODEL_ENABLED: bool = Field(
+            default=False,
+            description=(
+                "Register the integration model. Every request to it must "
+                "carry an integration session ID and runs in that session's "
+                "own temporary sandbox; restrict model access to the "
+                "dedicated integration account."
+            ),
+        )
+        INTEGRATION_ID: str = Field(
+            default="n8n-sealevel-v1",
+            description=(
+                "Server-configured integration namespace for the integration "
+                "model. Must be listed in LangGraph's IDEA_INTEGRATION_IDS."
+            ),
+        )
 
     def __init__(self):
         self.valves = self.Valves()
 
     def pipes(self) -> list[dict]:
         """Register the standard and administrator-assignable IDEA variants."""
-        return [
+        models = [
             {"id": "idea-terminal-agent", "name": "IDEA Agent"},
             {
                 "id": "idea-terminal-agent-advanced",
                 "name": "IDEA Agent Advanced",
             },
         ]
+        if self.valves.INTEGRATION_MODEL_ENABLED:
+            models.append({
+                "id": INTEGRATION_MODEL_ID,
+                "name": "IDEA Agent (Integration Sessions)",
+            })
+        return models
+
+    def _service_headers(self) -> dict:
+        return (
+            {"Authorization": f"Bearer {self.valves.INTERNAL_SERVICE_TOKEN}"}
+            if self.valves.INTERNAL_SERVICE_TOKEN
+            else {}
+        )
+
+    async def _end_integration_session(
+        self, user_id: str, integration: dict,
+    ) -> str:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    f"{self.valves.LANGGRAPH_SERVICE_URL}/integration-sessions/end",
+                    json={
+                        "user_id": user_id,
+                        "integration_id": integration["integration_id"],
+                        "integration_session_id": integration["integration_session_id"],
+                    },
+                    headers=self._service_headers(),
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            message = _backend_error_message(exc) or "Unable to end the conversation."
+            return f"**Error:** {message}"
+        return "Conversation ended."
 
     async def pipe(
         self,
@@ -804,6 +973,32 @@ class Pipe:
             Callable[[dict], Awaitable[None]] | None
         ) = None,
     ) -> AsyncGenerator[str, None]:
+        user = __user__ or {}
+        integration_model = _is_integration_model(body.get("model"))
+        try:
+            integration = _integration_request_context(
+                body, __metadata__, __request__, self.valves.INTEGRATION_ID,
+            )
+        except IntegrationContextError as exc:
+            yield f"**Error:** invalid integration session context ({exc})."
+            return
+        # Integration context and the integration model must come together:
+        # never fall back to the owner's personal sandbox, and never let a
+        # browser model silently accept external session routing.
+        if integration_model and (
+            not self.valves.INTEGRATION_MODEL_ENABLED or integration is None
+        ):
+            yield "**Error:** this model requires an integration session ID."
+            return
+        if integration is not None and not integration_model:
+            yield "**Error:** integration sessions must use the integration model."
+            return
+        if integration is not None and integration["action"] == "end":
+            yield await self._end_integration_session(
+                str(user.get("id") or "anonymous"), integration,
+            )
+            return
+
         messages = body.get("messages", [])
         if not messages:
             return
@@ -816,7 +1011,6 @@ class Pipe:
         agent_variant = _selected_agent_variant(body.get("model"))
         public_base_url = _request_public_base_url(__request__)
 
-        user = __user__ or {}
         # Open WebUI's own user id becomes the sandbox/session identity that
         # langgraph_service.py + sandbox_service key everything off of - see
         # IMPLEMENTATION_STATUS.md "Stage 1 - Dedicated per-user sandbox".
@@ -827,10 +1021,15 @@ class Pipe:
         user_email = user.get("email") or None
         # Open WebUI's per-conversation chat_id keeps history scoped per chat
         # the same way the existing frontend's browser_session_id does.
-        session_id = str(
+        openwebui_chat_id = str(
             body.get("chat_id")
             or (__metadata__ or {}).get("chat_id")
-            or "default"
+            or ""
+        ) or None
+        # Integration sessions are addressed by their validated session
+        # context, never by this placeholder.
+        session_id = openwebui_chat_id or (
+            "integration" if integration is not None else "default"
         )
         # Open WebUI's built-in "pending" role covers users awaiting admin
         # approval; treat anyone without a full "user"/"admin" role as guest,
@@ -867,13 +1066,16 @@ class Pipe:
             # Used only by langgraph's final /outputs upload. It is never
             # added to model messages or persisted conversation history.
             "openwebui_authorization": _request_authorization(__request__),
+            "openwebui_chat_id": openwebui_chat_id,
         }
+        if integration is not None:
+            payload.update({
+                "workspace_scope": "integration_session",
+                "integration_id": integration["integration_id"],
+                "integration_session_id": integration["integration_session_id"],
+            })
 
-        headers = (
-            {"Authorization": f"Bearer {self.valves.INTERNAL_SERVICE_TOKEN}"}
-            if self.valves.INTERNAL_SERVICE_TOKEN
-            else {}
-        )
+        headers = self._service_headers()
 
         message_buffer = ""
         artifact_reference_confirmed = False
@@ -1148,6 +1350,10 @@ class Pipe:
             closure = close_python_console_stream()
             if closure:
                 yield closure
+            rejection = _backend_error_message(exc)
+            if rejection:
+                yield f"\n\n**Error:** {rejection}\n\n"
+                return
             yield f"\n\n**Error reaching langgraph service:** {exc}\n\n"
             return
         finally:

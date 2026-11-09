@@ -196,8 +196,10 @@ class MicrosandboxTerminal:
         idle_timeout: Optional[int] = DEFAULT_IDLE_TIMEOUT,
         max_duration: Optional[int] = DEFAULT_MAX_DURATION,
         shared_data_host_path: str = DEFAULT_SHARED_DATA_HOST_PATH,
+        labels: Optional[dict[str, str]] = None,
     ):
         self.session_id = session_id
+        self.labels = dict(labels or {})
         self.image = image
         self.cpus = cpus
         self.memory = memory
@@ -322,6 +324,8 @@ class MicrosandboxTerminal:
                 volumes = shared_data_volumes(self.shared_data_host_path)
                 if volumes:
                     create_kwargs["volumes"] = volumes
+                if self.labels:
+                    create_kwargs["labels"] = self.labels
                 return await Sandbox.create(self.session_id, **create_kwargs)
 
             await handle.refresh()
@@ -1035,3 +1039,62 @@ class MicrosandboxTerminal:
             pass
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
+
+
+def _run_sdk(coro_factory, timeout: float = 120.0):
+    """Run one SDK coroutine on a private loop for lifecycle-only callers."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(asyncio.wait_for(coro_factory(), timeout))
+    finally:
+        loop.close()
+
+
+def remove_named_sandbox(name: str) -> str:
+    """
+    Kill and remove a named VM without a cached MicrosandboxTerminal (for
+    example, one stopped before a service restart). Returns "deleted" or
+    "not_found"; raises if the runtime still reports the VM afterwards.
+    """
+    from microsandbox import Sandbox
+    from microsandbox.errors import SandboxNotFoundError
+
+    require_native_pid_guard()
+
+    async def _remove() -> str:
+        try:
+            handle = await Sandbox.get(name)
+        except SandboxNotFoundError:
+            return "not_found"
+        await handle.refresh()
+        if handle.status != "stopped":
+            with contextlib.suppress(Exception):
+                await handle.kill()
+        await Sandbox.remove(name)
+        try:
+            await Sandbox.get(name)
+        except SandboxNotFoundError:
+            return "deleted"
+        raise RuntimeError(f"Sandbox {name} still exists after removal")
+
+    return _run_sdk(_remove)
+
+
+def list_sandbox_names(prefix: str) -> list[str]:
+    """Every runtime VM name starting with prefix, across all pages."""
+    from microsandbox import Sandbox
+
+    async def _list() -> list[str]:
+        names: list[str] = []
+        cursor = None
+        while True:
+            page = await Sandbox.list_with(cursor=cursor, limit=200)
+            names.extend(
+                handle.name for handle in page.sandboxes
+                if str(handle.name).startswith(prefix)
+            )
+            cursor = page.next_cursor
+            if not cursor:
+                return names
+
+    return _run_sdk(_list)

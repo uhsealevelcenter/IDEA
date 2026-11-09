@@ -240,6 +240,44 @@ def destroy_terminal(session_id: str) -> None:
         print(f"Failed to destroy sandbox {session_id}: {e}")
 
 
+def stop_sandbox(session_id: str) -> bool:
+    """Gracefully stop a VM and report whether the request succeeded."""
+    try:
+        response = _client.post(f"/sandboxes/{session_id}/stop", timeout=120.0)
+        response.raise_for_status()
+        return True
+    except httpx.HTTPError as e:
+        print(f"Failed to stop sandbox {session_id}: {e}")
+        return False
+
+
+def delete_integration_sandbox(sandbox_id: str) -> bool:
+    """
+    Permanently delete an integration-session VM, cached or not. True only
+    once sandbox_service confirms the VM is gone (or never existed).
+    """
+    try:
+        response = _client.post(
+            f"/sandboxes/{sandbox_id}/delete-integration", timeout=180.0,
+        )
+        response.raise_for_status()
+        return response.json().get("status") in {"deleted", "not_found"}
+    except httpx.HTTPError as e:
+        print(f"Failed to delete integration sandbox {sandbox_id}: {e}")
+        return False
+
+
+def list_integration_sandboxes() -> list[str] | None:
+    """Names of every integration-session VM on the host, or None if unknown."""
+    try:
+        response = _client.get("/integration-sandboxes", timeout=60.0)
+        response.raise_for_status()
+        return [str(name) for name in response.json().get("sandboxes") or []]
+    except httpx.HTTPError as e:
+        print(f"Failed to list integration sandboxes: {e}")
+        return None
+
+
 def run_terminal(command: str, session_id: str = 'default') -> str:
     """
     Execute a shell command in a persistent terminal session (via sandbox_service).

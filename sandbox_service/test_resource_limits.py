@@ -93,6 +93,7 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         terminal.idle_timeout = 1800
         terminal.max_duration = None
         terminal.shared_data_host_path = ""
+        terminal.labels = {}
         terminal._run = lambda factory: asyncio.run(factory())
 
         with patch.dict(
@@ -109,6 +110,7 @@ class ResourceLimitConfigurationTests(unittest.TestCase):
         self.assertEqual(calls[1], WORKSPACE_INIT_COMMAND)
         name, kwargs = calls[0]
         self.assertEqual(name, "resource-test")
+        self.assertNotIn("labels", kwargs)
         self.assertEqual(kwargs["cpus"], 2)
         self.assertEqual(kwargs["memory"], 4096)
         self.assertEqual(

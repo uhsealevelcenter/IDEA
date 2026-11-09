@@ -70,6 +70,10 @@ services:
       SANDBOX_CPUS: "${SANDBOX_CPUS:-1}"
       SANDBOX_MEMORY_MB: "${SANDBOX_MEMORY_MB:-1024}"
       SANDBOX_DISK_MB: "${SANDBOX_DISK_MB:-4096}"
+      REDIS_HOST: "${SANDBOX_REDIS_HOST:-redis}"
+    depends_on:
+      redis:
+        condition: service_started
     volumes:
       - idea_microsandbox_data:/root/.microsandbox
       - idea_shared_data:/app/data:ro
