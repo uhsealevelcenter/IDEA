@@ -5,7 +5,8 @@ object is listed in its session's manifest; downloads resolve only through
 that manifest, never through arbitrary paths or Open WebUI file IDs.
 
 Selection rule: regular files under /outputs, excluding hidden path
-components, newest first, until the per-session byte or file cap is reached.
+components other than the displayed-image directories, newest first, until
+the per-session byte or file cap is reached.
 """
 
 from __future__ import annotations
@@ -25,6 +26,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 OUTPUTS_ROOT = "/outputs"
+# Where the runtime saves images it shows in the reply (plots from Python and
+# view_image). They are hidden from the file listing but are part of the
+# answer, so the reply needs a public URL for them.
+DISPLAYED_IMAGE_DIRS = (".idea/kernel-images/", ".idea/display-images/")
 EXPORT_KEY_PREFIX = "idea:isess:exports:"
 EXPORT_LOCATOR_PREFIX = "idea:isess:export_locator:"
 EXPORT_TOTAL_BYTES_KEY = "idea:isess:exports_total_bytes"
@@ -108,6 +113,10 @@ def selectable_output_path(path: str) -> bool:
     if normalized != path or not normalized.startswith(OUTPUTS_ROOT + "/"):
         return False
     relative = normalized[len(OUTPUTS_ROOT) + 1:]
+    for prefix in DISPLAYED_IMAGE_DIRS:
+        if relative.startswith(prefix):
+            relative = relative[len(prefix):]
+            break
     return bool(relative) and not any(part.startswith(".") for part in relative.split("/"))
 
 

@@ -1407,7 +1407,10 @@ class Pipe:
                             pending_files.append(chunk)
                             continue
                         if chunk.get("type") == "image" and chunk.get("filename"):
-                            if chunk.get("openwebui_file_id"):
+                            # Integration visitors cannot load Open WebUI
+                            # file URLs. Their images wait for the public
+                            # exports, which exist once the run finishes.
+                            if chunk.get("openwebui_file_id") and integration is None:
                                 closure = close_python_console_stream()
                                 if closure:
                                     yield closure

@@ -510,6 +510,22 @@ class IntegrationExportTests(unittest.TestCase):
         self.assertEqual(item.size, 5)
         self.assertEqual(len(item.sha256), 64)
 
+    def test_displayed_images_are_exported_from_their_hidden_directories(self):
+        self.files = {
+            "/outputs/.idea/kernel-images/run-exec-1.png": b"123",
+            "/outputs/.idea/display-images/plot-abc.png": b"45",
+            "/outputs/.idea/kernel-images/.partial.png": b"6",
+            "/outputs/.idea/state.json": b"7",
+        }
+        outcome = self._export()
+        self.assertEqual(
+            sorted(outcome.exported),
+            [
+                "/outputs/.idea/display-images/plot-abc.png",
+                "/outputs/.idea/kernel-images/run-exec-1.png",
+            ],
+        )
+
     def test_unchanged_files_are_not_reexported(self):
         self._export()
         self.reads.clear()

@@ -393,6 +393,61 @@ class PipeTransportTests(unittest.TestCase):
         self.assertNotIn("private-file", rendered)
         self.assertEqual(referenced, {"/outputs/plot.png"})
 
+    def test_integration_images_use_the_public_export(self):
+        image_path = "/outputs/.idea/kernel-images/run-exec-1.png"
+        pipe = idea_pipe.Pipe()
+        pipe.valves.INTEGRATION_MODEL_ENABLED = True
+        pipe.valves.INTEGRATION_ID = "n8n-test"
+        client = self._client()
+        client.get.return_value.json.return_value = {
+            "run_id": "run-1", "status": "completed", "next_after": 2,
+            "events": [
+                {"seq": 1, "chunk": {
+                    "type": "image", "format": "png", "filename": image_path,
+                    "openwebui_file_id": "private-file",
+                }},
+                {"seq": 2, "chunk": {
+                    "type": "file", "filename": image_path,
+                    "openwebui_file_id": "private-file",
+                }},
+            ],
+        }
+        started = client.post.return_value
+        status = Mock()
+        status.raise_for_status.return_value = None
+        status.json.return_value = {
+            "exports": [{"path": image_path, "object_id": "obj-1"}],
+        }
+        client.post = AsyncMock(
+            side_effect=lambda url, **_: (
+                status if str(url).endswith("/integration-sessions/status") else started
+            ),
+        )
+
+        async def collect():
+            return [
+                chunk async for chunk in pipe.pipe(
+                    {
+                        "model": "idea-terminal-agent-integration",
+                        "messages": [{"role": "user", "content": "plot"}],
+                    },
+                    __user__={"id": "owner-1", "role": "user"},
+                    __metadata__={},
+                    __request__=SimpleNamespace(
+                        headers={"x-idea-integration-session": "visitor-1"},
+                        cookies={},
+                    ),
+                )
+            ]
+
+        with patch.object(idea_pipe.httpx, "AsyncClient", return_value=client):
+            output = "".join(asyncio.run(collect()))
+        self.assertIn(
+            "![generated image](/integration-exports/obj-1/run-exec-1.png)", output,
+        )
+        self.assertNotIn("private-file", output)
+        self.assertEqual(output.count("run-exec-1.png"), 1)
+
     def test_integration_accounts_always_need_session_context(self):
         for model in ("idea-terminal-agent", "idea_terminal_agent.idea-terminal-agent-advanced"):
             output, client = self._run(model=model, integration_accounts="other, owner-1")
