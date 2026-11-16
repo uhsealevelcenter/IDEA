@@ -217,6 +217,7 @@ class IntegrationExportStore:
         errors: list[str] = []
         session_bytes = 0
         selected = 0
+        kept_ids: set[str] = set()
 
         for path, signature in candidates:
             size = _signature_size(signature)
@@ -234,6 +235,7 @@ class IntegrationExportStore:
                 previous.expires_at = max(previous.expires_at, expires_at)
                 self.redis.hset(manifest_key, previous.object_id, json.dumps(asdict(previous)))
                 self._remember_locator(workspace_id, previous)
+                kept_ids.add(previous.object_id)
                 selected += 1
                 session_bytes += previous.size
                 continue
@@ -256,10 +258,12 @@ class IntegrationExportStore:
             self.redis.hset(manifest_key, item.object_id, json.dumps(asdict(item)))
             self._remember_locator(workspace_id, item)
             self.redis.incrby(EXPORT_TOTAL_BYTES_KEY, item.size)
+            kept_ids.add(item.object_id)
             exported.append(path)
             selected += 1
             session_bytes += item.size
 
+        self._evict_over_cap(workspace_id, kept_ids, selected, session_bytes)
         self.redis.zadd(EXPORT_EXPIRY_INDEX_KEY, {workspace_id: expires_at})
         if errors:
             status = STATUS_PARTIAL if (exported or existing) else STATUS_FAILED
@@ -268,6 +272,34 @@ class IntegrationExportStore:
         else:
             status = STATUS_COMPLETE
         return ExportOutcome(status, exported, skipped, errors)
+
+    def _evict_over_cap(
+        self, workspace_id: str, kept_ids: set[str], files: int, size: int,
+    ) -> None:
+        """Hold the whole session, not just this pass, inside the caps.
+
+        Objects from earlier turns that this pass did not select (the file
+        was removed, or newer files took its place) keep their links while
+        there is room. Past a cap, the oldest of them go first.
+        """
+        stale = sorted(
+            (
+                item for item in self.manifest(workspace_id)
+                if item.object_id not in kept_ids
+            ),
+            key=lambda item: (item.exported_at, item.object_id),
+        )
+        files += len(stale)
+        size += sum(item.size for item in stale)
+        for item in stale:
+            if (
+                files <= self.limits.max_session_files
+                and size <= self.limits.max_session_bytes
+            ):
+                break
+            self._delete_object(workspace_id, item)
+            files -= 1
+            size -= item.size
 
     def _write_object(
         self,

@@ -410,6 +410,85 @@ class IntegrationSweeperTests(unittest.TestCase):
         self.assertIn(("stop", admission.sandbox_id), self.calls)
         self.assertIsNone(self.redis.get(f"idea:isess:vm:{admission.sandbox_id}"))
 
+    def test_turn_waits_for_an_idle_stop_instead_of_running_on_that_vm(self):
+        admission = self._admit()
+        self.clock.advance(self.limits.vm_stop_after_idle_seconds)
+        ids = _ids()
+        seen = {}
+
+        def stop_vm(sandbox_id):
+            # While the VM stops, a new message must not be admitted onto it.
+            self.store.vm_stop_wait_seconds = 0
+            with self.assertRaises(AdmissionError) as raised:
+                self.store.admit_turn(
+                    owner_user_id="owner-1", integration_id="n8n-test",
+                    workspace_id=ids.workspace_id, sandbox_id=ids.sandbox_id,
+                    run_id="run-during-stop", input_bytes=1,
+                )
+            seen["code"] = raised.exception.code
+            seen["active"] = self.store.get(ids.workspace_id).active_run_id
+            return True
+
+        self.sweeper.actions.stop_vm = stop_vm
+        self.sweeper.run_once()
+
+        self.assertEqual(seen, {"code": "vm_restarting", "active": None})
+        record = self.store.get(admission.workspace_id)
+        self.assertIsNone(record.vm_stopping_until)
+        self.assertFalse(record.vm_resident)
+        # Once the stop is confirmed the next turn reserves a fresh VM slot.
+        self.assertTrue(self.store.get(self._admit().workspace_id).vm_resident)
+
+    def test_waiting_turn_is_admitted_when_the_stop_completes(self):
+        admission = self._admit()
+        self.clock.advance(self.limits.vm_stop_after_idle_seconds)
+        ids = _ids()
+        entered, release, result = threading.Event(), threading.Event(), {}
+
+        def stop_vm(sandbox_id):
+            entered.set()
+            release.wait(5)
+            return True
+
+        def late_message():
+            entered.wait(5)
+            result["admission"] = self.store.admit_turn(
+                owner_user_id="owner-1", integration_id="n8n-test",
+                workspace_id=ids.workspace_id, sandbox_id=ids.sandbox_id,
+                run_id="run-late", input_bytes=1,
+            )
+
+        self.sweeper.actions.stop_vm = stop_vm
+        worker = threading.Thread(target=late_message)
+        worker.start()
+        entered.wait(5)
+        threading.Timer(0.6, release.set).start()
+        self.sweeper.run_once()
+        worker.join(10)
+
+        record = self.store.get(admission.workspace_id)
+        self.assertEqual(result["admission"].run_id, "run-late")
+        self.assertEqual(record.active_run_id, "run-late")
+        self.assertTrue(record.vm_resident)
+        self.assertIsNone(record.vm_stopping_until)
+
+    def test_failed_or_abandoned_stop_does_not_block_the_conversation(self):
+        admission = self._admit()
+        self.clock.advance(self.limits.vm_stop_after_idle_seconds)
+        self.sweeper.actions.stop_vm = lambda sandbox_id: False
+        self.sweeper.run_once()
+        record = self.store.get(admission.workspace_id)
+        self.assertIsNone(record.vm_stopping_until)
+        self.assertTrue(record.vm_resident)
+
+        # A sweeper that died mid-stop leaves a marker; it expires by itself.
+        def abandon(current, now):
+            current.vm_stopping_until = now + self.store.vm_stop_marker_seconds
+        self.store.mutate(admission.workspace_id, abandon)
+        self.clock.advance(self.store.vm_stop_marker_seconds)
+        self.store.vm_stop_wait_seconds = 0
+        self.assertEqual(self._admit().workspace_id, admission.workspace_id)
+
     def test_expired_session_is_exported_then_deleted_exactly_once(self):
         admission = self._admit()
         self.clock.advance(self.limits.idle_expiry_seconds)
@@ -525,6 +604,39 @@ class IntegrationExportTests(unittest.TestCase):
                 "/outputs/.idea/kernel-images/run-exec-1.png",
             ],
         )
+
+    def test_session_caps_hold_across_turns_and_evict_the_oldest_exports(self):
+        total_key = "idea:isess:exports_total_bytes"
+        for turn in range(1, 5):
+            # Each turn replaces /outputs with one new 4-byte file.
+            self.files = {f"/outputs/turn{turn}.csv": b"abcd"}
+            self.clock.advance(1)
+            self._export()
+        manifest = self.store.manifest("ws_a")
+        # 10-byte session cap: only the two newest 4-byte objects remain.
+        self.assertEqual(
+            [item.path for item in manifest],
+            ["/outputs/turn3.csv", "/outputs/turn4.csv"],
+        )
+        self.assertEqual(int(self.redis.get(total_key)), 8)
+        stored = [p for p in (Path(self.directory.name) / "ws_a").iterdir()]
+        self.assertEqual(len(stored), 2)
+
+    def test_earlier_exports_keep_their_links_while_under_the_caps(self):
+        self.files = {"/outputs/first.csv": b"abcd"}
+        self._export()
+        [first] = self.store.manifest("ws_a")
+        self.files = {"/outputs/second.csv": b"abcd"}
+        self.clock.advance(1)
+        self._export()
+        self.assertIsNotNone(self.store.resolve_public(first.object_id))
+
+    def test_file_count_cap_holds_across_turns(self):
+        for turn in range(1, 9):
+            self.files = {f"/outputs/t{turn}.txt": b"x"}
+            self.clock.advance(1)
+            self._export()
+        self.assertEqual(len(self.store.manifest("ws_a")), 5)
 
     def test_unchanged_files_are_not_reexported(self):
         self._export()

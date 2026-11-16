@@ -283,10 +283,18 @@ def _resolve_graph_checkpoint(
     run_id: str,
     explicit_checkpoint_id: str | None = None,
     explicit_thread_id: str | None = None,
+    bind_to_base_thread: bool = False,
 ) -> tuple[str, str | None, str]:
-    """Resolve the checkpoint belonging to the visible Open WebUI branch."""
-    if explicit_checkpoint_id and _thread_belongs_to(
-        explicit_thread_id or base_thread_id, base_thread_id
+    """Resolve the checkpoint belonging to the visible Open WebUI branch.
+
+    Browser chats may carry a hint from another thread (a cloned chat keeps
+    its source thread), so the hint is honored as sent. Integration sessions
+    set ``bind_to_base_thread``: their hints come from a public client and
+    must stay inside the thread derived for that conversation.
+    """
+    if explicit_checkpoint_id and (
+        not bind_to_base_thread
+        or _thread_belongs_to(explicit_thread_id or base_thread_id, base_thread_id)
     ):
         return (
             explicit_thread_id or base_thread_id,
@@ -637,6 +645,19 @@ def _run_chat_job(
     base_thread_id = None
     model_usage_tokens: int | None = None
     admission = resolved.admission if resolved else None
+    turn_finished = False
+
+    def _finish_turn() -> None:
+        """Export once and release the turn lease, before the terminal status.
+
+        The Pipe answers the visitor as soon as it sees a terminal status, so
+        a follow-up message must already find the conversation free.
+        """
+        nonlocal turn_finished
+        if admission is None or turn_finished:
+            return
+        turn_finished = True
+        _finish_integration_turn(admission, run_id, model_usage_tokens)
 
     try:
         if admission is not None and IDEA_AGENT_RUNTIME != "langgraph":
@@ -670,6 +691,7 @@ def _run_chat_job(
                     explicit_thread_id=str(
                         (idea_context or {}).get("thread_id") or ""
                     ) or None,
+                    bind_to_base_thread=admission is not None,
                 )
             )
             control = RunCancellation()
@@ -806,7 +828,9 @@ def _run_chat_job(
                     ],
                 })
                 final_status = result.get("final_status") or "completed"
-                _publish_integration_exports(admission)
+                # Stop renewing the lease before it is released.
+                monitor_done.set()
+                _finish_turn()
                 _update_chat_run_status(
                     run_id,
                     status=final_status,
@@ -868,7 +892,7 @@ def _run_chat_job(
         except Exception as e:
             print(f"Failed to save history: {e}")
         
-        _publish_integration_exports(admission)
+        _finish_turn()
         _update_chat_run_status(
             run_id,
             status="completed",
@@ -914,7 +938,7 @@ def _run_chat_job(
                 "checkpoint_source": "failed_run",
             })
         _append_chat_run_event(run_id, {"error": str(exc)})
-        _publish_integration_exports(admission)
+        _finish_turn()
         _update_chat_run_status(
             run_id,
             status="failed",
@@ -923,8 +947,7 @@ def _run_chat_job(
         )
     finally:
         chat_run_threads.pop(run_id, None)
-        if admission is not None:
-            _finish_integration_turn(admission, run_id, model_usage_tokens)
+        _finish_turn()
 
 
 def _publish_integration_exports(admission: Admission | None) -> None:
@@ -957,7 +980,7 @@ def _publish_integration_exports(admission: Admission | None) -> None:
 def _finish_integration_turn(
     admission: Admission, run_id: str, tokens_used: int | None,
 ) -> None:
-    """Export this turn's selected results, then release the turn lease."""
+    """Export this turn's selected results once, then release the turn lease."""
     _publish_integration_exports(admission)
     try:
         integration_store.finish_turn(admission.workspace_id, run_id, tokens_used)
@@ -977,7 +1000,12 @@ async def start_chat_run(request: ChatRunRequest):
     profile = resolve_idea_agent_profile(request.agent_variant)
     run_id = uuid.uuid4().hex
     # Validation and admission happen before any status record, job, or VM.
-    resolved = _resolve_run_context(request, run_id)
+    if request.workspace_scope == BROWSER_SCOPE:
+        resolved = _resolve_run_context(request, run_id)
+    else:
+        # Integration admission takes a Redis lock and can wait; keep it off
+        # the event loop so other requests are served meanwhile.
+        resolved = await asyncio.to_thread(_resolve_run_context, request, run_id)
     integration_scope = resolved.scope == INTEGRATION_SESSION_SCOPE
     status = {
         "run_id": run_id,
@@ -1031,7 +1059,10 @@ async def start_chat_run(request: ChatRunRequest):
         thread.start()
     except Exception:
         if resolved.admission is not None:
-            integration_store.finish_turn(resolved.admission.workspace_id, run_id, 0)
+            await asyncio.to_thread(
+                integration_store.finish_turn,
+                resolved.admission.workspace_id, run_id, 0,
+            )
         raise
 
     return {"run_id": run_id, "status": "queued"}
@@ -1318,11 +1349,14 @@ def _export_file_response(item, path):
     disposition = (
         "inline" if item.content_type in _INLINE_EXPORT_TYPES else "attachment"
     )
+    # FileResponse writes the RFC 5987 ``filename*`` form for names outside
+    # ASCII; a hand-built header would fail to encode as latin-1.
     return FileResponse(
         path,
         media_type=item.content_type,
+        filename=filename,
+        content_disposition_type=disposition,
         headers={
-            "Content-Disposition": f'{disposition}; filename="{filename}"',
             "X-Content-Type-Options": "nosniff",
             "X-Content-SHA256": item.sha256,
             "Cache-Control": "private, no-store",

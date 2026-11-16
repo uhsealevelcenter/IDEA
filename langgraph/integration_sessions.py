@@ -134,6 +134,10 @@ class IntegrationSettings:
         return errors
 
 
+class _VmStopInProgress(Exception):
+    """Internal: admission must wait for an idle VM stop to finish."""
+
+
 class AdmissionError(Exception):
     """A request the integration policy refuses; maps onto an HTTP response."""
 
@@ -176,6 +180,8 @@ class SessionRecord:
     active_run_token_reservation: int = 0
     vm_resident: bool = False
     vm_resident_since: float | None = None
+    # Set while the sweeper stops this idle VM; admission waits for it.
+    vm_stopping_until: float | None = None
     vm_disk_reserved: bool = False
     turns: int = 0
     tokens_used: int = 0
@@ -261,12 +267,18 @@ class IntegrationSessionStore:
         *,
         clock: Callable[[], float] = time.time,
         lock_timeout_seconds: float = 10.0,
+        vm_stop_wait_seconds: float = 15.0,
+        vm_stop_marker_seconds: float = 30.0,
     ) -> None:
         self.redis = redis_client
         self.settings = settings
         self.limits = settings.limits
         self.clock = clock
         self.lock_timeout_seconds = lock_timeout_seconds
+        # How long admission waits for an idle stop in progress, and how long
+        # the stop marker lives if the sweeper dies before clearing it.
+        self.vm_stop_wait_seconds = vm_stop_wait_seconds
+        self.vm_stop_marker_seconds = vm_stop_marker_seconds
 
     # Keys -----------------------------------------------------------------
 
@@ -419,13 +431,26 @@ class IntegrationSessionStore:
                 413, "input_too_large",
                 f"Request input exceeds {self.limits.max_input_bytes} bytes.",
             )
-        return self._with_lock(
-            owner_user_id,
-            integration_id,
-            lambda: self._admit_locked(
-                owner_user_id, integration_id, workspace_id, sandbox_id, run_id,
-            ),
-        )
+        wait_until = time.monotonic() + self.vm_stop_wait_seconds
+        while True:
+            try:
+                return self._with_lock(
+                    owner_user_id,
+                    integration_id,
+                    lambda: self._admit_locked(
+                        owner_user_id, integration_id, workspace_id, sandbox_id, run_id,
+                    ),
+                )
+            except _VmStopInProgress:
+                # The sweeper is stopping this conversation's idle VM. Wait
+                # for it instead of starting a run on a VM about to stop.
+                if time.monotonic() >= wait_until:
+                    raise AdmissionError(
+                        503, "vm_restarting",
+                        "The sandbox is restarting; retry shortly.",
+                        retry_after=5,
+                    )
+                time.sleep(0.25)
 
     def _admit_locked(
         self,
@@ -468,6 +493,11 @@ class IntegrationSessionStore:
                 record.active_run_token_reservation = 0
             if record.sandbox_id != sandbox_id:
                 raise AdmissionError(409, "sandbox_mismatch", "Session routing changed.")
+            if record.vm_stopping_until:
+                if now < record.vm_stopping_until:
+                    raise _VmStopInProgress()
+                # The sweeper never confirmed the stop; do not wait forever.
+                record.vm_stopping_until = None
             if record.turns >= limits.max_turns_per_session:
                 raise AdmissionError(
                     429, "session_turn_limit",
@@ -790,6 +820,9 @@ class IntegrationSessionSweeper:
                     and not current.active_run_id
                     and now - current.last_activity_at >= limits.vm_stop_after_idle_seconds
                 ):
+                    # Mark the stop under the lock. Admission waits on this
+                    # marker, so no turn can start on the VM while it stops.
+                    current.vm_stopping_until = now + store.vm_stop_marker_seconds
                     return "stop"
                 return None
 
@@ -798,11 +831,22 @@ class IntegrationSessionSweeper:
                 counts["closed"] += 1
                 record = store.get(workspace_id)
             elif outcome == "stop":
-                if self.actions.stop_vm(record.sandbox_id):
-                    def released(current: SessionRecord, now: float) -> None:
-                        if current.state == STATE_OPEN and not current.active_run_id:
-                            store.release_resident(current)
-                    store.mutate(workspace_id, released)
+                try:
+                    stopped = bool(self.actions.stop_vm(record.sandbox_id))
+                except Exception as exc:
+                    stopped = False
+                    print(f"Integration VM stop failed for {workspace_id}: {exc}")
+
+                def released(current: SessionRecord, now: float) -> None:
+                    current.vm_stopping_until = None
+                    if (
+                        stopped
+                        and current.state == STATE_OPEN
+                        and not current.active_run_id
+                    ):
+                        store.release_resident(current)
+                store.mutate(workspace_id, released)
+                if stopped:
                     counts["stopped"] += 1
                 return
             else:

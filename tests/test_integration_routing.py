@@ -64,8 +64,10 @@ class ServiceRoutingTests(unittest.TestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
-        thread_patch = patch.object(langgraph_service.threading, "Thread")
-        self.thread = thread_patch.start()
+        # Replace the module's view of ``threading`` only; admission itself
+        # runs on a real worker thread through asyncio.to_thread.
+        thread_patch = patch.object(langgraph_service, "threading")
+        self.thread = thread_patch.start().Thread
         self.addCleanup(thread_patch.stop)
 
     def _start(self, request):
@@ -124,6 +126,55 @@ class ServiceRoutingTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 409)
         self.assertIn("Retry-After", raised.exception.headers)
 
+    def test_admission_runs_off_the_event_loop(self):
+        import threading
+
+        seen = {}
+        admit = self.store.admit_turn
+
+        def recording_admit(**kwargs):
+            seen["thread"] = threading.current_thread()
+            return admit(**kwargs)
+
+        async def start():
+            seen["loop_thread"] = threading.current_thread()
+            return await langgraph_service.start_chat_run(_request())
+
+        with patch.object(self.store, "admit_turn", side_effect=recording_admit):
+            asyncio.run(start())
+        self.assertIsNot(seen["thread"], seen["loop_thread"])
+
+    def test_turn_is_exported_once_and_released_before_the_terminal_status(self):
+        self._start(_request())
+        resolved = self.thread.call_args.kwargs["kwargs"]["resolved"]
+        order = []
+        with (
+            # The legacy runtime makes the job fail right after it starts.
+            patch.object(langgraph_service, "IDEA_AGENT_RUNTIME", "manual"),
+            patch.object(
+                langgraph_service, "_publish_integration_exports",
+                side_effect=lambda admission: order.append("export"),
+            ),
+            patch.object(
+                langgraph_service, "_update_chat_run_status",
+                side_effect=lambda run_id, **fields: order.append(
+                    (fields["status"], self.store.get(
+                        resolved.identities.workspace_id
+                    ).active_run_id)
+                ),
+            ),
+            patch.object(langgraph_service, "_append_chat_run_event"),
+        ):
+            langgraph_service._run_chat_job(
+                run_id=resolved.admission.run_id, session_id="s", user_id="owner-1",
+                is_guest=False, messages=[{"role": "user", "content": "hi"}],
+                model="m", resolved=resolved,
+            )
+        self.assertEqual(order.count("export"), 1)
+        # The lease is already free when the Pipe can see the final status.
+        self.assertEqual(order[-1], ("failed", None))
+        self.assertLess(order.index("export"), order.index(("failed", None)))
+
     def test_legacy_chat_endpoint_rejects_integration_requests(self):
         request = langgraph_service.ChatRequest(
             session_key="k", user_id="owner-1", is_guest=False, message="hi",
@@ -180,6 +231,39 @@ class StopRoutingTests(unittest.TestCase):
         }))
 
 
+class ExportDownloadTests(unittest.TestCase):
+    def _response(self, path):
+        import tempfile
+
+        handle = tempfile.NamedTemporaryFile(suffix=".bin")
+        self.addCleanup(handle.close)
+        item = SimpleNamespace(path=path, content_type="text/csv", sha256="0" * 64)
+        if path.endswith(".png"):
+            item.content_type = "image/png"
+        return langgraph_service._export_file_response(item, handle.name)
+
+    def test_non_latin_file_names_download_instead_of_failing(self):
+        for path in ("/outputs/图表.csv", "/outputs/отчёт 📈.csv"):
+            response = self._response(path)
+            disposition = response.headers["content-disposition"]
+            self.assertTrue(disposition.startswith("attachment; filename*=utf-8''"))
+            from urllib.parse import unquote
+            self.assertEqual(
+                unquote(disposition.split("''", 1)[1]), path.rsplit("/", 1)[-1],
+            )
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+
+    def test_plain_names_and_inline_images_keep_their_disposition(self):
+        self.assertEqual(
+            self._response("/outputs/data.csv").headers["content-disposition"],
+            'attachment; filename="data.csv"',
+        )
+        self.assertEqual(
+            self._response("/outputs/图.png").headers["content-disposition"].split(";")[0],
+            "inline",
+        )
+
+
 class CheckpointBindingTests(unittest.TestCase):
     def test_foreign_thread_hints_are_ignored(self):
         with patch.object(langgraph_service, "_load_message_checkpoint", return_value=None):
@@ -190,10 +274,26 @@ class CheckpointBindingTests(unittest.TestCase):
                 run_id="run-1",
                 explicit_checkpoint_id="cp-other",
                 explicit_thread_id="th_other_session",
+                bind_to_base_thread=True,
             )
         self.assertTrue(thread.startswith("th_mine"))
         self.assertIsNone(checkpoint)
         self.assertEqual(source, "new_branch")
+
+    def test_browser_chats_keep_hints_from_another_thread(self):
+        # A cloned browser chat still carries its source thread and checkpoint.
+        thread, checkpoint, source = langgraph_service._resolve_graph_checkpoint(
+            base_thread_id="th_clone",
+            messages=[],
+            response_message_id="m1",
+            run_id="run-1",
+            explicit_checkpoint_id="cp-source",
+            explicit_thread_id="th_source:branch:abc",
+        )
+        self.assertEqual(
+            (thread, checkpoint, source),
+            ("th_source:branch:abc", "cp-source", "message_metadata"),
+        )
 
     def test_own_branch_hints_are_honored(self):
         thread, checkpoint, source = langgraph_service._resolve_graph_checkpoint(
@@ -203,6 +303,7 @@ class CheckpointBindingTests(unittest.TestCase):
             run_id="run-1",
             explicit_checkpoint_id="cp-1",
             explicit_thread_id="th_mine:branch:abc",
+            bind_to_base_thread=True,
         )
         self.assertEqual((thread, checkpoint, source), ("th_mine:branch:abc", "cp-1", "message_metadata"))
 
