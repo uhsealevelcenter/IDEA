@@ -20,6 +20,8 @@ Session IDs are opaque: 1–256 UTF-8 bytes, no control characters, never trimme
 
 ### n8n setup
 
+For the importable v3 workflow and external widget setup, see [Live streaming with n8n](Integration-Live-Streaming.md).
+
 The OpenAI Chat Model node has no per-request header or body option, but its `openAiApi` credential has a custom header whose value is evaluated as an expression on every call. Verified on n8n 2.26.8 with Open WebUI 0.12.5-idea.0.11: give every model node (coordinator and specialists) a credential with
 
 - API key: the integration account's Open WebUI API key; base URL: `https://<idea-host>/api`;

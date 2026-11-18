@@ -1,0 +1,96 @@
+{
+  "name": "IDEA live streaming",
+  "active": false,
+  "nodes": [
+    {
+      "id": "bfc6ce49-8b01-40b8-9c3e-afcc97da2935",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "webhookId": "892d894b-ff0d-4a86-a8c1-95468df23065",
+      "parameters": {
+        "public": true,
+        "mode": "webhook",
+        "options": {
+          "allowedOrigins": "http://localhost:8080",
+          "responseMode": "streaming"
+        }
+      }
+    },
+    {
+      "id": "3a881bb3-a7fe-4d0b-adeb-afdde2e66525",
+      "name": "Coordinator",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [280, 0],
+      "parameters": {
+        "options": {
+          "enableStreaming": true,
+          "systemMessage": "You coordinate the IDEA sea-level chat. Use IDEA Specialist for questions that require sea-level data, scientific analysis, or a generated plot or file. Pass the user's complete request and relevant constraints to the specialist. The visitor can see the specialist's streamed response, so keep your final reply brief. Preserve any artifact URLs you include exactly as returned by the specialist."
+        }
+      }
+    },
+    {
+      "id": "a84dcf82-7d25-40fa-9821-bb1eb0524bcc",
+      "name": "Coordinator Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [200, 220],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "coordinator"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0e6e0e10-36e0-4fe7-841a-ac945891f68e",
+      "name": "IDEA Specialist",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [420, 220],
+      "parameters": {
+        "toolDescription": "Use IDEA to answer sea-level science questions, retrieve and analyze data, and generate plots or downloadable files.",
+        "text": "={{ $fromAI('request', 'The user request for IDEA, including the relevant context and constraints', 'string') }}",
+        "options": {
+          "enableStreaming": true
+        }
+      }
+    },
+    {
+      "id": "315fb8da-d2eb-4a1f-8696-204de5947b5b",
+      "name": "IDEA Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [420, 440],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "sea"
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [[{ "node": "Coordinator", "type": "main", "index": 0 }]]
+    },
+    "Coordinator Chat Model": {
+      "ai_languageModel": [[{ "node": "Coordinator", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "IDEA Specialist": {
+      "ai_tool": [[{ "node": "Coordinator", "type": "ai_tool", "index": 0 }]]
+    },
+    "IDEA Chat Model": {
+      "ai_languageModel": [[{ "node": "IDEA Specialist", "type": "ai_languageModel", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
