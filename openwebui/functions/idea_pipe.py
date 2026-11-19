@@ -8,7 +8,7 @@ description: >
     this file only translates between Open WebUI's chat protocol and
     langgraph_service's SSE chunk format ({role, type, content, format,
     start, end}, see multi_agent.py: ConversationOrchestrator.chat()).
-version: 0.3.0
+version: 0.4.1
 """
 
 import asyncio
@@ -16,6 +16,7 @@ import json
 import os
 import posixpath
 import re
+import unicodedata
 import httpx
 from pydantic import BaseModel, Field
 from pathlib import PurePosixPath
@@ -23,12 +24,20 @@ from typing import AsyncGenerator, Awaitable, Callable, Generator
 from urllib.parse import quote, unquote
 
 
+INTEGRATION_MODEL_ID = "idea-terminal-agent-integration"
 BASE_MODEL_VARIANTS = {
     "idea-terminal-agent": "standard",
     "idea_terminal_agent.idea-terminal-agent": "standard",
     "idea-terminal-agent-advanced": "advanced",
     "idea_terminal_agent.idea-terminal-agent-advanced": "advanced",
+    INTEGRATION_MODEL_ID: "standard",
+    f"idea_terminal_agent.{INTEGRATION_MODEL_ID}": "standard",
 }
+INTEGRATION_SESSION_HEADER = "x-idea-integration-session"
+INTEGRATION_ID_HEADER = "x-idea-integration-id"
+INTEGRATION_ACTION_HEADER = "x-idea-integration-action"
+INTEGRATION_BODY_KEY = "idea_integration"
+MAX_INTEGRATION_SESSION_ID_BYTES = 256
 TERMINAL_RUN_STATUSES = {
     "completed", "stopped", "failed", "cancelled-before-start"
 }
@@ -152,8 +161,21 @@ def _is_python_console_chunk(chunk: dict) -> bool:
     )
 
 
-def _python_console_stream_close() -> str:
+def _python_console_stream_close(plain_tools: bool = False) -> str:
+    if plain_tools:
+        return "\n````\n\n"
     return f"\n````\n{TOOL_OUTPUT_END}\n\n"
+
+
+def _tool_edges(plain_tools: bool) -> tuple[str, str]:
+    """Open WebUI hides tool chrome between reference-definition markers.
+
+    Other clients, including n8n, render those markers and the block between
+    them as ordinary text, so integration replies omit the markers.
+    """
+    if plain_tools:
+        return "", ""
+    return f"{TOOL_OUTPUT_START}\n", TOOL_OUTPUT_END
 
 
 def _split_streamable_message(content: str) -> tuple[str, str, bool]:
@@ -400,7 +422,118 @@ def _is_base_model_alias(model_id: str) -> bool:
     return readable_id in {
         "idea-terminal-agent",
         "idea-terminal-agent-advanced",
+        INTEGRATION_MODEL_ID,
     }
+
+
+def _is_integration_model(model_id: object) -> bool:
+    return isinstance(model_id, str) and (
+        model_id.rsplit(".", 1)[-1] == INTEGRATION_MODEL_ID
+    )
+
+
+class IntegrationContextError(ValueError):
+    """The request's integration context is missing, malformed, or ambiguous."""
+
+
+def _valid_integration_value(value: object, name: str, max_bytes: int) -> str:
+    # Never strip or normalize: distinct external sessions must stay distinct.
+    if not isinstance(value, str) or not value:
+        raise IntegrationContextError(f"{name} must be a non-empty string")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise IntegrationContextError(f"{name} exceeds {max_bytes} UTF-8 bytes")
+    if any(
+        unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"}
+        for character in value
+    ):
+        raise IntegrationContextError(f"{name} contains control characters")
+    return value
+
+
+def _integration_sources(
+    body: dict, metadata: dict | None, request: object | None,
+) -> list[dict]:
+    """Every place a caller may have supplied integration context."""
+    sources: list[dict] = []
+    headers = getattr(request, "headers", None) or {}
+    header_values = {
+        "integration_session_id": headers.get(INTEGRATION_SESSION_HEADER),
+        "integration_id": headers.get(INTEGRATION_ID_HEADER),
+        "action": headers.get(INTEGRATION_ACTION_HEADER),
+    }
+    if any(value is not None for value in header_values.values()):
+        sources.append(header_values)
+    for container in (body, body.get("metadata"), metadata):
+        if not isinstance(container, dict):
+            continue
+        nested = container.get(INTEGRATION_BODY_KEY)
+        if isinstance(nested, dict):
+            sources.append(nested)
+        flat = {
+            key: container.get(key)
+            for key in ("integration_session_id", "integration_id")
+            if container.get(key) is not None
+        }
+        if flat:
+            sources.append(flat)
+    return sources
+
+
+def _integration_request_context(
+    body: dict,
+    metadata: dict | None,
+    request: object | None,
+    configured_integration_id: str,
+) -> dict | None:
+    """
+    Return {"integration_id", "integration_session_id", "action"} from the
+    verified transport, or None when no integration context was supplied.
+    Conflicting values across headers/body/metadata are rejected.
+    """
+    sources = _integration_sources(body, metadata, request)
+    if not sources:
+        return None
+    resolved: dict[str, str] = {}
+    for source in sources:
+        for key in ("integration_session_id", "integration_id", "action"):
+            value = source.get(key)
+            if value is None:
+                continue
+            if key in resolved and resolved[key] != value:
+                raise IntegrationContextError(f"conflicting {key} values")
+            resolved[key] = value
+    if "integration_session_id" not in resolved:
+        raise IntegrationContextError("integration_session_id is required")
+    session_id = _valid_integration_value(
+        resolved["integration_session_id"],
+        "integration_session_id",
+        MAX_INTEGRATION_SESSION_ID_BYTES,
+    )
+    requested_id = resolved.get("integration_id")
+    if requested_id is not None and requested_id != configured_integration_id:
+        raise IntegrationContextError("integration_id is not allowed")
+    action = resolved.get("action") or "message"
+    if action not in {"message", "end"}:
+        raise IntegrationContextError("unsupported integration action")
+    return {
+        "integration_id": configured_integration_id,
+        "integration_session_id": session_id,
+        "action": action,
+    }
+
+
+def _backend_error_message(exc: httpx.HTTPError) -> str | None:
+    """A user-presentable message from a structured LangGraph rejection."""
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return None
+    if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+        return detail["message"]
+    return None
 
 
 def _selected_agent_variant(model_id: object) -> str:
@@ -621,14 +754,7 @@ def _file_url(
     return _download_url(file_id, public_base_url)
 
 
-def _file_link(
-    file_id: str,
-    filename: str,
-    public_base_url: str = "",
-) -> str:
-    """Return a filename-only link that opens the output in a new tab."""
-    display_name = PurePosixPath(filename).name or "file"
-    url = _file_url(file_id, filename, public_base_url)
+def _markdown_link(display_name: str, url: str) -> str:
     markdown_label = (
         display_name.replace("\\", "\\\\")
         .replace("[", "\\[")
@@ -640,6 +766,32 @@ def _file_link(
     return f"[{markdown_label}]({url})"
 
 
+def _file_link(
+    file_id: str,
+    filename: str,
+    public_base_url: str = "",
+) -> str:
+    """Return a filename-only link that opens the output in a new tab."""
+    display_name = PurePosixPath(filename).name or "file"
+    return _markdown_link(
+        display_name, _file_url(file_id, filename, public_base_url),
+    )
+
+
+def _public_export_url(
+    object_id: str,
+    filename: str,
+    public_base_url: str = "",
+) -> str:
+    """Capability URL for one exported file. The filename is cosmetic."""
+    display_name = PurePosixPath(filename).name or "file"
+    path = (
+        f"/integration-exports/{quote(object_id, safe='')}/"
+        f"{quote(display_name, safe='')}"
+    )
+    return f"{public_base_url.rstrip('/')}{path}" if public_base_url else path
+
+
 def _normalized_output_path(filepath: str) -> str:
     """Normalize URL-encoded model placeholders for exact file-map lookup."""
     return posixpath.normpath(unquote(filepath))
@@ -649,8 +801,14 @@ def _resolve_output_links(
     content: str,
     synced_files: list[dict],
     public_base_url: str = "",
+    export_urls: dict[str, str] | None = None,
 ) -> tuple[str, set[str]]:
-    """Replace sandbox output URLs with their real Open WebUI file URLs."""
+    """Replace sandbox output URLs with downloadable links.
+
+    ``export_urls`` is the integration-session map of output path to public
+    capability URL. When it is set, Open WebUI file URLs are not used: those
+    belong to the shared integration account and are not a visitor boundary.
+    """
     files_by_path = {
         item.get("filename"): item.get("openwebui_file_id")
         for item in synced_files
@@ -661,6 +819,13 @@ def _resolve_output_links(
     def replace_markdown(match: re.Match) -> str:
         label, filepath = match.groups()
         normalized_path = _normalized_output_path(filepath)
+        if export_urls is not None:
+            url = export_urls.get(normalized_path)
+            if not url:
+                return f"⚠️ {label} (output link unavailable)"
+            referenced_file_ids.add(normalized_path)
+            display_name = PurePosixPath(normalized_path).name or label
+            return _markdown_link(display_name, url)
         file_id = files_by_path.get(normalized_path)
         if not file_id:
             return f"⚠️ {label} (output link unavailable)"
@@ -672,6 +837,13 @@ def _resolve_output_links(
     def replace_url(match: re.Match) -> str:
         filepath = match.group(1)
         normalized_path = _normalized_output_path(filepath)
+        if export_urls is not None:
+            url = export_urls.get(normalized_path)
+            display_name = PurePosixPath(filepath).name or filepath
+            if not url:
+                return f"⚠️ {display_name} (output link unavailable)"
+            referenced_file_ids.add(normalized_path)
+            return _markdown_link(display_name, url)
         file_id = files_by_path.get(normalized_path)
         if not file_id:
             display_name = PurePosixPath(filepath).name or filepath
@@ -686,8 +858,9 @@ def _resolve_displayed_images(
     image_paths: list[str],
     synced_files: list[dict],
     public_base_url: str = "",
+    export_urls: dict[str, str] | None = None,
 ) -> tuple[str, set[str]]:
-    """Render displayed sandbox images through durable Open WebUI files."""
+    """Render displayed sandbox images through durable file URLs."""
     files_by_path = {
         item.get("filename"): item.get("openwebui_file_id")
         for item in synced_files
@@ -706,6 +879,29 @@ def _resolve_displayed_images(
         if path in seen:
             continue
         seen.add(path)
+        if export_urls is not None:
+            url = export_urls.get(path)
+            resolved = path
+            if url is None and path.startswith("/workspace/"):
+                published = "/outputs/" + path.removeprefix("/workspace/")
+                if published in export_urls:
+                    resolved = published
+                    url = export_urls[published]
+            if url is None:
+                matches = [
+                    item for item in export_urls
+                    if PurePosixPath(item).name == PurePosixPath(path).name
+                ]
+                if len(matches) == 1:
+                    resolved = matches[0]
+                    url = export_urls[resolved]
+            display_name = PurePosixPath(resolved).name or path
+            if not url:
+                rendered.append(f"⚠️ {display_name} (image preview unavailable)")
+            else:
+                referenced_file_ids.add(resolved)
+                rendered.append(f"![generated image]({url})")
+            continue
         resolved_path = path
         file_id = files_by_path.get(resolved_path)
         if not file_id and path.startswith("/workspace/"):
@@ -779,19 +975,106 @@ class Pipe:
                 "collections and direct PDFs are handled exclusively by PaperQA2."
             ),
         )
+        INTEGRATION_MODEL_ENABLED: bool = Field(
+            default=False,
+            description=(
+                "Register the integration model. Every request to it must "
+                "carry an integration session ID and runs in that session's "
+                "own temporary sandbox; restrict model access to the "
+                "dedicated integration account."
+            ),
+        )
+        INTEGRATION_ID: str = Field(
+            default="n8n-sealevel-v1",
+            description=(
+                "Server-configured integration namespace for the integration "
+                "model. Must be listed in LangGraph's IDEA_INTEGRATION_IDS."
+            ),
+        )
+        INTEGRATION_ACCOUNT_IDS: str = Field(
+            default="",
+            description=(
+                "Comma-separated Open WebUI user IDs of integration accounts. "
+                "Every request from these accounts, on any IDEA model or "
+                "Assistant, must carry an integration session ID, so public "
+                "conversations never reach the account's personal sandbox."
+            ),
+        )
 
     def __init__(self):
         self.valves = self.Valves()
 
     def pipes(self) -> list[dict]:
         """Register the standard and administrator-assignable IDEA variants."""
-        return [
+        models = [
             {"id": "idea-terminal-agent", "name": "IDEA Agent"},
             {
                 "id": "idea-terminal-agent-advanced",
                 "name": "IDEA Agent Advanced",
             },
         ]
+        if self.valves.INTEGRATION_MODEL_ENABLED:
+            models.append({
+                "id": INTEGRATION_MODEL_ID,
+                "name": "IDEA Agent (Integration Sessions)",
+            })
+        return models
+
+    def _service_headers(self) -> dict:
+        return (
+            {"Authorization": f"Bearer {self.valves.INTERNAL_SERVICE_TOKEN}"}
+            if self.valves.INTERNAL_SERVICE_TOKEN
+            else {}
+        )
+
+    async def _end_integration_session(
+        self, user_id: str, integration: dict,
+    ) -> str:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    f"{self.valves.LANGGRAPH_SERVICE_URL}/integration-sessions/end",
+                    json={
+                        "user_id": user_id,
+                        "integration_id": integration["integration_id"],
+                        "integration_session_id": integration["integration_session_id"],
+                    },
+                    headers=self._service_headers(),
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            message = _backend_error_message(exc) or "Unable to end the conversation."
+            return f"**Error:** {message}"
+        return "Conversation ended."
+
+    async def _integration_export_urls(
+        self, user_id: str, integration: dict, public_base_url: str,
+    ) -> dict[str, str]:
+        """Map /outputs paths to public capability URLs for this session."""
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    f"{self.valves.LANGGRAPH_SERVICE_URL}/integration-sessions/status",
+                    json={
+                        "user_id": user_id,
+                        "integration_id": integration["integration_id"],
+                        "integration_session_id": integration["integration_session_id"],
+                    },
+                    headers=self._service_headers(),
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return {}
+        urls: dict[str, str] = {}
+        for item in payload.get("exports") or []:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            object_id = item.get("object_id")
+            if isinstance(path, str) and isinstance(object_id, str) and object_id:
+                urls[path] = _public_export_url(object_id, path, public_base_url)
+        return urls
 
     async def pipe(
         self,
@@ -804,6 +1087,37 @@ class Pipe:
             Callable[[dict], Awaitable[None]] | None
         ) = None,
     ) -> AsyncGenerator[str, None]:
+        user = __user__ or {}
+        integration_model = _is_integration_model(body.get("model"))
+        integration_account = str(user.get("id") or "") in {
+            item.strip()
+            for item in self.valves.INTEGRATION_ACCOUNT_IDS.split(",")
+            if item.strip()
+        }
+        try:
+            integration = _integration_request_context(
+                body, __metadata__, __request__, self.valves.INTEGRATION_ID,
+            )
+        except IntegrationContextError as exc:
+            yield f"**Error:** invalid integration session context ({exc})."
+            return
+        # The integration model and integration accounts (on any IDEA model or
+        # Assistant, so specialists share the session VM) always need session
+        # context: never fall back to the owner's personal sandbox, and never
+        # let a browser chat silently accept external session routing.
+        if integration_model or integration_account:
+            if not self.valves.INTEGRATION_MODEL_ENABLED or integration is None:
+                yield "**Error:** this model requires an integration session ID."
+                return
+        elif integration is not None:
+            yield "**Error:** integration sessions must use the integration model."
+            return
+        if integration is not None and integration["action"] == "end":
+            yield await self._end_integration_session(
+                str(user.get("id") or "anonymous"), integration,
+            )
+            return
+
         messages = body.get("messages", [])
         if not messages:
             return
@@ -816,7 +1130,6 @@ class Pipe:
         agent_variant = _selected_agent_variant(body.get("model"))
         public_base_url = _request_public_base_url(__request__)
 
-        user = __user__ or {}
         # Open WebUI's own user id becomes the sandbox/session identity that
         # langgraph_service.py + sandbox_service key everything off of - see
         # IMPLEMENTATION_STATUS.md "Stage 1 - Dedicated per-user sandbox".
@@ -827,10 +1140,15 @@ class Pipe:
         user_email = user.get("email") or None
         # Open WebUI's per-conversation chat_id keeps history scoped per chat
         # the same way the existing frontend's browser_session_id does.
-        session_id = str(
+        openwebui_chat_id = str(
             body.get("chat_id")
             or (__metadata__ or {}).get("chat_id")
-            or "default"
+            or ""
+        ) or None
+        # Integration sessions are addressed by their validated session
+        # context, never by this placeholder.
+        session_id = openwebui_chat_id or (
+            "integration" if integration is not None else "default"
         )
         # Open WebUI's built-in "pending" role covers users awaiting admin
         # approval; treat anyone without a full "user"/"admin" role as guest,
@@ -867,13 +1185,16 @@ class Pipe:
             # Used only by langgraph's final /outputs upload. It is never
             # added to model messages or persisted conversation history.
             "openwebui_authorization": _request_authorization(__request__),
+            "openwebui_chat_id": openwebui_chat_id,
         }
+        if integration is not None:
+            payload.update({
+                "workspace_scope": "integration_session",
+                "integration_id": integration["integration_id"],
+                "integration_session_id": integration["integration_session_id"],
+            })
 
-        headers = (
-            {"Authorization": f"Bearer {self.valves.INTERNAL_SERVICE_TOKEN}"}
-            if self.valves.INTERNAL_SERVICE_TOKEN
-            else {}
-        )
+        headers = self._service_headers()
 
         message_buffer = ""
         artifact_reference_confirmed = False
@@ -963,12 +1284,14 @@ class Pipe:
             last_model_text_character = text[-1]
             return text
 
+        plain_tools = integration is not None
+
         def close_python_console_stream() -> str:
             nonlocal python_console_stream_open
             if not python_console_stream_open:
                 return ""
             python_console_stream_open = False
-            return _python_console_stream_close()
+            return _python_console_stream_close(plain_tools)
 
         await emit_status({
             "action": "idea_agent",
@@ -1084,7 +1407,10 @@ class Pipe:
                             pending_files.append(chunk)
                             continue
                         if chunk.get("type") == "image" and chunk.get("filename"):
-                            if chunk.get("openwebui_file_id"):
+                            # Integration visitors cannot load Open WebUI
+                            # file URLs. Their images wait for the public
+                            # exports, which exist once the run finishes.
+                            if chunk.get("openwebui_file_id") and integration is None:
                                 closure = close_python_console_stream()
                                 if closure:
                                     yield closure
@@ -1105,7 +1431,9 @@ class Pipe:
                             continue
                         if message_buffer:
                             yield flush_message_buffer()
-                        for translated in self._translate_chunk(chunk, public_base_url):
+                        for translated in self._translate_chunk(
+                            chunk, public_base_url, plain_tools=plain_tools,
+                        ):
                             yield translated
 
                     status = str(response_data.get("status") or "")
@@ -1148,6 +1476,10 @@ class Pipe:
             closure = close_python_console_stream()
             if closure:
                 yield closure
+            rejection = _backend_error_message(exc)
+            if rejection:
+                yield f"\n\n**Error:** {rejection}\n\n"
+                return
             yield f"\n\n**Error reaching langgraph service:** {exc}\n\n"
             return
         finally:
@@ -1167,11 +1499,17 @@ class Pipe:
         closure = close_python_console_stream()
         if closure:
             yield closure
+        export_urls = None
+        if integration is not None:
+            export_urls = await self._integration_export_urls(
+                str(user.get("id") or ""), integration, public_base_url,
+            )
         if message_buffer:
             resolved_message, referenced_file_ids = _resolve_output_links(
                 message_buffer,
                 pending_files,
                 public_base_url,
+                export_urls,
             )
             message_buffer = ""
             yield resolved_message
@@ -1180,12 +1518,22 @@ class Pipe:
             pending_images,
             pending_files,
             public_base_url,
+            export_urls,
         )
         referenced_file_ids.update(image_file_ids)
         if rendered_images:
             yield rendered_images
 
         for file_chunk in pending_files:
+            filename = file_chunk.get("filename")
+            if export_urls is not None:
+                if filename in referenced_file_ids:
+                    continue
+                url = export_urls.get(filename or "")
+                if url:
+                    display_name = PurePosixPath(filename).name or "file"
+                    yield f"\n\n📎 {_markdown_link(display_name, url)}\n\n"
+                continue
             if file_chunk.get("openwebui_file_id") in referenced_file_ids:
                 continue
             for translated in self._translate_chunk(
@@ -1220,6 +1568,8 @@ class Pipe:
     def _translate_chunk(
         chunk: dict,
         public_base_url: str = "",
+        *,
+        plain_tools: bool = False,
     ) -> Generator[str, None, None]:
         """
         Converts one langgraph_service SSE chunk into markdown text for Open
@@ -1235,6 +1585,7 @@ class Pipe:
         chunk_type = chunk.get("type")
         content = chunk.get("content", "")
         fmt = chunk.get("format")
+        tool_start, tool_end = _tool_edges(plain_tools)
 
         if chunk_type == "message":
             # Plain assistant text - stream through unchanged.
@@ -1242,16 +1593,16 @@ class Pipe:
         elif chunk_type == "python_code_start":
             # Four backticks keep ordinary Markdown fences embedded in Python
             # string literals from prematurely closing the streamed block.
-            yield f"\n\n{TOOL_OUTPUT_START}\n\n````python\n"
+            yield f"\n\n{tool_start}\n````python\n"
         elif chunk_type == "python_code_delta":
             yield content
         elif chunk_type == "python_code_end":
-            yield f"\n````\n{TOOL_OUTPUT_END}\n\n"
+            yield f"\n````\n{tool_end}\n\n"
         elif chunk_type == "code":
             lang = fmt or ""
             yield (
-                f"\n\n{TOOL_OUTPUT_START}\n\n```{lang}\n{content}\n```\n"
-                f"{TOOL_OUTPUT_END}\n\n"
+                f"\n\n{tool_start}\n```{lang}\n{content}\n```\n"
+                f"{tool_end}\n\n"
             )
         elif chunk_type == "console":
             # Current graph events identify Python console streams with their
@@ -1261,6 +1612,11 @@ class Pipe:
             # The delimiters keep the display-only observation out of the
             # next model request without risking a stranded Markdown fence.
             if not _is_python_console_chunk(chunk):
+                # n8n has no tool pane. These blocks are display chrome for
+                # Open WebUI; the model's own reply already states the result,
+                # and the markers that hide them there render as visible text.
+                if plain_tools:
+                    return
                 bounded = _bounded_general_console(content)
                 if bounded:
                     label = "Tool error" if fmt == "error" else "Tool output"
@@ -1278,24 +1634,24 @@ class Pipe:
                         if fmt == "error" else ""
                     )
                     yield (
-                        f"\n\n{TOOL_OUTPUT_START}\n\n{error_label}"
+                        f"\n\n{tool_start}\n{error_label}"
                         "````output\n"
                     )
                 if content:
                     yield content
                 if chunk.get("end"):
-                    yield _python_console_stream_close()
+                    yield _python_console_stream_close(plain_tools)
             elif fmt == "error":
                 yield (
-                    f"\n\n{TOOL_OUTPUT_START}\n\n"
+                    f"\n\n{tool_start}\n"
                     "⚠️ **Python execution error**\n\n"
                     f"````output\n{content}\n````\n"
-                    f"{TOOL_OUTPUT_END}\n\n"
+                    f"{tool_end}\n\n"
                 )
             else:
                 yield (
-                    f"\n\n{TOOL_OUTPUT_START}\n\n````output\n{content}\n````\n"
-                    f"{TOOL_OUTPUT_END}\n\n"
+                    f"\n\n{tool_start}\n````output\n{content}\n````\n"
+                    f"{tool_end}\n\n"
                 )
         elif chunk_type == "image" and content:
             # Backward compatibility for older LangGraph services. Current

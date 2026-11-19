@@ -15,6 +15,13 @@ Failed initialization releases its background event-loop thread.
 
 ## SQLite safety
 
+The Linux SDK build also backports the catalog identity fix from
+[Microsandbox PR #1766](https://github.com/superradcompany/microsandbox/pull/1766).
+Catalog identity checks use an `O_PATH` descriptor so they can verify and pin
+the database inode without releasing SQLite’s POSIX locks. This protects VM
+startup from losing sight of newly written catalog records in long-running
+service processes.
+
 The old Python compatibility guard and deployment probe opened the live native
 catalog through `sqlite3`. That design was unsafe: journal files held by the
 native SDK could be unlinked, followed by delayed catalog corruption. Native

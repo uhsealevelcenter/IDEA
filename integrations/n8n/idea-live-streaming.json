@@ -1,0 +1,177 @@
+{
+  "name": "IDEA live streaming",
+  "active": false,
+  "nodes": [
+    {
+      "id": "bfc6ce49-8b01-40b8-9c3e-afcc97da2935",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "webhookId": "892d894b-ff0d-4a86-a8c1-95468df23065",
+      "parameters": {
+        "public": true,
+        "mode": "webhook",
+        "options": {
+          "allowedOrigins": "http://localhost:8080",
+          "responseMode": "streaming"
+        }
+      }
+    },
+    {
+      "id": "3a881bb3-a7fe-4d0b-adeb-afdde2e66525",
+      "name": "Coordinator",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [288, 0],
+      "parameters": {
+        "options": {
+          "systemMessage": "You coordinate the IDEA chat. Route sea-level, tide, datum, benchmark, and coastal-flooding requests to IDEA Specialist. Route Mars and NASA InSight requests, including pressure and temperature data, to Mars Specialist. Route greetings, IDEA onboarding, and questions about using the platform to Welcome Specialist. Use the conversation history to resolve follow-up questions and route each turn by its topic. Pass the user's complete request and relevant constraints to the specialist. Always delegate each visitor message to exactly one specialist. Use Welcome Specialist for general questions and when neither the sea-level nor Mars route fits. The chosen specialist's stream is the reply shown in chat. After it responds, keep your internal result brief for conversation memory and preserve any artifact URLs exactly.",
+          "enableStreaming": false
+        }
+      }
+    },
+    {
+      "id": "a84dcf82-7d25-40fa-9821-bb1eb0524bcc",
+      "name": "Coordinator Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [208, 224],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-6-luna"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0e6e0e10-36e0-4fe7-841a-ac945891f68e",
+      "name": "IDEA Specialist",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [416, 224],
+      "parameters": {
+        "toolDescription": "Use IDEA to answer sea-level science questions, retrieve and analyze data, and generate plots or downloadable files.",
+        "text": "={{ $fromAI('request', 'The user request for IDEA, including the relevant context and constraints', 'string') }}",
+        "options": {
+          "enableStreaming": true
+        }
+      }
+    },
+    {
+      "id": "315fb8da-d2eb-4a1f-8696-204de5947b5b",
+      "name": "IDEA Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [416, 448],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "sea"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "42309f00-25d6-4efe-be15-58f44a4c0441",
+      "name": "Mars Specialist",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [656, 224],
+      "parameters": {
+        "toolDescription": "Use for anything about Mars atmospheric data from NASA's InSight mission (TWINS/PS instruments): downloading/analyzing pressure and temperature data, Sol-to-Earth date conversions, Mars imagery, and mission overviews.",
+        "text": "={{ $fromAI('request', 'The user request for IDEA, including the relevant context and constraints', 'string') }}",
+        "options": {
+          "enableStreaming": true
+        }
+      }
+    },
+    {
+      "id": "77022e3a-22e2-43a8-bed3-2f0b298eb285",
+      "name": "Mars Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [656, 448],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "mars-assistant"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ae3acf6a-71f9-43f4-8902-6dbd5f92ba7c",
+      "name": "Welcome Specialist",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [896, 224],
+      "parameters": {
+        "toolDescription": "General IDEA platform orientation: greets users, explains IDEA's features (Assistants, Literature, Download, Conversations), and helps users build their own custom assistants. Use for onboarding, 'what can IDEA do' questions, or anything not clearly matching a specialist.",
+        "text": "={{ $fromAI('request', 'The user request for IDEA, including the relevant context and constraints', 'string') }}",
+        "options": {
+          "enableStreaming": true
+        }
+      }
+    },
+    {
+      "id": "7705a390-af4b-4d69-90b2-1966389bfbd6",
+      "name": "Welcome Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [896, 448],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "welcome-assistant"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4a26f628-e0aa-4a13-88af-d15c1f860777",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [0, 224],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [[{ "node": "Coordinator", "type": "main", "index": 0 }]]
+    },
+    "Coordinator Chat Model": {
+      "ai_languageModel": [[{ "node": "Coordinator", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "IDEA Specialist": {
+      "ai_tool": [[{ "node": "Coordinator", "type": "ai_tool", "index": 0 }]]
+    },
+    "IDEA Chat Model": {
+      "ai_languageModel": [[{ "node": "IDEA Specialist", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Mars Specialist": {
+      "ai_tool": [[{ "node": "Coordinator", "type": "ai_tool", "index": 0 }]]
+    },
+    "Mars Chat Model": {
+      "ai_languageModel": [[{ "node": "Mars Specialist", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Welcome Specialist": {
+      "ai_tool": [[{ "node": "Coordinator", "type": "ai_tool", "index": 0 }]]
+    },
+    "Welcome Chat Model": {
+      "ai_languageModel": [[{ "node": "Welcome Specialist", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Simple Memory": {
+      "ai_memory": [[{ "node": "Coordinator", "type": "ai_memory", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

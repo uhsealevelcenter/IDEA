@@ -277,6 +277,7 @@ class TerminalAgent:
         openwebui_authorization: Optional[str] = None,
         is_guest: bool = False,
         paperqa_enabled: bool = False,
+        sandbox_id: Optional[str] = None,
     ):
         self.session_id = session_id
         self.user_id = user_id
@@ -320,7 +321,16 @@ class TerminalAgent:
                 "fall back to session_id, which is not guaranteed unique "
                 "per user and would risk multiple callers sharing a sandbox."
             )
-        self.sandbox_id = str(user_id)
+        # Callers that resolved an execution context (LangGraph chat runs)
+        # pass the server-derived sandbox_id explicitly; integration sessions
+        # route to their own VM while user_id remains the authenticated owner.
+        # Only browser/legacy callers omit it and keep the per-user VM.
+        if sandbox_id is not None:
+            if not str(sandbox_id).strip():
+                raise ValueError("TerminalAgent sandbox_id must be non-empty")
+            self.sandbox_id = str(sandbox_id)
+        else:
+            self.sandbox_id = str(user_id)
         self.artifact_registry = ArtifactRegistry(self.sandbox_id)
         self.builtin_skill_loader = BuiltinSkillLoader()
         self.workspace_skill_loader = OpenWebUISkillLoader(

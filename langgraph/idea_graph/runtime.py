@@ -114,6 +114,7 @@ class TerminalGraphRuntime:
         is_guest: bool,
         paperqa_enabled: bool,
         event_callback: Callable[[dict[str, Any] | str], None] | None = None,
+        sandbox_id: str | None = None,
     ) -> None:
         # Lazy import keeps state/graph unit tests independent of optional
         # PaperQA and scientific runtime dependencies.
@@ -143,6 +144,7 @@ class TerminalGraphRuntime:
             openwebui_authorization=openwebui_authorization,
             is_guest=is_guest,
             paperqa_enabled=paperqa_enabled,
+            sandbox_id=sandbox_id,
         )
         self.event_callback = event_callback
         self.outputs_before: dict[str, str] | None = None

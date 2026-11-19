@@ -1,0 +1,55 @@
+services:
+  redis:
+    ports: !override
+      - "127.0.0.1:6381:6379"
+  langgraph:
+    ports: !override
+      - "127.0.0.1:8010:8010"
+  sandbox:
+    ports: !override
+      - "127.0.0.1:8020:8020"
+  litellm:
+    ports: !override
+      - "127.0.0.1:8030:8080"
+  openwebui:
+    ports: !override
+      - "127.0.0.1:3001:8080"
+  nginx:
+    ports: !override
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./integrations/n8n/local-chat:/usr/share/nginx/html/n8n-demo:ro
+    configs:
+      - source: local_proxy_hosts
+        target: /etc/nginx/local-proxy-hosts.d/demo.conf
+      - source: local_chat_route
+        target: /etc/nginx/local-locations.d/n8n-demo.conf
+  n8n:
+    environment:
+      N8N_HOST: localhost
+      N8N_PROTOCOL: http
+      N8N_WEBHOOK_URL: http://localhost:5678/
+      WEBHOOK_URL: http://localhost:5678/
+      N8N_EDITOR_BASE_URL: http://localhost:5678/
+      N8N_PROXY_HOPS: "0"
+      N8N_SECURE_COOKIE: "false"
+    networks: !override [default]
+    labels: !reset []
+    ports:
+      - "127.0.0.1:5678:5678"
+
+configs:
+  local_proxy_hosts:
+    content: |
+      nginx localhost:8080;
+      localhost:8080 localhost:8080;
+  local_chat_route:
+    content: |
+      location = /n8n-demo {
+          absolute_redirect off;
+          return 308 /n8n-demo/;
+      }
+      location ^~ /n8n-demo/ {
+          root /usr/share/nginx/html;
+          try_files $$uri $$uri/ =404;
+      }

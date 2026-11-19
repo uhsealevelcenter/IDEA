@@ -16,12 +16,20 @@ import tempfile
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 import terminal_registry as registry
 
 app = FastAPI(title="Sandbox Service", version="1.0.0")
+
+
+@app.exception_handler(registry.SandboxAdmissionError)
+async def _sandbox_admission_error(_request: Request, exc: registry.SandboxAdmissionError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": {"code": exc.code, "message": str(exc)}},
+    )
 
 
 @app.on_event("shutdown")
@@ -156,6 +164,8 @@ async def write_file(sandbox_id: str, request: WriteFileRequest):
         raise HTTPException(status_code=403, detail=f"Permission denied: Cannot write to {request.filepath}")
     except IsADirectoryError:
         raise HTTPException(status_code=400, detail=f"{request.filepath} is a directory, not a file")
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write {request.filepath}: {e}")
 
@@ -229,6 +239,8 @@ async def write_file_content(
             status_code=400,
             detail=f"{filepath} is a directory, not a file",
         )
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -330,6 +342,8 @@ async def grep_search(sandbox_id: str, request: GrepSearchRequest):
             sandbox_id,
             **request.model_dump(exclude_none=True),
         )
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -343,6 +357,8 @@ async def glob_search(sandbox_id: str, request: GlobSearchRequest):
             sandbox_id,
             **request.model_dump(exclude_none=True),
         )
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -357,6 +373,8 @@ async def read_file_content(sandbox_id: str, filepath: str):
         )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {filepath}")
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read {filepath}: {e}")
     return Response(content=data, media_type="application/octet-stream")
@@ -384,6 +402,22 @@ async def destroy_sandbox(sandbox_id: str):
     """Permanently delete this sandbox - NOT resumable."""
     destroyed = await asyncio.to_thread(registry.destroy_terminal, sandbox_id)
     return {"ok": True, "destroyed": destroyed}
+
+
+@app.post(
+    "/sandboxes/{sandbox_id}/delete-integration",
+    dependencies=[Depends(require_internal_token)],
+)
+async def delete_integration_sandbox(sandbox_id: str):
+    """Delete an ephemeral integration-session VM, even if not cached."""
+    status = await asyncio.to_thread(registry.delete_integration_sandbox, sandbox_id)
+    return {"ok": True, "status": status}
+
+
+@app.get("/integration-sandboxes", dependencies=[Depends(require_internal_token)])
+async def list_integration_sandboxes():
+    sandboxes = await asyncio.to_thread(registry.list_integration_sandboxes)
+    return {"sandboxes": sandboxes}
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +484,8 @@ async def terminal_read_file(request: Request, path: str):
         return Response(content=data, media_type=content_type)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -464,6 +500,8 @@ async def terminal_view_file(request: Request, path: str, preview: bool = False)
         return Response(content=data, media_type=content_type)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -481,6 +519,8 @@ async def terminal_serve_file(request: Request, path: str):
         return Response(content=data, media_type=content_type)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -500,6 +540,8 @@ async def terminal_download_file(request: Request, path: str):
         )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except registry.SandboxAdmissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -163,6 +163,7 @@ cython_debug/
 *.pkl
 *.json
 !assistants/manifest.json
+!integrations/n8n/idea-live-streaming.json
 !shared_data/seeds/**/*.json
 !shared_data/seeds/**/*.geojson
 *.csv

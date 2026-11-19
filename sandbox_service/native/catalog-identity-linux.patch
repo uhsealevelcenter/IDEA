@@ -1,0 +1,50 @@
+diff --git a/sdk/rust/lib/backend/local/control/identity.rs b/sdk/rust/lib/backend/local/control/identity.rs
+--- a/sdk/rust/lib/backend/local/control/identity.rs
++++ b/sdk/rust/lib/backend/local/control/identity.rs
+@@ -3,6 +3,8 @@
+ use std::fs::File;
+ #[cfg(target_os = "linux")]
+ use std::os::fd::{AsRawFd, FromRawFd};
++#[cfg(target_os = "linux")]
++use std::os::unix::fs::OpenOptionsExt;
+ #[cfg(unix)]
+ use std::os::unix::fs::MetadataExt;
+ #[cfg(windows)]
+@@ -144,7 +146,7 @@
+
+ impl DatabaseIdentity {
+     pub fn capture(path: impl AsRef<Path>) -> ControlClientResult<Self> {
+-        let file = File::open(path.as_ref()).map_err(ClientError::from)?;
++        let file = open_database_identity(path.as_ref()).map_err(ClientError::from)?;
+         let id = file_id(&file)?;
+         Ok(Self {
+             path: path.as_ref().to_owned(),
+@@ -154,7 +156,7 @@
+     }
+
+     pub fn verify(&self) -> ControlClientResult<()> {
+-        let current = File::open(&self.path).map_err(|_| ControlClientError::RuntimeChanged)?;
++        let current = open_database_identity(&self.path).map_err(|_| ControlClientError::RuntimeChanged)?;
+         if file_id(&current)? != self.id {
+             return Err(ControlClientError::RuntimeChanged);
+         }
+@@ -256,6 +258,19 @@
+         (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime),
+         0,
+     ))
++}
++
++// On Linux, closing a normal file descriptor would release this process's POSIX
++// locks on the database, including locks held by SQLite. An O_PATH descriptor
++// still pins and identifies the inode without taking part in those locks.
++#[cfg(target_os = "linux")]
++fn open_database_identity(path: &Path) -> std::io::Result<File> {
++    File::options().read(true).custom_flags(libc::O_PATH).open(path)
++}
++
++#[cfg(not(target_os = "linux"))]
++fn open_database_identity(path: &Path) -> std::io::Result<File> {
++    File::open(path)
+ }
+
+ fn file_id(file: &File) -> ControlClientResult<(u64, u64, u64)> {
