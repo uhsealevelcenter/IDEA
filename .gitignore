@@ -164,6 +164,7 @@ cython_debug/
 *.json
 !assistants/manifest.json
 !integrations/n8n/idea-live-streaming.json
+!integrations/n8n/sea-coordinator.json
 !shared_data/seeds/**/*.json
 !shared_data/seeds/**/*.geojson
 *.csv

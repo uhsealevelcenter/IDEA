@@ -1,6 +1,12 @@
 # Live streaming with n8n
 
-The [IDEA live streaming workflow](../integrations/n8n/idea-live-streaming.json) pairs the integration sessions introduced in [PR #96](https://github.com/uhsealevelcenter/IDEA/pull/96) with a v3.1 n8n coordinator and v3 Agent Tools for SEA, Mars, and Welcome. The coordinator keeps session-scoped Simple Memory and routes each turn to one specialist. The specialist's reply streams to the embedded chat using the existing IDEA Pipe, session header, and export endpoints.
+The [idea-coordinator template](../integrations/n8n/idea-live-streaming.json) routes each turn to one of `welcome-assistant`, `sea`, and `mars-assistant`. The [sea-coordinator template](../integrations/n8n/sea-coordinator.json) routes to `sea`. Both coordinators use session-scoped Simple Memory and the shared IDEA system prompt as routing context. The selected specialist streams its reply through the IDEA Pipe with the integration session header and artifact links.
+
+Render the inactive imports with the current shared prompt before importing them into n8n.
+
+```bash
+python3 integrations/n8n/render-workflows.py .local-validation/n8n-imports
+```
 
 ## Run a local demo
 
@@ -21,11 +27,11 @@ docker compose run --rm shared-data update altimetry
 KVM_DEVICE_PATH=/dev/kvm bash deployment/deploy.sh dev
 ```
 
-Open n8n at `http://localhost:5678` and IDEA at `http://localhost:8080`. In n8n, import the tracked workflow template and follow the account setup below. Use `http://nginx/api` for the IDEA Specialist credential so generated plots and download links use the local IDEA origin. For the coordinator, use an OpenAI credential with `http://litellm:8080/v1` and a LiteLLM virtual key with access to a tool-capable chat model such as `gpt-6-luna`. If you only need the dashboard, run `docker compose up -d n8n` after exporting the Compose variables above.
+Open n8n at `http://localhost:5678` and IDEA at `http://localhost:8080`. Import the rendered `idea-live-streaming.json` and follow the account setup below. Use `http://nginx/api` for the IDEA specialist credential so generated plots and download links use the local IDEA origin. For the coordinator, use an OpenAI credential with `http://litellm:8080/v1` and a LiteLLM virtual key with access to a tool-capable chat model such as `gpt-6-luna`. If you only need the dashboard, run `docker compose up -d n8n` after exporting the Compose variables above.
 
 For Python-backed plots, use the research kernel image. The [kernel guide](../interpreter_kernel/README.md#building) shows how to load an image from Docker into microsandbox’s local cache.
 
-The local Compose override serves the [embedded chat HTML](../integrations/n8n/local-chat/index.html) at `http://localhost:8080/n8n-demo/`. Publish the workflow in local n8n so the page can use its production webhook. The template uses the webhook ID in the HTML. If n8n assigns a different ID, copy the Chat Trigger’s Production URL into `webhookUrl` in the HTML. Keep the Chat Trigger’s allowed origin set to `http://localhost:8080`.
+The local Compose override serves the [embedded chat HTML](../integrations/n8n/local-chat/index.html) at `http://localhost:8080/n8n-demo/`. Publish the workflow in local n8n so the page can use its production webhook. Keep the Chat Trigger’s allowed origin set to `http://localhost:8080`.
 
 ## Start n8n behind Traefik
 
@@ -49,17 +55,30 @@ Set `COMPOSE_PROFILES=n8n` in the deployment environment to include n8n in regul
 ## Set up staging
 
 1. Complete the account and sandbox setup above. The [integration session guide](Integration-Session-Sandboxes.md#n8n-setup) describes session routing and limits.
-2. Import the inactive workflow JSON into n8n. For a workflow you already maintain, use AI Agent **3.1** for the coordinator, AI Agent Tool **3** for each specialist, and **Streaming response** for the Chat Trigger. Enable streaming on the specialist nodes and turn it off on the coordinator to avoid a second reply. Route general IDEA questions to Welcome and connect Simple Memory to the coordinator for follow-up routing.
-3. Assign credentials to the four OpenAI Chat Model nodes. The template uses `gpt-6-luna` for the coordinator and `sea`, `mars-assistant`, and `welcome-assistant` in Open WebUI. Select equivalent models if your deployment uses other IDs. Use the dedicated Open WebUI integration credential for all three specialist models. Keep the API key in n8n and set its custom header as follows.
+2. Import the rendered workflow JSON into n8n. For a workflow you already maintain, use AI Agent **3.1** for the coordinator, AI Agent Tool **3** for each specialist, and **Streaming response** for the Chat Trigger. Enable streaming on the specialist nodes and turn it off on the coordinator to avoid a second reply.
+3. Assign credentials to the OpenAI Chat Model nodes. The templates use `gpt-6-luna` for the coordinator. Assign the dedicated Open WebUI integration credential to the specialist models and configure its custom header as follows.
 
    | Credential field | Value |
    | --- | --- |
-   | Base URL | `https://<idea-host>/api` |
+   | Base URL | `http://nginx/api` on the IDEA Docker network, or `https://<idea-host>/api` |
    | Header Name | `X-IDEA-Integration-Session` |
    | Header Value (expression) | `={{ $("When chat message received").first().json.sessionId }}` |
 
    If the coordinator uses another provider, assign that provider's credential to its model node. The expression must match the Chat Trigger name in the workflow.
-4. In the Chat Trigger, set **Allowed Origins** to the staging website's origin. The import defaults to `http://localhost:8080` for local testing. Publish on staging and use the **Production URL** shown by the Chat Trigger in the widget configuration. Keep the staging webhook behind your staging access controls. The allowed-origin setting controls browser access and the integration session ID identifies the conversation. Visitor authorization requires its own check.
+4. In each Chat Trigger, set **Allowed Origins** to the staging website's origin. Publish the workflows and verify that the production webhook IDs match the IDs in the HTML and nginx configuration. Allowed origins control browser access, and the integration session ID identifies a conversation. Restrict visitor access separately when the deployment requires it.
+
+### next-dev dashboard and portals
+
+The [next-dev Compose file](../integrations/n8n/next-dev/docker-compose.yml) runs a separate n8n project on `idea_default`. It reuses the IDEA nginx image and serves the editor at `/n8n/`, the multi-assistant chat at `/IDEA-portal`, and the SEA chat at `/n8n/SEA-portal`.
+
+In the private server env, set `N8N_PUBLIC_HOST` to the staging host, `N8N_PUBLIC_PORT` to `15678`, and provide `N8N_INSTANCE_OWNER_EMAIL`, the owner's single-quoted bcrypt hash in `N8N_INSTANCE_OWNER_PASSWORD_HASH`, and `N8N_ENCRYPTION_KEY`. Reuse the existing key when using the existing `idea-next-dev-n8n_n8n` volume. The listener defaults to loopback. The current public staging deployment sets `N8N_BIND_ADDRESS=0.0.0.0`. The loopback listener on server port `5678` supports admin sign-in via SSH.
+
+```bash
+docker compose --env-file .local-validation/next-dev-n8n/.env \
+  -f integrations/n8n/next-dev/docker-compose.yml up -d
+```
+
+For plots and downloads, mount a host mapping into the main IDEA nginx container under `/etc/nginx/local-proxy-hosts.d/`. On next-dev the mapping is `nginx 149.165.172.178:15678;`. IDEA uses it to build browser-facing links from the specialist's internal requests. The n8n gateway proxies `/integration-exports/` back to IDEA. Validate and reload IDEA nginx after changing the mapping.
 
 ```html
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@n8n/chat@1.25.0/dist/style.css" />
@@ -77,7 +96,7 @@ Set `COMPOSE_PROFILES=n8n` in the deployment environment to include n8n in regul
 
 Mock tests verified early specialist chunks and distinct visitor session IDs on n8n 2.26.8. On n8n 2.48.5, the three-specialist workflow also passed mock routing and coordinator memory checks, and the local stack delivered a live Welcome response and a Python-generated plot through the embedded chat webhook. Use the same checks on staging to verify the deployed Open WebUI, proxy, and sandbox together.
 
-Ask for a sea-level plot and a CSV download. In the browser's network inspector or an unbuffered HTTP client, look for a nonempty `item` with `metadata.nodeName` equal to `IDEA Specialist`. Compare its arrival time with the IDEA run's terminal status on staging. A specialist `end` frame confirms n8n finished processing the specialist response, which may be later than the IDEA run itself. Confirm that the text is readable in the widget, the export links work, and a follow-up message uses the same session. Two independent browser sessions should have different IDEA sandboxes.
+Ask for a sea-level plot and a CSV download. In the browser's network inspector or an unbuffered HTTP client, look for a nonempty `item` with `metadata.nodeName` equal to `sea`. Compare its arrival time with the IDEA run's terminal status on staging. A specialist `end` frame confirms n8n finished processing the specialist response, which may be later than the IDEA run itself. Confirm that the text is readable in the widget, the export links work, and a follow-up message uses the same session. Two independent browser sessions should have different IDEA sandboxes.
 
 If the widget shows a second answer, check whether the coordinator has streaming enabled. If the specialist sends output late, check its node version and streaming setting, then compare the webhook with a direct server-side `/api/chat/completions` request to the IDEA Assistant using `stream: true` and the integration header. If the direct endpoint emits early but the webhook sends everything at once, check the workflow path and buffering on the n8n reverse proxy.
 

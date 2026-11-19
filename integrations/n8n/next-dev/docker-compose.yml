@@ -1,0 +1,51 @@
+name: idea-next-dev-n8n
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.48.5
+    container_name: n8n-next-dev
+    restart: unless-stopped
+    environment:
+      N8N_HOST: ${N8N_PUBLIC_HOST:?Set the next-dev hostname or IP address}
+      N8N_PATH: /n8n/
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      N8N_EDITOR_BASE_URL: http://${N8N_PUBLIC_HOST}:${N8N_PUBLIC_PORT:-15678}/n8n/
+      N8N_WEBHOOK_URL: http://${N8N_PUBLIC_HOST}:${N8N_PUBLIC_PORT:-15678}/n8n/
+      N8N_PROXY_HOPS: "1"
+      N8N_SECURE_COOKIE: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_INSTANCE_OWNER_MANAGED_BY_ENV: "true"
+      N8N_INSTANCE_OWNER_EMAIL: ${N8N_INSTANCE_OWNER_EMAIL:?Set the n8n owner email}
+      N8N_INSTANCE_OWNER_FIRST_NAME: IDEA
+      N8N_INSTANCE_OWNER_LAST_NAME: Dev
+      N8N_INSTANCE_OWNER_PASSWORD_HASH: ${N8N_INSTANCE_OWNER_PASSWORD_HASH:?Set the owner bcrypt hash}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set the persistent n8n encryption key}
+      GENERIC_TIMEZONE: Pacific/Honolulu
+    volumes:
+      - n8n:/home/node/.n8n
+    networks:
+      - idea
+
+  gateway:
+    image: idea-nginx
+    container_name: n8n-next-dev-gateway
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    ports:
+      - "${N8N_BIND_ADDRESS:-127.0.0.1}:${N8N_PUBLIC_PORT:-15678}:8080"
+      - "127.0.0.1:5678:8080"
+    volumes:
+      - ./gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../local-chat/index.html:/usr/share/nginx/html/portal.html:ro
+    networks:
+      - idea
+
+volumes:
+  n8n:
+
+networks:
+  idea:
+    name: idea_default
+    external: true
