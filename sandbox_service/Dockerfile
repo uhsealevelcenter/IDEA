@@ -7,9 +7,10 @@ WORKDIR /src
 RUN apt-get update && apt-get install -y libcap-ng-dev && rm -rf /var/lib/apt/lists/*
 RUN git init . && git remote add origin https://github.com/microsandbox/microsandbox.git \
     && git fetch --depth 1 origin ${MICROSANDBOX_COMMIT} && git checkout --detach FETCH_HEAD
-COPY native/pid-identity.patch /tmp/pid-identity.patch
-RUN git apply --check /tmp/pid-identity.patch && git apply /tmp/pid-identity.patch
-# Build the original 0.7.2 SDK with only native process-identity validation.
+COPY native/pid-identity.patch native/catalog-identity-linux.patch /tmp/
+RUN git apply --check /tmp/pid-identity.patch /tmp/catalog-identity-linux.patch \
+    && git apply /tmp/pid-identity.patch /tmp/catalog-identity-linux.patch
+# Build the pinned 0.7.2 SDK with the Linux process and catalog identity fixes.
 # Catalog schema, guest protocol, and installed msb runtime remain unchanged.
 RUN CARGO_BUILD_JOBS=4 cargo build --locked -p microsandbox-py --profile ci --features pyo3/extension-module \
     && strip /src/target/ci/lib_microsandbox.so \

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IDEA Chat</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@n8n/chat@1.25.0/dist/style.css" />
+    <style>
+      :root {
+        font-family: system-ui, sans-serif;
+        color: #172b3d;
+        background: #edf3f6;
+        --chat--color-primary: #146a75;
+        --chat--color-primary-shade-50: #105b65;
+        --chat--color-primary-shade-100: #0d4d56;
+        --chat--color-dark: #142c40;
+      }
+
+      body {
+        box-sizing: border-box;
+        display: grid;
+        min-height: 100dvh;
+        margin: 0;
+        padding: 1rem;
+        place-items: center;
+      }
+
+      #n8n-chat {
+        width: min(100%, 50rem);
+        height: min(46rem, calc(100dvh - 2rem));
+        min-height: 20rem;
+        overflow: hidden;
+        border-radius: 0.75rem;
+        background: white;
+        box-shadow: 0 0.5rem 2rem #142c401a;
+      }
+
+      #chat-status {
+        padding: 0 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="n8n-chat" aria-label="IDEA Chat">
+      <p id="chat-status" role="status">Loading chat…</p>
+    </main>
+    <script type="module">
+      const webhookUrl = 'http://localhost:5678/webhook/892d894b-ff0d-4a86-a8c1-95468df23065/chat';
+      const status = document.querySelector('#chat-status');
+
+      try {
+        const { createChat } = await import('https://cdn.jsdelivr.net/npm/@n8n/chat@1.25.0/dist/chat.bundle.es.js');
+        createChat({
+          target: '#n8n-chat',
+          webhookUrl,
+          mode: 'fullscreen',
+          enableStreaming: true,
+          loadPreviousSession: false,
+          initialMessages: ['Ask about sea level, Mars InSight, or how to use IDEA.'],
+          i18n: {
+            en: {
+              title: 'IDEA Chat',
+              subtitle: '',
+              footer: '',
+              getStarted: 'New conversation',
+              inputPlaceholder: 'Ask IDEA a question…',
+            },
+          },
+        });
+      } catch (error) {
+        status.textContent = 'The chat widget could not load. Refresh the page to try again.';
+        console.error(error);
+      }
+    </script>
+  </body>
+</html>

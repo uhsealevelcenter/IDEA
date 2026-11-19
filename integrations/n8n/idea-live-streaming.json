@@ -23,11 +23,11 @@
       "name": "Coordinator",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
-      "position": [280, 0],
+      "position": [288, 0],
       "parameters": {
         "options": {
-          "enableStreaming": true,
-          "systemMessage": "You coordinate the IDEA sea-level chat. Use IDEA Specialist for questions that require sea-level data, scientific analysis, or a generated plot or file. Pass the user's complete request and relevant constraints to the specialist. The visitor can see the specialist's streamed response, so keep your final reply brief. Preserve any artifact URLs you include exactly as returned by the specialist."
+          "systemMessage": "You coordinate the IDEA chat. Route sea-level, tide, datum, benchmark, and coastal-flooding requests to IDEA Specialist. Route Mars and NASA InSight requests, including pressure and temperature data, to Mars Specialist. Route greetings, IDEA onboarding, and questions about using the platform to Welcome Specialist. Use the conversation history to resolve follow-up questions and route each turn by its topic. Pass the user's complete request and relevant constraints to the specialist. Always delegate each visitor message to exactly one specialist. Use Welcome Specialist for general questions and when neither the sea-level nor Mars route fits. The chosen specialist's stream is the reply shown in chat. After it responds, keep your internal result brief for conversation memory and preserve any artifact URLs exactly.",
+          "enableStreaming": false
         }
       }
     },
@@ -36,12 +36,12 @@
       "name": "Coordinator Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [200, 220],
+      "position": [208, 224],
       "parameters": {
         "model": {
           "__rl": true,
           "mode": "id",
-          "value": "coordinator"
+          "value": "gpt-6-luna"
         },
         "options": {}
       }
@@ -51,7 +51,7 @@
       "name": "IDEA Specialist",
       "type": "@n8n/n8n-nodes-langchain.agentTool",
       "typeVersion": 3,
-      "position": [420, 220],
+      "position": [416, 224],
       "parameters": {
         "toolDescription": "Use IDEA to answer sea-level science questions, retrieve and analyze data, and generate plots or downloadable files.",
         "text": "={{ $fromAI('request', 'The user request for IDEA, including the relevant context and constraints', 'string') }}",
@@ -65,7 +65,7 @@
       "name": "IDEA Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [420, 440],
+      "position": [416, 448],
       "parameters": {
         "model": {
           "__rl": true,
@@ -74,6 +74,72 @@
         },
         "options": {}
       }
+    },
+    {
+      "id": "42309f00-25d6-4efe-be15-58f44a4c0441",
+      "name": "Mars Specialist",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [656, 224],
+      "parameters": {
+        "toolDescription": "Use for anything about Mars atmospheric data from NASA's InSight mission (TWINS/PS instruments): downloading/analyzing pressure and temperature data, Sol-to-Earth date conversions, Mars imagery, and mission overviews.",
+        "text": "={{ $fromAI('request', 'The user request for IDEA, including the relevant context and constraints', 'string') }}",
+        "options": {
+          "enableStreaming": true
+        }
+      }
+    },
+    {
+      "id": "77022e3a-22e2-43a8-bed3-2f0b298eb285",
+      "name": "Mars Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [656, 448],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "mars-assistant"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ae3acf6a-71f9-43f4-8902-6dbd5f92ba7c",
+      "name": "Welcome Specialist",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [896, 224],
+      "parameters": {
+        "toolDescription": "General IDEA platform orientation: greets users, explains IDEA's features (Assistants, Literature, Download, Conversations), and helps users build their own custom assistants. Use for onboarding, 'what can IDEA do' questions, or anything not clearly matching a specialist.",
+        "text": "={{ $fromAI('request', 'The user request for IDEA, including the relevant context and constraints', 'string') }}",
+        "options": {
+          "enableStreaming": true
+        }
+      }
+    },
+    {
+      "id": "7705a390-af4b-4d69-90b2-1966389bfbd6",
+      "name": "Welcome Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [896, 448],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "welcome-assistant"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4a26f628-e0aa-4a13-88af-d15c1f860777",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [0, 224],
+      "parameters": {}
     }
   ],
   "connections": {
@@ -88,6 +154,21 @@
     },
     "IDEA Chat Model": {
       "ai_languageModel": [[{ "node": "IDEA Specialist", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Mars Specialist": {
+      "ai_tool": [[{ "node": "Coordinator", "type": "ai_tool", "index": 0 }]]
+    },
+    "Mars Chat Model": {
+      "ai_languageModel": [[{ "node": "Mars Specialist", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Welcome Specialist": {
+      "ai_tool": [[{ "node": "Coordinator", "type": "ai_tool", "index": 0 }]]
+    },
+    "Welcome Chat Model": {
+      "ai_languageModel": [[{ "node": "Welcome Specialist", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Simple Memory": {
+      "ai_memory": [[{ "node": "Coordinator", "type": "ai_memory", "index": 0 }]]
     }
   },
   "settings": {
