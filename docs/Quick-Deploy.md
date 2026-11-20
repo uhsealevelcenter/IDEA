@@ -186,11 +186,14 @@ same name. Automatic deployment still requires that environment's
 `DEPLOY_ENABLED=true`, SSH and app-directory values, deployment command,
 DNS/TLS route, and smoke-check URL to be configured.
 
-The `next-dev` environment uses `deployment/config.yaml` (`next-dev` section), which
-publishes nginx over HTTP without mounting the production certificate tree.
-The production environment continues to use `deployment/config.yaml` (`prod` section).
-The deployment commands for all environments are managed in `deployment/deploy.sh`
-and executed automatically by `.github/workflows/deploy.yml`:
+The `next-dev` base settings come from `deployment/config.yaml`. Its server-local
+Compose override adds the certificate and the port 443 listener for
+`https://next-dev.ideaxiom.org`. Set the GitHub environment's `HEALTHCHECK_URL`
+to `https://next-dev.ideaxiom.org/` so the smoke check gets HTTP 200.
+The [n8n integration guide](Integration-Live-Streaming.md#next-dev-dashboard-and-portals)
+covers the override, certificate renewal, and separate portal gateway.
+The deployment commands are managed in `deployment/deploy.sh` and run by
+`.github/workflows/deploy.yml`.
 
 ```bash
 ./deployment/deploy.sh next-dev
