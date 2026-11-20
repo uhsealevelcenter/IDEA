@@ -1,12 +1,6 @@
 # Live streaming with n8n
 
-The [idea-coordinator template](../integrations/n8n/idea-live-streaming.json) routes each turn to one of `welcome-assistant`, `sea`, and `mars-assistant`. The [sea-coordinator template](../integrations/n8n/sea-coordinator.json) routes to `sea`. Both coordinators use session-scoped Simple Memory and the shared IDEA system prompt as routing context. The selected specialist streams its reply through the IDEA Pipe with the integration session header and artifact links.
-
-Render the inactive imports with the current shared prompt before importing them into n8n.
-
-```bash
-python3 integrations/n8n/render-workflows.py .local-validation/n8n-imports
-```
+The [idea-coordinator workflow](../integrations/n8n/idea-live-streaming.json) uses a non-streaming router and session-scoped Simple Memory to select one of `welcome-assistant`, `sea`, and `mars-assistant`. The [sea-coordinator workflow](../integrations/n8n/sea-coordinator.json) sends each turn directly to `sea`. Each workflow has one specialist invocation on its main path. Specialist Memory supplies the recent conversation for that assistant and session. The specialist runs under IDEA's system prompt and streams its reply and HTTPS artifact links through the IDEA Pipe.
 
 ## Run a local demo
 
@@ -27,7 +21,7 @@ docker compose run --rm shared-data update altimetry
 KVM_DEVICE_PATH=/dev/kvm bash deployment/deploy.sh dev
 ```
 
-Open n8n at `http://localhost:5678` and IDEA at `http://localhost:8080`. Import the rendered `idea-live-streaming.json` and follow the account setup below. Use `http://nginx/api` for the IDEA specialist credential so generated plots and download links use the local IDEA origin. For the coordinator, use an OpenAI credential with `http://litellm:8080/v1` and a LiteLLM virtual key with access to a tool-capable chat model such as `gpt-6-luna`. If you only need the dashboard, run `docker compose up -d n8n` after exporting the Compose variables above.
+Open n8n at `http://localhost:5678` and IDEA at `http://localhost:8080`. Import the workflow JSON files and follow the account setup below. Use `http://nginx/api` for the IDEA specialist credential so generated plots and download links use the local IDEA origin. For the IDEA router, use an OpenAI credential with `http://litellm:8080/v1` and a LiteLLM virtual key with access to `gpt-6-luna`. If you only need the dashboard, run `docker compose up -d n8n` after exporting the Compose variables above.
 
 For Python-backed plots, use the research kernel image. The [kernel guide](../interpreter_kernel/README.md#building) shows how to load an image from Docker into microsandbox’s local cache.
 
@@ -55,8 +49,8 @@ Set `COMPOSE_PROFILES=n8n` in the deployment environment to include n8n in regul
 ## Set up staging
 
 1. Complete the account and sandbox setup above. The [integration session guide](Integration-Session-Sandboxes.md#n8n-setup) describes session routing and limits.
-2. Import the rendered workflow JSON into n8n. For a workflow you already maintain, use AI Agent **3.1** for the coordinator, AI Agent Tool **3** for each specialist, and **Streaming response** for the Chat Trigger. Enable streaming on the specialist nodes and turn it off on the coordinator to avoid a second reply.
-3. Assign credentials to the OpenAI Chat Model nodes. The templates use `gpt-6-luna` for the coordinator. Assign the dedicated Open WebUI integration credential to the specialist models and configure its custom header as follows.
+2. Import the workflow JSON into n8n. The Chat Trigger uses **Streaming response**. IDEA's AI Agent **3.1** router returns an assistant ID without streaming. A second, tool-free AI Agent **3.1** calls the selected assistant once and streams the original response. SEA uses only the streaming agent.
+3. Assign the LiteLLM credential to IDEA's **Coordinator Chat Model** and the Open WebUI integration credential to each workflow's specialist model. Configure the specialist credential's custom header as follows.
 
    | Credential field | Value |
    | --- | --- |
@@ -129,7 +123,7 @@ Portal chat requests go to the portal's own origin. A host website needs to allo
 
 Mock tests verified early specialist chunks and distinct visitor session IDs on n8n 2.26.8. On n8n 2.48.5, the three-specialist workflow also passed mock routing and coordinator memory checks, and the local stack delivered a live Welcome response and a Python-generated plot through the embedded chat webhook. Use the same checks on staging to verify the deployed Open WebUI, proxy, and sandbox together.
 
-Ask for a sea-level plot and a CSV download. In the browser's network inspector or an unbuffered HTTP client, look for a nonempty `item` with `metadata.nodeName` equal to `sea`. Compare its arrival time with the IDEA run's terminal status on staging. A specialist `end` frame confirms n8n finished processing the specialist response, which may be later than the IDEA run itself. Confirm that the text is readable in the widget, the export links work, and a follow-up message uses the same session. Two independent browser sessions should have different IDEA sandboxes.
+Ask for a sea-level plot and a CSV download. In the browser's network inspector or an unbuffered HTTP client, look for a nonempty `item` from `sea` in the SEA workflow or `Answer with selected assistant` in the IDEA workflow. Confirm exactly one specialist model call in the execution, working export links, and a follow-up that refers to the plot in the same session. Two independent browser sessions should have different IDEA sandboxes. A terminal IDEA error should emit an error frame and mark the n8n execution as failed.
 
 If the widget shows a second answer, check whether the coordinator has streaming enabled. If the specialist sends output late, check its node version and streaming setting, then compare the webhook with a direct server-side `/api/chat/completions` request to the IDEA Assistant using `stream: true` and the integration header. If the direct endpoint emits early but the webhook sends everything at once, check the workflow path and buffering on the n8n reverse proxy.
 
@@ -138,7 +132,7 @@ If the widget shows a second answer, check whether the coordinator has streaming
 | Current behavior | Possible solution |
 | --- | --- |
 | IDEA text streams when available. Long tool calls may be quiet because structured IDEA progress uses Open WebUI's event channel. | Relay selected IDEA run status events through an authorized endpoint if visitors need live progress during those gaps. |
-| The coordinator's Simple Memory lives in the n8n process. | Connect a persistent memory node if follow-up history must survive n8n restarts. |
+| Routing and specialist Simple Memory live in the n8n process. | Connect persistent memory if follow-up history must survive n8n restarts. |
 | Plot previews and download links arrive once IDEA publishes the turn's exports. | Publish each artifact when ready if the site needs plots during execution. |
 | IDEA can keep running after the browser disconnects. The widget has no run-event replay. | Provide authorized Stop and resume operations using IDEA's run ID and event sequence. |
 | The stock HTTP Request → Respond to Webhook path waits for the upstream SSE body to finish. | Keep IDEA on the streaming Chat Model path for text, or relay IDEA run events from an IDEA-owned endpoint for richer output. |
