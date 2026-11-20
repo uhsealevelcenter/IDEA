@@ -45,6 +45,37 @@ configs:
       localhost:8080 localhost:8080;
   local_chat_route:
     content: |
+      location = /IDEA-portal {
+          alias /usr/share/nginx/html/n8n-demo/index.html;
+          default_type text/html;
+      }
+      location = /SEA-portal {
+          alias /usr/share/nginx/html/n8n-demo/index.html;
+          default_type text/html;
+      }
+      location = /SEA-portal/ {
+          absolute_redirect off;
+          return 308 /SEA-portal$$is_args$$args;
+      }
+      location = /n8n/SEA-portal {
+          absolute_redirect off;
+          return 308 /SEA-portal$$is_args$$args;
+      }
+      location = /n8n/SEA-portal/ {
+          absolute_redirect off;
+          return 308 /SEA-portal$$is_args$$args;
+      }
+      location ^~ /portal-assets/ {
+          alias /usr/share/nginx/html/n8n-demo/;
+      }
+      location ^~ /n8n/webhook/ {
+          set $$local_n8n http://n8n:5678;
+          rewrite ^/n8n(/.*)$$ $$1 break;
+          proxy_pass $$local_n8n;
+          proxy_http_version 1.1;
+          proxy_buffering off;
+          proxy_read_timeout 660s;
+      }
       location = /n8n-demo {
           absolute_redirect off;
           return 308 /n8n-demo/;

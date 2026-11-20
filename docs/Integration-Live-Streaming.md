@@ -31,7 +31,7 @@ Open n8n at `http://localhost:5678` and IDEA at `http://localhost:8080`. Import 
 
 For Python-backed plots, use the research kernel image. The [kernel guide](../interpreter_kernel/README.md#building) shows how to load an image from Docker into microsandbox’s local cache.
 
-The local Compose override serves the [embedded chat HTML](../integrations/n8n/local-chat/index.html) at `http://localhost:8080/n8n-demo/`. Publish the workflow in local n8n so the page can use its production webhook. Keep the Chat Trigger’s allowed origin set to `http://localhost:8080`.
+The local Compose override serves the [chat portals](../integrations/n8n/local-chat/index.html) at `http://localhost:8080/IDEA-portal` and `http://localhost:8080/SEA-portal`. The existing `/n8n-demo/` URL also opens IDEA. Import and publish both workflows in local n8n. Keep the Chat Triggers' allowed origin set to `http://localhost:8080`. The local gateway serves the pages and proxies their chat requests on the same origin.
 
 ## Start n8n behind Traefik
 
@@ -69,7 +69,7 @@ Set `COMPOSE_PROFILES=n8n` in the deployment environment to include n8n in regul
 
 ### next-dev dashboard and portals
 
-The [next-dev Compose file](../integrations/n8n/next-dev/docker-compose.yml) runs a separate n8n project on `idea_default`. It reuses the IDEA nginx image and serves the editor at `/n8n/`, the multi-assistant chat at `/IDEA-portal`, and the SEA chat at `/n8n/SEA-portal`.
+The [next-dev Compose file](../integrations/n8n/next-dev/docker-compose.yml) runs a separate n8n project on `idea_default`. It reuses the IDEA nginx image and serves the editor at `/n8n/`, the multi-assistant chat at `/IDEA-portal`, and the SEA chat at `/SEA-portal`. The earlier `/n8n/SEA-portal` link redirects to `/SEA-portal`.
 
 In the private server env, set `N8N_PUBLIC_HOST` to the staging host, `N8N_PUBLIC_PORT` to `15678`, and provide `N8N_INSTANCE_OWNER_EMAIL`, the owner's single-quoted bcrypt hash in `N8N_INSTANCE_OWNER_PASSWORD_HASH`, and `N8N_ENCRYPTION_KEY`. Reuse the existing key when using the existing `idea-next-dev-n8n_n8n` volume. The listener defaults to loopback. The current public staging deployment sets `N8N_BIND_ADDRESS=0.0.0.0`. The loopback listener on server port `5678` supports admin sign-in via SSH.
 
@@ -80,17 +80,23 @@ docker compose --env-file .local-validation/next-dev-n8n/.env \
 
 For plots and downloads, mount a host mapping into the main IDEA nginx container under `/etc/nginx/local-proxy-hosts.d/`. On next-dev the mapping is `nginx 149.165.172.178:15678;`. IDEA uses it to build browser-facing links from the specialist's internal requests. The n8n gateway proxies `/integration-exports/` back to IDEA. Validate and reload IDEA nginx after changing the mapping.
 
-```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@n8n/chat@1.25.0/dist/style.css" />
-<script type="module">
-  import { createChat } from 'https://cdn.jsdelivr.net/npm/@n8n/chat@1.25.0/dist/chat.bundle.es.js';
+### Embed on another site
 
-  createChat({
-    webhookUrl: 'https://<n8n-host>/<chat-trigger-production-path>',
-    enableStreaming: true,
-  });
-</script>
+Use the portal URL in an iframe. Replace the example host with the origin serving the portals. An HTTPS site needs an HTTPS portal URL. For local testing, use `http://localhost:8080`.
+
+```html
+<iframe
+  src="https://chat.example.org/IDEA-portal?embed=1"
+  title="IDEA chat"
+  loading="lazy"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
+  style="display: block; width: 100%; height: 680px; border: 0"
+></iframe>
 ```
+
+For SEA, use `/SEA-portal?embed=1` and the title `SEA chat`. The portal fills the frame and leaves its outer background transparent. Use `?embed=floating` to let visitors move and resize the panel within a sufficiently large frame. The host page controls the iframe's size and position.
+
+Portal chat requests go to the portal's own origin. A host website needs to allow the portal origin in its `frame-src` policy if it sets one. A deployment serving the portal can restrict embedding to specific host sites with a `Content-Security-Policy: frame-ancestors` header scoped to the portal pages.
 
 ## Verify live delivery
 

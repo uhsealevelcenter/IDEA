@@ -1,83 +1,54 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>IDEA Chat</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@n8n/chat@1.25.0/dist/style.css" />
-    <style>
-      :root {
-        font-family: system-ui, sans-serif;
-        color: #172b3d;
-        background: #edf3f6;
-        --chat--color-primary: #146a75;
-        --chat--color-primary-shade-50: #105b65;
-        --chat--color-primary-shade-100: #0d4d56;
-        --chat--color-dark: #142c40;
-      }
-
-      body {
-        box-sizing: border-box;
-        display: grid;
-        min-height: 100dvh;
-        margin: 0;
-        padding: 1rem;
-        place-items: center;
-      }
-
-      #n8n-chat {
-        width: min(100%, 50rem);
-        height: min(46rem, calc(100dvh - 2rem));
-        min-height: 20rem;
-        overflow: hidden;
-        border-radius: 0.75rem;
-        background: white;
-        box-shadow: 0 0.5rem 2rem #142c401a;
-      }
-
-      #chat-status {
-        padding: 0 1rem;
-      }
-    </style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>IDEA</title>
+    <link rel="stylesheet" href="/portal-assets/portal.css">
+    <script type="module" src="/portal-assets/portal.js"></script>
   </head>
   <body>
-    <main id="n8n-chat" aria-label="IDEA Chat">
-      <p id="chat-status" role="status">Loading chat…</p>
-    </main>
-    <script type="module">
-      const path = location.pathname.replace(/\/$/, '');
-      const sea = path === '/n8n/SEA-portal';
-      const local = path === '/n8n-demo';
-      const title = local ? 'IDEA Chat' : sea ? 'SEA Portal' : 'IDEA Portal';
-      const webhookId = sea ? 'f311b56b-2b73-4ef4-9ae9-2cf80f8945e3' : '892d894b-ff0d-4a86-a8c1-95468df23065';
-      const webhookBase = local ? 'http://localhost:5678' : location.origin + '/n8n';
-      const webhookUrl = webhookBase + '/webhook/' + webhookId + '/chat';
-      const status = document.querySelector('#chat-status');
-      document.title = title;
+    <main class="portal" aria-labelledby="portal-name">
+      <header class="portal-header" tabindex="0" aria-describedby="move-help">
+        <span id="move-help" class="visually-hidden">Use the arrow keys to move the portal.</span>
+        <div class="identity">
+          <h1 id="portal-name">IDEA</h1>
+          <p id="portal-subtitle">Intelligent Data Exploring Assistant</p>
+        </div>
+        <div class="header-actions">
+          <button id="reset" type="button" disabled>New chat</button>
+        </div>
+      </header>
 
-      try {
-        const { createChat } = await import('https://cdn.jsdelivr.net/npm/@n8n/chat@1.25.0/dist/chat.bundle.es.js');
-        createChat({
-          target: '#n8n-chat',
-          webhookUrl,
-          mode: 'fullscreen',
-          enableStreaming: true,
-          loadPreviousSession: false,
-          initialMessages: [sea ? 'Ask about sea level, tide gauges, or coastal flooding.' : 'Ask about sea level, Mars InSight, or how to use IDEA.'],
-          i18n: {
-            en: {
-              title,
-              subtitle: '',
-              footer: '',
-              getStarted: 'New conversation',
-              inputPlaceholder: sea ? 'Ask SEA a question…' : 'Ask IDEA a question…',
-            },
-          },
-        });
-      } catch (error) {
-        status.textContent = 'The chat widget could not load. Refresh the page to try again.';
-        console.error(error);
-      }
-    </script>
+      <section id="transcript" class="transcript" tabindex="0" aria-label="Chat transcript">
+        <div class="welcome" id="welcome">
+          <p>This is a limited instance of <strong id="welcome-name">IDEA</strong>. Full features are available for research testing at <a href="https://app.ideaxiom.org/" target="_blank" rel="noopener noreferrer">app.ideaxiom.org</a>.</p>
+          <div id="suggestions" class="suggestions" aria-label="Example questions"></div>
+        </div>
+      </section>
+
+      <section class="composer" aria-label="Compose a message">
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+        <form id="chat-form">
+          <label for="prompt" class="visually-hidden">Message</label>
+          <textarea id="prompt" name="prompt" rows="2" maxlength="16000" placeholder="Ask a question…" required></textarea>
+          <button id="send" class="primary" type="submit">Send</button>
+          <button id="stop" type="button" hidden>Stop</button>
+        </form>
+      </section>
+
+      <footer class="portal-footer">
+        <p><span id="footer-name">IDEA</span> can make mistakes — check important results. Inputs may be used to improve services. More info on <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noopener noreferrer">GitHub</a> and at <a href="https://www.ideaxiom.org/" target="_blank" rel="noopener noreferrer">IDEAxiom.org</a>.</p>
+      </footer>
+      <button class="resize-edge" data-edge="n" type="button" aria-label="Resize top edge with arrow keys"></button>
+      <button class="resize-edge" data-edge="e" type="button" aria-label="Resize right edge with arrow keys"></button>
+      <button class="resize-edge" data-edge="s" type="button" aria-label="Resize bottom edge with arrow keys"></button>
+      <button class="resize-edge" data-edge="w" type="button" aria-label="Resize left edge with arrow keys"></button>
+      <span class="resize-edge" data-edge="nw" aria-hidden="true"></span>
+      <span class="resize-edge" data-edge="ne" aria-hidden="true"></span>
+      <span class="resize-edge" data-edge="sw" aria-hidden="true"></span>
+      <span class="resize-edge" data-edge="se" aria-hidden="true"></span>
+    </main>
   </body>
 </html>
