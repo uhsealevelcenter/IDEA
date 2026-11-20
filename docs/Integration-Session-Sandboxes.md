@@ -20,14 +20,14 @@ Session IDs are opaque: 1–256 UTF-8 bytes, no control characters, never trimme
 
 ### n8n setup
 
-For the importable v3 workflow and external widget setup, see [Live streaming with n8n](Integration-Live-Streaming.md).
+For the importable workflows and external widget setup, see [Live streaming with n8n](Integration-Live-Streaming.md).
 
-The OpenAI Chat Model node has no per-request header or body option, but its `openAiApi` credential has a custom header whose value is evaluated as an expression on every call. Verified on n8n 2.26.8 with Open WebUI 0.12.5-idea.0.11: give every model node (coordinator and specialists) a credential with
+The OpenAI Chat Model node's `openAiApi` credential evaluates custom headers as expressions on each call. Give each specialist model node a credential with
 
 - API key: the integration account's Open WebUI API key; base URL: `https://<idea-host>/api`;
 - custom header `X-IDEA-Integration-Session` with value `={{ $("When chat message received").first().json.sessionId }}` (use the Chat Trigger node's name).
 
-Specialist Assistants (for example `sea`, `mars-assistant`) can stay as the model IDs; requests from an account listed in `INTEGRATION_ACCOUNT_IDS` run in the session VM with per-Assistant history. Non-IDEA models (for example a LiteLLM coordinator) ignore the header. Re-verify after upgrading n8n or Open WebUI: if the header stops arriving, every request from the integration account fails with "requires an integration session ID" rather than falling back to a shared VM.
+Specialist assistants such as `sea` and `mars-assistant` are the model IDs. Requests from the account listed in `INTEGRATION_ACCOUNT_IDS` run in the session VM with per-assistant history. The IDEA router uses its own LiteLLM credential to choose an assistant. After upgrading n8n or Open WebUI, verify that the header reaches the Pipe and a follow-up uses the same session.
 
 ## Identity
 
