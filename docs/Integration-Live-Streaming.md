@@ -69,16 +69,34 @@ Set `COMPOSE_PROFILES=n8n` in the deployment environment to include n8n in regul
 
 ### next-dev dashboard and portals
 
-The [next-dev Compose file](../integrations/n8n/next-dev/docker-compose.yml) runs a separate n8n project on `idea_default`. It reuses the IDEA nginx image and serves the editor at `/n8n/`, the multi-assistant chat at `/IDEA-portal`, and the SEA chat at `/SEA-portal`. The earlier `/n8n/SEA-portal` link redirects to `/SEA-portal`.
+The [next-dev Compose file](../integrations/n8n/next-dev/docker-compose.yml) runs a separate n8n project on `idea_default`. Main IDEA nginx terminates TLS for `https://next-dev.ideaxiom.org` and forwards the editor at `/n8n/`, the IDEA chat at `/IDEA-portal`, and the SEA chat at `/SEA-portal` to the n8n gateway. The editor uses secure cookies. The earlier `/n8n/SEA-portal` link redirects to `/SEA-portal`.
 
-In the private server env, set `N8N_PUBLIC_HOST` to the staging host, `N8N_PUBLIC_PORT` to `15678`, and provide `N8N_INSTANCE_OWNER_EMAIL`, the owner's single-quoted bcrypt hash in `N8N_INSTANCE_OWNER_PASSWORD_HASH`, and `N8N_ENCRYPTION_KEY`. Reuse the existing key when using the existing `idea-next-dev-n8n_n8n` volume. The listener defaults to loopback. The current public staging deployment sets `N8N_BIND_ADDRESS=0.0.0.0`. The loopback listener on server port `5678` supports admin sign-in via SSH.
+In the private server env, provide `N8N_INSTANCE_OWNER_EMAIL`, the owner's single-quoted bcrypt hash in `N8N_INSTANCE_OWNER_PASSWORD_HASH`, and `N8N_ENCRYPTION_KEY`. Reuse the existing key with the `idea-next-dev-n8n_n8n` volume. The legacy HTTP listeners on ports `15678` and `5678` redirect to HTTPS. Set `N8N_BIND_ADDRESS=0.0.0.0` to preserve the public redirect on port `15678`. If the Docker network is recreated with a different IPv4 subnet, set `IDEA_NGINX_TRUSTED_NETWORK` to the IPv4 subnet reported by `docker network inspect idea_default`. The gateway uses this to apply chat rate limits to the original client IP.
+
+To prepare the HTTPS gateway, point a DNS-only A record for `next-dev.ideaxiom.org` to `149.165.172.178` and allow inbound ports 80 and 443 on the Jetstream2 instance. Obtain or restore the certificate before loading the HTTPS configuration. For a fresh certificate, run the following from the server's IDEA checkout while the standard IDEA nginx container serves port 80.
+
+```bash
+docker run --rm \
+  -v "$PWD/certbot/conf:/etc/letsencrypt" \
+  -v "$PWD/certbot/www:/var/www/certbot" \
+  certbot/certbot:latest certonly --webroot --webroot-path /var/www/certbot \
+  --cert-name next-dev.ideaxiom.org -d next-dev.ideaxiom.org \
+  --email idea-dev-grp@hawaii.edu --agree-tos --non-interactive
+```
+
+Merge the [HTTPS override](../integrations/n8n/next-dev/idea-https.override.yml) into the server-local, Git-excluded `docker-compose.override.yml`. Replace any previous next-dev TLS and export host mounts in that override with the ones in the template. The prior mounts can conflict with the new ones at the same container paths. Start the n8n project and reload the main gateway with the new mounts.
 
 ```bash
 docker compose --env-file .local-validation/next-dev-n8n/.env \
   -f integrations/n8n/next-dev/docker-compose.yml up -d
+docker compose -p idea run --rm --no-deps nginx nginx -t
+docker compose -p idea up -d --no-deps nginx
+curl -fsS https://next-dev.ideaxiom.org/n8n/healthz/readiness
 ```
 
-For plots and downloads, mount a host mapping into the main IDEA nginx container under `/etc/nginx/local-proxy-hosts.d/`. On next-dev the mapping is `nginx 149.165.172.178:15678;`. IDEA uses it to build browser-facing links from the specialist's internal requests. The n8n gateway proxies `/integration-exports/` back to IDEA. Validate and reload IDEA nginx after changing the mapping.
+The HTTPS config forwards `https://next-dev.ideaxiom.org` as the browser origin on requests from the specialist credential at `http://nginx/api`. Plots and downloads then use HTTPS URLs under `/integration-exports/`. Add `https://next-dev.ideaxiom.org` to both workflows' allowed origins and publish their updated versions.
+
+Schedule `deployment/renew-production-cert.sh --cert-name next-dev.ideaxiom.org` daily under the deployment user's crontab, using the absolute script path. The script renews that certificate and reloads nginx after a successful check. Verify it with the same command plus `--dry-run`. Keep the n8n credentials and `certbot/conf` on the server.
 
 ### Embed on another site
 

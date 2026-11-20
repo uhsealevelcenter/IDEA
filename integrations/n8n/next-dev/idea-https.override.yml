@@ -1,0 +1,15 @@
+# Merge into the server's docker-compose.override.yml to load with the IDEA project.
+services:
+  nginx:
+    ports:
+      - "443:443"
+    volumes:
+      - ./integrations/n8n/next-dev/idea-https.conf:/etc/nginx/https.d/next-dev.conf:ro
+    configs:
+      - source: next_dev_proxy_host
+        target: /etc/nginx/local-proxy-hosts.d/next-dev-n8n.conf
+
+configs:
+  next_dev_proxy_host:
+    content: |
+      nginx next-dev.ideaxiom.org;
