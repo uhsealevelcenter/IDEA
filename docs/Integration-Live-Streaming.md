@@ -71,7 +71,7 @@ Set `COMPOSE_PROFILES=n8n` in the deployment environment to include n8n in regul
 
 The [next-dev Compose file](../integrations/n8n/next-dev/docker-compose.yml) runs a separate n8n project on `idea_default`. Main IDEA nginx terminates TLS for `https://next-dev.ideaxiom.org` and forwards the editor at `/n8n/`, the IDEA chat at `/IDEA-portal`, and the SEA chat at `/SEA-portal` to the n8n gateway. The editor uses secure cookies. The earlier `/n8n/SEA-portal` link redirects to `/SEA-portal`.
 
-In the private server env, provide `N8N_INSTANCE_OWNER_EMAIL`, the owner's single-quoted bcrypt hash in `N8N_INSTANCE_OWNER_PASSWORD_HASH`, and `N8N_ENCRYPTION_KEY`. Reuse the existing key with the `idea-next-dev-n8n_n8n` volume. The legacy HTTP listeners on ports `15678` and `5678` redirect to HTTPS. Set `N8N_BIND_ADDRESS=0.0.0.0` to preserve the public redirect on port `15678`. If the Docker network is recreated with a different IPv4 subnet, set `IDEA_NGINX_TRUSTED_NETWORK` to the IPv4 subnet reported by `docker network inspect idea_default`. The gateway uses this to apply chat rate limits to the original client IP.
+The private server env is `/home/exouser/IDEA/.local-validation/next-dev-n8n/.env`. It holds the dashboard login in `N8N_INSTANCE_OWNER_EMAIL` and `N8N_OWNER_PASSWORD`. Compose uses the owner's single-quoted bcrypt hash in `N8N_INSTANCE_OWNER_PASSWORD_HASH` and the persistent `N8N_ENCRYPTION_KEY`. Reuse the existing key with the `idea-next-dev-n8n_n8n` volume. The legacy HTTP listeners on ports `15678` and `5678` redirect to HTTPS. Set `N8N_BIND_ADDRESS=0.0.0.0` to preserve the public redirect on port `15678`. If the Docker network is recreated with a different IPv4 subnet, set `IDEA_NGINX_TRUSTED_NETWORK` to the IPv4 subnet reported by `docker network inspect idea_default`. The gateway uses this to apply chat rate limits to the original client IP.
 
 To prepare the HTTPS gateway, point a DNS-only A record for `next-dev.ideaxiom.org` to `149.165.172.178` and allow inbound ports 80 and 443 on the Jetstream2 instance. Obtain or restore the certificate before loading the HTTPS configuration. For a fresh certificate, run the following from the server's IDEA checkout while the standard IDEA nginx container serves port 80.
 
@@ -96,6 +96,15 @@ curl -fsS https://next-dev.ideaxiom.org/n8n/healthz/readiness
 
 The HTTPS config forwards `https://next-dev.ideaxiom.org` as the browser origin on requests from the specialist credential at `http://nginx/api`. Plots and downloads then use HTTPS URLs under `/integration-exports/`. Add `https://next-dev.ideaxiom.org` to both workflows' allowed origins and publish their updated versions.
 
+Set the GitHub `next-dev` environment variable `HEALTHCHECK_URL` to `https://next-dev.ideaxiom.org/`. The deploy smoke check expects HTTP 200, and the legacy HTTP URL returns 308.
+
+The GitHub deployment updates the IDEA checkout and the main Compose project. The n8n gateway serves portal files directly from the checkout. To apply changes to its nginx template or mounts, recreate just the gateway. Workflow templates are imported and published separately in n8n.
+
+```bash
+docker compose --env-file .local-validation/next-dev-n8n/.env \
+  -f integrations/n8n/next-dev/docker-compose.yml up -d --no-deps --force-recreate gateway
+```
+
 Schedule `deployment/renew-production-cert.sh --cert-name next-dev.ideaxiom.org` daily under the deployment user's crontab, using the absolute script path. The script renews that certificate and reloads nginx after a successful check. Verify it with the same command plus `--dry-run`. Keep the n8n credentials and `certbot/conf` on the server.
 
 ### Embed on another site
@@ -112,7 +121,7 @@ Use the portal URL in an iframe. Replace the example host with the origin servin
 ></iframe>
 ```
 
-For SEA, use `/SEA-portal?embed=1` and the title `SEA chat`. The portal fills the frame and leaves its outer background transparent. Use `?embed=floating` to let visitors move and resize the panel within a sufficiently large frame. The host page controls the iframe's size and position.
+For SEA, use `/SEA-portal?embed=1` and the title `SEA chat`. With `?embed=1`, the panel fills the dimensions set by the host page. Use `?embed=floating` for a centered, movable and resizable panel within a transparent iframe. The iframe can span the viewport to give the panel room to move. Dragging and resizing are available when the iframe is wider than `39rem` and taller than `25rem`. The [legacy SEA page](https://uhslc.soest.hawaii.edu/research/SEA/) uses `https://next-dev.ideaxiom.org/SEA-portal?embed=floating`.
 
 Portal chat requests go to the portal's own origin. A host website needs to allow the portal origin in its `frame-src` policy if it sets one. A deployment serving the portal can restrict embedding to specific host sites with a `Content-Security-Policy: frame-ancestors` header scoped to the portal pages.
 
