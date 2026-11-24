@@ -306,6 +306,40 @@ class ConfigureOpenWebUITests(unittest.TestCase):
             "Keep this prompt",
         )
 
+    def test_interface_default_preserves_other_admin_settings(self):
+        path = "/api/v1/auths/admin/config"
+        for defaults in (None, {"collapseCodeBlocks": False, "theme": "dark"}):
+            with self.subTest(defaults=defaults):
+                current = {"DEFAULT_INTERFACE_SETTINGS": defaults, "ENABLE_SIGNUP": False}
+                client = FakeClient()
+                client.responses[path] = lambda: client.posts[-1][1] if client.posts else current
+
+                configure_openwebui.configure_interface_defaults(client)
+                configure_openwebui.configure_interface_defaults(client)
+
+                self.assertEqual(
+                    client.posts,
+                    [
+                        (
+                            path,
+                            {
+                                **current,
+                                "DEFAULT_INTERFACE_SETTINGS": {
+                                    **(defaults or {}),
+                                    "collapseCodeBlocks": True,
+                                },
+                            },
+                        ),
+                    ],
+                )
+
+    def test_interface_default_requires_persistence(self):
+        path = "/api/v1/auths/admin/config"
+        client = FakeClient({path: {"DEFAULT_INTERFACE_SETTINGS": {}}})
+
+        with self.assertRaisesRegex(RuntimeError, "default verification failed"):
+            configure_openwebui.configure_interface_defaults(client)
+
     def test_title_prompt_matches_requested_template(self):
         self.assertEqual(
             configure_openwebui.TITLE_GENERATION_PROMPT,

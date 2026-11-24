@@ -1,0 +1,6 @@
+# Compare CORA with tide-gauge observations
+
+- Validate the gauge identity, data source, native vertical datum, units, and coverage. For example, NOAA CO-OPS Honolulu is station `1612340`. For UHSLC Haleʻiwa, validate station `422` with `get_station_info_tool` and use the UHSLC Fast Delivery hourly ERDDAP product. UHSLC FD uses millimeters relative to Station Zero, UTC, and a missing value of `-32767`. For NOAA, use the datum specified in the actual CO-OPS request, such as MLLW.
+- Extract the model series at a representative wet node. Inspect nearby candidates and report model depth and distance. If a deeper offshore node better represents the requested comparison, give the reason.
+- Convert to a common unit and pair finite observations at matching UTC timestamps. For UHSLC FD hourly comparisons, snap timestamps only within five minutes of the hour. Report the paired start, end, count, and missingness.
+- For absolute water-level differences, require a documented location-specific datum transformation. For waveform comparisons without that transformation, independently subtract each series' mean over the same paired samples. Label both native references and report correlation and RMSE for the paired anomalies. Demeaning is a comparison of variability and does not establish a datum offset.

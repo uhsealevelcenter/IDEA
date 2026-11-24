@@ -22,7 +22,10 @@ class BuiltinSkillLoaderTests(unittest.TestCase):
         loader = skill_loader.BuiltinSkillLoader()
         documents = loader.catalog()
 
-        self.assertEqual(len(documents), 9)
+        expected_ids = [
+            path.parent.name for path in loader.root.glob("*/SKILL.md") if path.is_file()
+        ]
+        self.assertCountEqual([document.skill_id for document in documents], expected_ids)
         for document in documents:
             source = (
                 loader.root / document.skill_id / "SKILL.md"
@@ -40,10 +43,10 @@ class BuiltinSkillLoaderTests(unittest.TestCase):
         )
 
         self.assertIn("## Review Tooling", document.content)
-        self.assertEqual(document.byte_count, 4944)
+        self.assertEqual(document.byte_count, 5093)
         self.assertEqual(
             document.sha256,
-            "414bce8cd0aff62cd41335edfa4bbbed1dbe2942ca86f6deb6d25ab3896fe44b",
+            "7aab9dcd19a7563407ee601b60965ebaea74f2315ca8b68d044929a441fe5c94",
         )
 
     def test_manifest_is_generated_from_frontmatter(self):
