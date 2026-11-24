@@ -280,13 +280,14 @@ def list_integration_sandboxes() -> list[str] | None:
 
 def run_terminal(command: str, session_id: str = 'default') -> str:
     """
-    Execute a shell command in a persistent terminal session (via sandbox_service).
-    The shell state (environment variables, working directory, etc.) persists across calls.
+    Execute a shell command via the sandbox service.
+    Microsandbox calls start a fresh shell, usually in /workspace. The local
+    fallback uses a persistent shell.
     Use this for system commands, file operations, installing packages, etc.
     
     Args:
         command: The shell command to execute (e.g., "ls -la", "pip install numpy")
-        session_id: Identifier for the persistent shell session (default: 'default')
+        session_id: Identifier for the sandbox or local shell (default: 'default')
         
     Returns:
         The output from running the command (stdout/stderr), truncated to
@@ -842,8 +843,11 @@ def make_agent_tools(session_id: str):
     @tool
     def run_terminal_tool(command: str) -> str:
         """
-        Execute a shell command in a persistent terminal session.
-        The shell state (environment variables, working directory, etc.) persists across calls.
+        Execute a shell command in the sandbox.
+        Microsandbox calls start a fresh shell, usually in /workspace. Keep
+        directory changes and exports in the same call as commands that depend
+        on them. Use absolute file paths and git -C /workspace/<repo> for Git.
+        The local fallback uses a persistent shell.
         Use this for system commands, installing packages, running scripts, etc.
 
         Args:
