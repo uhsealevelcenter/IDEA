@@ -2,10 +2,10 @@
 """Reconcile IDEA-owned Open WebUI settings after deployment.
 
 This intentionally leaves Open WebUI's persistent configuration enabled.
-Only the LiteLLM task-model connection, hidden task-model metadata, external
-task model, native code-execution settings, context-compaction settings, and
-title-generation prompt are managed here; other Admin Panel changes remain
-database-backed and editable.
+This manages the LiteLLM task-model connection, hidden task-model metadata,
+external task model, native code-execution and context-compaction settings,
+title-generation prompt, and the default for collapsing code and output blocks.
+Other Admin Panel changes remain database-backed and editable.
 """
 
 from __future__ import annotations
@@ -443,6 +443,31 @@ def configure_native_code_execution(
         raise RuntimeError("Code Interpreter enabled-state verification failed")
 
 
+def configure_interface_defaults(client: OpenWebUIClient) -> None:
+    """Set the chat block default while preserving other interface defaults."""
+    path = "/api/v1/auths/admin/config"
+    config = client.get(path)
+    defaults = config.get("DEFAULT_INTERFACE_SETTINGS")
+    if defaults is None:
+        defaults = {}
+    if not isinstance(defaults, dict):
+        raise RuntimeError("Open WebUI interface defaults must be an object")
+    if defaults.get("collapseCodeBlocks") is True:
+        return
+
+    client.post(
+        path,
+        {
+            **config,
+            "DEFAULT_INTERFACE_SETTINGS": {**defaults, "collapseCodeBlocks": True},
+        },
+    )
+
+    verified = client.get(path).get("DEFAULT_INTERFACE_SETTINGS")
+    if not isinstance(verified, dict) or verified.get("collapseCodeBlocks") is not True:
+        raise RuntimeError("Collapsed code and output default verification failed")
+
+
 def configure_terminal_server(
     client: OpenWebUIClient,
     terminal_url: str,
@@ -548,6 +573,7 @@ def main() -> int:
         compaction_enabled,
         compaction_threshold,
     )
+    configure_interface_defaults(client)
     sandbox_service_url = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox:8020").rstrip("/")
     internal_service_token = os.getenv("INTERNAL_SERVICE_TOKEN", "")
     print(f"Configuring Open WebUI terminal server connection {sandbox_service_url!r}...")
@@ -561,6 +587,7 @@ def main() -> int:
         f"context compaction is {'enabled' if compaction_enabled else 'disabled'} "
         f"at {compaction_threshold} tokens; the title prompt is configured. "
         "Native code execution and Code Interpreter settings are reconciled. "
+        "Code and Output blocks default to collapsed. "
         "Other Admin Panel settings remain persistent and editable."
     )
     return 0
