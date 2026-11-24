@@ -28,6 +28,11 @@ DEFAULT_LITELLM_URL = "http://litellm:8080/v1"
 DEFAULT_TASK_MODEL = "gpt-6-luna"
 DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD = 136_000
 LEGACY_LITELLM_URLS = {"http://litellm:4000/v1"}
+MFA_ADMIN_CONFIG_FIELDS = {
+    "ENABLE_MFA",
+    "MFA_ALLOW_OAUTH_BYPASS",
+    "MFA_ALLOW_TRUSTED_HEADER_BYPASS",
+}
 TITLE_GENERATION_PROMPT = """### Task:
 Generate a concise 3–5 word title summarizing the chat history.
 
@@ -90,6 +95,15 @@ def env_bool(name: str, default: bool) -> bool:
     raise RuntimeError(
         f"{name} must be one of true/false, yes/no, on/off, or 1/0"
     )
+
+
+def resolve_task_model(explicit_model: str | None) -> str:
+    model = (explicit_model or os.getenv("TASK_MODEL_EXTERNAL") or "").strip()
+    # The deploy shell can inherit the old default from the legacy root .env
+    # even after the migration has upgraded openwebui/.env.
+    if model in {"", "gpt-5.6-luna"}:
+        return DEFAULT_TASK_MODEL
+    return model
 
 
 class OpenWebUIClient:
@@ -455,13 +469,11 @@ def configure_interface_defaults(client: OpenWebUIClient) -> None:
     if defaults.get("collapseCodeBlocks") is True:
         return
 
-    client.post(
-        path,
-        {
-            **config,
-            "DEFAULT_INTERFACE_SETTINGS": {**defaults, "collapseCodeBlocks": True},
-        },
-    )
+    # Even unchanged MFA fields require a human session when included in a
+    # write. Omitting them keeps those policies out of the API-key update.
+    payload = {key: value for key, value in config.items() if key not in MFA_ADMIN_CONFIG_FIELDS}
+    payload["DEFAULT_INTERFACE_SETTINGS"] = {**defaults, "collapseCodeBlocks": True}
+    client.post(path, payload)
 
     verified = client.get(path).get("DEFAULT_INTERFACE_SETTINGS")
     if not isinstance(verified, dict) or verified.get("collapseCodeBlocks") is not True:
@@ -532,11 +544,7 @@ def main() -> int:
         or os.getenv("OPENWEBUI_LITELLM_BASE_URL")
         or DEFAULT_LITELLM_URL
     )
-    task_model = (
-        args.task_model
-        or os.getenv("TASK_MODEL_EXTERNAL")
-        or DEFAULT_TASK_MODEL
-    )
+    task_model = resolve_task_model(args.task_model)
     compaction_enabled = env_bool("ENABLE_CONTEXT_COMPACTION", True)
     compaction_threshold = (
         args.compaction_threshold

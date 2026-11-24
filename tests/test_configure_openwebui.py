@@ -43,7 +43,7 @@ class ConfigureOpenWebUITests(unittest.TestCase):
     def test_default_task_model_is_gpt_6_luna(self):
         self.assertEqual(configure_openwebui.DEFAULT_TASK_MODEL, "gpt-6-luna")
 
-    def test_service_env_can_override_legacy_exported_value(self):
+    def test_task_model_upgrades_legacy_default_inherited_from_root_env(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".env"
             path.write_text("TASK_MODEL_EXTERNAL=gpt-6-luna\n")
@@ -52,8 +52,14 @@ class ConfigureOpenWebUITests(unittest.TestCase):
                 {"TASK_MODEL_EXTERNAL": "gpt-5.6-luna"},
                 clear=False,
             ):
-                configure_openwebui.load_env_file(path, override=True)
-                self.assertEqual(os.environ["TASK_MODEL_EXTERNAL"], "gpt-6-luna")
+                configure_openwebui.load_env_file(path)
+                self.assertEqual(os.environ["TASK_MODEL_EXTERNAL"], "gpt-5.6-luna")
+                self.assertEqual(configure_openwebui.resolve_task_model(None), "gpt-6-luna")
+
+    def test_task_model_preserves_newer_configured_and_explicit_models(self):
+        with patch.dict(os.environ, {"TASK_MODEL_EXTERNAL": "gpt-6.1-sol"}):
+            self.assertEqual(configure_openwebui.resolve_task_model(None), "gpt-6.1-sol")
+            self.assertEqual(configure_openwebui.resolve_task_model("gpt-6-astra"), "gpt-6-astra")
 
     def test_connection_update_preserves_existing_connections(self):
         client = FakeClient(
@@ -310,9 +316,17 @@ class ConfigureOpenWebUITests(unittest.TestCase):
         path = "/api/v1/auths/admin/config"
         for defaults in (None, {"collapseCodeBlocks": False, "theme": "dark"}):
             with self.subTest(defaults=defaults):
+                mfa_policy = {
+                    "ENABLE_MFA": False,
+                    "MFA_ALLOW_OAUTH_BYPASS": True,
+                    "MFA_ALLOW_TRUSTED_HEADER_BYPASS": False,
+                }
                 current = {"DEFAULT_INTERFACE_SETTINGS": defaults, "ENABLE_SIGNUP": False}
                 client = FakeClient()
-                client.responses[path] = lambda: client.posts[-1][1] if client.posts else current
+                client.responses[path] = lambda: {
+                    **(client.posts[-1][1] if client.posts else current),
+                    **mfa_policy,
+                }
 
                 configure_openwebui.configure_interface_defaults(client)
                 configure_openwebui.configure_interface_defaults(client)
