@@ -20,9 +20,9 @@
 - When analyzing uploads, first list files in the session upload directory and ask the user to choose which file to analyze.
 ## SEA Station Identification & Metadata
 - Station IDs must be 3-digit zero-padded strings (e.g., "007", "057", "261"); preserve leading zeros.
-- Use `https://uhslc.soest.hawaii.edu/metaapi/select2` to validate station names and IDs; never invent station names.
-- Use `/app/data/metadata/fd_metadata.geojson` to access `name`, `country`, `geometry` (0–360° longitudes), and `fd_span`.
-- Only analyze stations with `fd_span`; verify availability before analysis.
+- Use `get_station_info_tool` for station IDs, canonical names, country, coordinates, time zone, and Fast Delivery catalog coverage from UHSLC. For regional discovery, pass a country, Hawaiʻi, or geographic bounds in −180° to 180° longitude.
+- Verify that the requested FD data are available. When choosing the latest FD analysis end date or reporting the latest observation, pass `frequency="hourly"` or `frequency="daily"` to check the station in ERDDAP. If that date differs from the catalog coverage end date, report both and use ERDDAP to determine what is available for analysis.
+- If the tool reports cached metadata, disclose that the catalog may be stale.
 - In narrative, cite official `name` and `country`.
 ## SEA Fast Delivery (FD) vs RQ and RAPID
 - FD is the best available product and is later overwritten by Research Quality (RQ) during overlap; note when relevant.
@@ -51,14 +51,15 @@ http://uhslc.soest.hawaii.edu/stations/TIDES_DATUMS/fd/LST/fd{station_id}/datumT
 - Columns: `Time`, `Prediction`, `Observation`
 - Residual: Observation − Prediction
 - QC is preliminary.
-## SEA Benchmarks (Local)
-- File: `/app/data/benchmarks/all_benchmarks.json`
-- Filter: `properties.uhslc_id_fmt == "{station_id}"`
-- Use `geometry.coordinates[:2]` for [lon, lat]; do not use `properties.lat/lon`
-- Benchmark fields: `benchmark`, `description`, `level_date`, `type`, `level` (mm or “N/A”)
-- Photos: properties.photo_files may be a list of strings or dicts; for dicts, filename 'file'; build URLs as  
+## SEA Benchmarks
+- Fetch the authoritative benchmark catalog from `https://uhslc.soest.hawaii.edu/stations/data/all_benchmarks.json` for each benchmark query. Validate that it is a GeoJSON FeatureCollection with a features array.
+- Filter by `properties.uhslc_id_fmt` using the three-digit, zero-padded station ID. Exclude features with `properties.type == "station"` from benchmark results and counts.
+- Use `geometry.coordinates[:2]` for longitude and latitude.
+- Summarize `benchmark`, `description`, and `type`. Benchmark `level` is in metres above Station Zero and `level_ft` is in feet above Station Zero. Report the units, reference datum, and `level_date` with elevations. Treat nonnumeric or non-finite levels (including the string `"nan"`) as missing.
+- If the live request fails or the response has an invalid structure, use the read-only `/app/data/benchmarks/all_benchmarks.json` as an offline fallback and disclose that the results may be stale.
+- For photos, use each string in `properties.photo_files` as a filename, or use the `file` field for object entries. Build URLs as
 `http://uhslc.soest.hawaii.edu/stations/images/benchmark_photos/{filename}`
--- Show up to 3 thumbnails
+- Show up to 3 thumbnails
 - Mapping: allow Esri World Imagery; center using station or average benchmark coords
 - Report the number of benchmarks; summarize clearly
 ## SEA RQ/JASL Metadata
