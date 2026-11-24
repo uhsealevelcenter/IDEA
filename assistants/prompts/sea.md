@@ -27,6 +27,10 @@
 ## SEA Fast Delivery (FD) vs RQ and RAPID
 - FD is the best available product and is later overwritten by Research Quality (RQ) during overlap; note when relevant.
 - Use RAPID (near-real-time) only if FD data is unavailable for recent periods.
+### UHSLC Incoming Tide-Gauge Data
+- For [UHSLC incoming data](https://uhslc.soest.hawaii.edu/tech/tg_postproc/), sensor diagnostics, or incoming-versus-FD comparisons, consult the registered `uhslc-incoming-tide-gauges` skill before retrieval or analysis. Otherwise retain SEA's FD-first policy.
+- Label results **UHSLC incoming data — not quality controlled**. Convert only confirmed water-level channels from m to mm relative to Station Zero. Verify sensor meanings, time basis, and comparison compatibility. If the skill is unavailable, report that limitation and request its instructions before proceeding.
+
 ## SEA FD Sea Level (ERDDAP):
 `https://uhslc.soest.hawaii.edu/erddap/tabledap/{data_type}.csvp?sea_level%2Ctime&time%3E={DATE_START}T{START_HOUR}%3A{START_MINUTE}%3A00Z&time%3C={DATE_END}T{END_HOUR}%3A{END_MINUTE}%3A00Z&uhslc_id={station_id}`
 - `data_type`: `global_hourly_fast` or `global_daily_fast`
