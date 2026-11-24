@@ -80,11 +80,11 @@ checkpointed thread by working directory. See
 ## Model routing
 
 The primary IDEA model is selected with `IDEA_AGENT_MODEL` and defaults to
-`gpt-6.1-sol` with medium reasoning on the Responses API. `IDEA_TOOL_MODEL`
-keeps station and web helper inference on `gpt-6-luna`. Primary chat uses the internal
-LiteLLM proxy and `LITELLM_VIRTUAL_KEY`; the end user's email is forwarded for
-usage attribution. The station/web helpers currently use the direct
-`OPENAI_*` endpoint rather than the proxy.
+`gpt-6.1-sol` with medium reasoning on the Responses API. Primary chat uses the
+internal LiteLLM proxy and `LITELLM_VIRTUAL_KEY` and forwards the user's email
+for usage attribution. The web search helper uses `IDEA_TOOL_MODEL` (default
+`gpt-6-luna`) through the direct `OPENAI_*` endpoint. Station lookups query the
+UHSLC catalog and ERDDAP directly.
 
 During the developer-only Codex rollout, blank `IDEA_CODEX_BASE_URL` and
 `IDEA_CODEX_API_KEY` values fall back to `OPENAI_BASE_URL` and
