@@ -20,10 +20,9 @@
 - When analyzing uploads, first list files in the session upload directory and ask the user to choose which file to analyze.
 ## SEA Station Identification & Metadata
 - Station IDs must be 3-digit zero-padded strings (e.g., "007", "057", "261"); preserve leading zeros.
-- Use `https://uhslc.soest.hawaii.edu/metaapi/select2` to validate station names and IDs; never invent station names.
-- Fetch `https://uhslc.soest.hawaii.edu/data/meta.geojson` for station `name`, `country`, `geometry` (0–360° longitudes), and Fast Delivery coverage (`fd_span`). Read `fd_span` before reporting the latest FD date or choosing an FD analysis end date.
-- For FD analysis, require `fd_span` and verify that the requested data are available. When the latest observation matters, check the latest valid observation in the relevant hourly or daily FD ERDDAP product. If its date differs from `fd_span.latest`, report both dates and use the ERDDAP observation date to determine what is available for analysis.
-- If live metadata cannot be retrieved or parsed, use the read-only `/app/data/metadata/fd_metadata.geojson` as an offline reference and disclose that it may be stale. Verify current coverage with ERDDAP before reporting a latest observation date.
+- Use `get_station_info_tool` for station IDs, canonical names, country, coordinates, time zone, and Fast Delivery catalog coverage from UHSLC. For regional discovery, pass a country, Hawaiʻi, or geographic bounds in −180° to 180° longitude.
+- Verify that the requested FD data are available. When choosing the latest FD analysis end date or reporting the latest observation, pass `frequency="hourly"` or `frequency="daily"` to check the station in ERDDAP. If that date differs from the catalog coverage end date, report both and use ERDDAP to determine what is available for analysis.
+- If the tool reports cached metadata, disclose that the catalog may be stale.
 - In narrative, cite official `name` and `country`.
 ## SEA Fast Delivery (FD) vs RQ and RAPID
 - FD is the best available product and is later overwritten by Research Quality (RQ) during overlap; note when relevant.

@@ -75,8 +75,9 @@ Not all inference currently passes through LiteLLM:
 
 - Primary IDEA chat, PaperQA, and Open WebUI's hidden task model use the
   internal LiteLLM proxy.
-- `station_tool.py` and `web_search_tool.py` currently call the configured
-  OpenAI-compatible provider endpoint directly with `OPENAI_*` credentials.
+- `web_search_tool.py` calls the configured OpenAI-compatible provider
+  endpoint directly with `OPENAI_*` credentials. The station lookup queries
+  UHSLC's public catalog and ERDDAP directly.
 - Codex delegation also uses a direct `OPENAI_*` fallback until the planned
   guest-reachable, restricted LiteLLM Responses endpoint is deployed.
 

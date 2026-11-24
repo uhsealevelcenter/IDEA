@@ -107,8 +107,8 @@ class DeployAssistantsTests(unittest.TestCase):
                 False,
             ),
             "prompts/sea.md": (
-                7982,
-                "0b5217128b4bb51aa28af1c91c2e78ab7331b7f4e698b3c4b47b3820ec20f0f2",
+                7679,
+                "3722b9520c66fb1b2bd2d130a05820e61bb816f193a48fbcf64f7d9b676bb63c",
                 True,
             ),
             "prompts/mars.md": (
