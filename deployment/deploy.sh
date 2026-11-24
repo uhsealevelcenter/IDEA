@@ -297,7 +297,7 @@ fi
 if [[ -n "${ow_api_key}" && "${ow_api_key}" != *"your_"* ]]; then
   echo "    Reconciling Pipe function, task model, and assistants..."
   OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/register_idea_pipe.sh" || fail "Failed to register IDEA pipe." "Check OPENWEBUI_API_KEY validity or ensure the admin user exists."
-  OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/configure_openwebui.py" || fail "Failed to configure Open WebUI settings." "Check LiteLLM connection."
+  OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/configure_openwebui.py" || fail "Failed to configure Open WebUI settings." "Review the Open WebUI API or task-model error above."
   
   OPENWEBUI_API_KEY="${ow_api_key}" OPENWEBUI_BASE_URL="http://localhost:3001" "${SCRIPT_DIR}/post_deploy/deploy_assistants_openwebui.py" --reconcile || fail "Failed to seed assistants." "Check assistants/manifest.json."
 
