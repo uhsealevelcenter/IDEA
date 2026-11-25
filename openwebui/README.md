@@ -407,9 +407,12 @@ installed middleware during the image build. Patch anchors must match exactly,
 so an incompatible upstream update fails the build. The published frontend is
 unchanged.
 
-The internal `idea-sandbox` terminal connection remains enabled for the Files
-explorer, with `capabilities.terminal` and `terminalId` preserved. The wrapper
-excludes this connection from model tool resolution and terminal `AGENTS.md`
+The `idea-sandbox` terminal connection provides File Explorer to signed-in
+users. Deployment derives a File Explorer credential from
+`INTERNAL_SERVICE_TOKEN`. The sandbox service uses the authenticated Open WebUI
+user ID and requires the isolated microVM backend for file operations.
+New assistants receive this connection by default when saved. The wrapper
+excludes it from model tool resolution and terminal `AGENTS.md`
 injection. Its OpenAPI operations must not be offered to Open WebUI's Task
 model or native tool loop: IDEA's Pipe and LangGraph own sandbox execution.
 This prevents sandbox tool results from becoming `terminal:idea-sandbox/...`
