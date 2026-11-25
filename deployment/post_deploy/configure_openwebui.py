@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hmac
 import json
 import os
 import sys
@@ -486,17 +487,32 @@ def configure_terminal_server(
     internal_service_token: str,
 ) -> None:
     """Register the sandbox as a terminal server connection in Open WebUI."""
+    if not internal_service_token:
+        raise RuntimeError("INTERNAL_SERVICE_TOKEN is required for IDEA File Explorer")
+    # Match the sandbox service's scoped credential without giving Open WebUI
+    # the credential that authorizes the internal sandbox API.
+    file_explorer_token = hmac.digest(
+        internal_service_token.encode(), b"idea:file-explorer:v1", "sha256"
+    ).hex()
     connection = {
         "id": "idea-sandbox",
         "name": "IDEA Sandbox",
         "url": terminal_url,
-        "key": internal_service_token,
+        "key": file_explorer_token,
         "auth_type": "bearer",
         "enabled": True,
+        "config": {"access_grants": [dict(PUBLIC_READ_GRANT)]},
     }
+    path = "/api/v1/configs/terminal_servers"
+    current = client.get(path)
+    connections = [
+        existing
+        for existing in current.get("TERMINAL_SERVER_CONNECTIONS") or []
+        if existing.get("id") != connection["id"]
+    ]
     client.post(
-        "/api/v1/configs/terminal_servers",
-        {"TERMINAL_SERVER_CONNECTIONS": [connection]},
+        path,
+        {"TERMINAL_SERVER_CONNECTIONS": [*connections, connection]},
     )
 
 

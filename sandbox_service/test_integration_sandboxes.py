@@ -44,7 +44,7 @@ class IntegrationSandboxTests(unittest.TestCase):
     def test_local_backend_cannot_satisfy_isolation(self):
         self.reservations.keys.add(f"idea:isess:vm:{SANDBOX}")
         with (
-            patch.object(registry, "_use_microsandbox", return_value=False),
+            patch.object(registry, "isolated_sandboxes_enabled", return_value=False),
             patch.object(registry, "PersistentTerminal") as local_terminal,
         ):
             with self.assertRaises(registry.SandboxAdmissionError) as raised:
@@ -54,7 +54,7 @@ class IntegrationSandboxTests(unittest.TestCase):
 
     def test_boot_requires_a_lifecycle_reservation(self):
         with (
-            patch.object(registry, "_use_microsandbox", return_value=True),
+            patch.object(registry, "isolated_sandboxes_enabled", return_value=True),
             patch.object(registry, "MicrosandboxTerminal") as terminal_class,
         ):
             with self.assertRaises(registry.SandboxAdmissionError) as raised:
@@ -74,7 +74,7 @@ class IntegrationSandboxTests(unittest.TestCase):
         self.reservations.keys.add(f"idea:isess:vm:{SANDBOX}")
         registry._terminals["regular-user"] = Mock()
         with (
-            patch.object(registry, "_use_microsandbox", return_value=True),
+            patch.object(registry, "isolated_sandboxes_enabled", return_value=True),
             patch.object(registry, "HOST_MAX_RESIDENT_VMS", 2),
             patch.object(registry, "HOST_RESERVED_REGULAR_VMS", 1),
             patch.object(registry, "MicrosandboxTerminal") as terminal_class,
@@ -86,7 +86,7 @@ class IntegrationSandboxTests(unittest.TestCase):
 
     def test_regular_user_sandboxes_are_unaffected(self):
         with (
-            patch.object(registry, "_use_microsandbox", return_value=True),
+            patch.object(registry, "isolated_sandboxes_enabled", return_value=True),
             patch.object(registry, "MicrosandboxTerminal") as terminal_class,
         ):
             registry._get_terminal("user-uuid")
@@ -99,7 +99,7 @@ class IntegrationSandboxTests(unittest.TestCase):
     def test_delete_removes_uncached_vm_and_revokes_reservation(self):
         self.reservations.keys.add(f"idea:isess:vm:{SANDBOX}")
         with (
-            patch.object(registry, "_use_microsandbox", return_value=True),
+            patch.object(registry, "isolated_sandboxes_enabled", return_value=True),
             patch.object(registry, "remove_named_sandbox", return_value="deleted") as remove,
         ):
             self.assertEqual(registry.delete_integration_sandbox(SANDBOX), "deleted")
@@ -110,7 +110,7 @@ class IntegrationSandboxTests(unittest.TestCase):
         terminal = Mock()
         registry._terminals[SANDBOX] = terminal
         with (
-            patch.object(registry, "_use_microsandbox", return_value=True),
+            patch.object(registry, "isolated_sandboxes_enabled", return_value=True),
             patch.object(registry, "remove_named_sandbox", return_value="not_found"),
         ):
             self.assertEqual(registry.delete_integration_sandbox(SANDBOX), "deleted")
@@ -119,7 +119,7 @@ class IntegrationSandboxTests(unittest.TestCase):
 
     def test_inventory_lists_only_integration_vms(self):
         with (
-            patch.object(registry, "_use_microsandbox", return_value=True),
+            patch.object(registry, "isolated_sandboxes_enabled", return_value=True),
             patch.object(registry, "list_sandbox_names", return_value=[SANDBOX]) as names,
         ):
             self.assertEqual(registry.list_integration_sandboxes(), [SANDBOX])

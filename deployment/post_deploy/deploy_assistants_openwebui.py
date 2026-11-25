@@ -3,7 +3,8 @@
 
 The default ``seed`` mode creates missing official Assistants while preserving
 later Admin UI edits. ``--reconcile`` intentionally restores all
-repository-managed fields. User-created Assistants are never changed.
+repository-managed fields and fills in a missing sandbox default on existing
+IDEA Assistants.
 """
 
 from __future__ import annotations
@@ -524,6 +525,41 @@ def configure_new_assistant_defaults(
     return "updated"
 
 
+def backfill_assistant_sandbox_defaults(
+    client: OpenWebUIClient,
+    base_model_ids: set[str],
+    dry_run: bool,
+) -> int:
+    """Attach IDEA Sandbox to existing custom IDEA Assistants without an override."""
+    updated = 0
+    for record in client.get("/api/v1/models/all"):
+        if record.get("base_model_id") not in base_model_ids:
+            continue
+        metadata = dict(record.get("meta") or {})
+        capabilities = dict(metadata.get("capabilities") or {})
+        if (
+            metadata.get("official_assistant")
+            or "terminalId" in metadata
+            or capabilities.get("terminal") is False
+        ):
+            continue
+        metadata["terminalId"] = "idea-sandbox"
+        metadata["capabilities"] = {**capabilities, "terminal": True}
+        if not dry_run:
+            client.post(
+                "/api/v1/models/model/update",
+                {
+                    "id": record["id"],
+                    "name": record["name"],
+                    "meta": metadata,
+                    "params": record.get("params") or {},
+                    "commit_message": "Apply IDEA Sandbox default",
+                },
+            )
+        updated += 1
+    return updated
+
+
 def verify_assistants(
     client: OpenWebUIClient,
     manifest: dict[str, Any],
@@ -698,6 +734,11 @@ def main() -> int:
         args.dry_run,
         only,
     )
+    backfilled = None
+    if args.reconcile and not only:
+        backfilled = backfill_assistant_sandbox_defaults(
+            client, set(resolved_ids.values()), args.dry_run
+        )
     inherited_results = deploy_welcome_suggestions(
         client,
         manifest,
@@ -728,6 +769,8 @@ def main() -> int:
         )
 
     prefix = "Would apply" if args.dry_run else "Applied"
+    if backfilled is not None:
+        print(f"{prefix} IDEA Sandbox default for {backfilled} existing custom Assistant(s).")
     for base_model_id, action in base_actions.items():
         print(f"{prefix} Assistant base model {base_model_id}: {action}")
     for assistant_id, action in results.items():
