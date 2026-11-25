@@ -1,4 +1,5 @@
 import importlib.util
+import hmac
 import os
 import tempfile
 import unittest
@@ -43,7 +44,7 @@ class ConfigureOpenWebUITests(unittest.TestCase):
     def test_default_task_model_is_gpt_6_luna(self):
         self.assertEqual(configure_openwebui.DEFAULT_TASK_MODEL, "gpt-6-luna")
 
-    def test_service_env_can_override_legacy_exported_value(self):
+    def test_task_model_upgrades_legacy_default_inherited_from_root_env(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".env"
             path.write_text("TASK_MODEL_EXTERNAL=gpt-6-luna\n")
@@ -52,8 +53,14 @@ class ConfigureOpenWebUITests(unittest.TestCase):
                 {"TASK_MODEL_EXTERNAL": "gpt-5.6-luna"},
                 clear=False,
             ):
-                configure_openwebui.load_env_file(path, override=True)
-                self.assertEqual(os.environ["TASK_MODEL_EXTERNAL"], "gpt-6-luna")
+                configure_openwebui.load_env_file(path)
+                self.assertEqual(os.environ["TASK_MODEL_EXTERNAL"], "gpt-5.6-luna")
+                self.assertEqual(configure_openwebui.resolve_task_model(None), "gpt-6-luna")
+
+    def test_task_model_preserves_newer_configured_and_explicit_models(self):
+        with patch.dict(os.environ, {"TASK_MODEL_EXTERNAL": "gpt-6.1-sol"}):
+            self.assertEqual(configure_openwebui.resolve_task_model(None), "gpt-6.1-sol")
+            self.assertEqual(configure_openwebui.resolve_task_model("gpt-6-astra"), "gpt-6-astra")
 
     def test_connection_update_preserves_existing_connections(self):
         client = FakeClient(
@@ -306,6 +313,48 @@ class ConfigureOpenWebUITests(unittest.TestCase):
             "Keep this prompt",
         )
 
+    def test_interface_default_preserves_other_admin_settings(self):
+        path = "/api/v1/auths/admin/config"
+        for defaults in (None, {"collapseCodeBlocks": False, "theme": "dark"}):
+            with self.subTest(defaults=defaults):
+                mfa_policy = {
+                    "ENABLE_MFA": False,
+                    "MFA_ALLOW_OAUTH_BYPASS": True,
+                    "MFA_ALLOW_TRUSTED_HEADER_BYPASS": False,
+                }
+                current = {"DEFAULT_INTERFACE_SETTINGS": defaults, "ENABLE_SIGNUP": False}
+                client = FakeClient()
+                client.responses[path] = lambda: {
+                    **(client.posts[-1][1] if client.posts else current),
+                    **mfa_policy,
+                }
+
+                configure_openwebui.configure_interface_defaults(client)
+                configure_openwebui.configure_interface_defaults(client)
+
+                self.assertEqual(
+                    client.posts,
+                    [
+                        (
+                            path,
+                            {
+                                **current,
+                                "DEFAULT_INTERFACE_SETTINGS": {
+                                    **(defaults or {}),
+                                    "collapseCodeBlocks": True,
+                                },
+                            },
+                        ),
+                    ],
+                )
+
+    def test_interface_default_requires_persistence(self):
+        path = "/api/v1/auths/admin/config"
+        client = FakeClient({path: {"DEFAULT_INTERFACE_SETTINGS": {}}})
+
+        with self.assertRaisesRegex(RuntimeError, "default verification failed"):
+            configure_openwebui.configure_interface_defaults(client)
+
     def test_title_prompt_matches_requested_template(self):
         self.assertEqual(
             configure_openwebui.TITLE_GENERATION_PROMPT,
@@ -345,7 +394,16 @@ Generate a concise 3–5 word title summarizing the chat history.
         )
 
     def test_configure_terminal_server_registers_sandbox_connection(self):
-        client = FakeClient()
+        path = "/api/v1/configs/terminal_servers"
+        other = {"id": "another-terminal", "url": "http://example.test"}
+        client = FakeClient({
+            path: {
+                "TERMINAL_SERVER_CONNECTIONS": [
+                    other,
+                    {"id": "idea-sandbox", "key": "test-token"},
+                ],
+            },
+        })
         configure_openwebui.configure_terminal_server(
             client,
             "http://sandbox:8020",
@@ -355,11 +413,26 @@ Generate a concise 3–5 word title summarizing the chat history.
         path, payload = client.posts[0]
         self.assertEqual(path, "/api/v1/configs/terminal_servers")
         connections = payload.get("TERMINAL_SERVER_CONNECTIONS") or []
-        self.assertEqual(len(connections), 1)
-        self.assertEqual(connections[0]["id"], "idea-sandbox")
-        self.assertEqual(connections[0]["url"], "http://sandbox:8020")
-        self.assertEqual(connections[0]["key"], "test-token")
-        self.assertTrue(connections[0]["enabled"])
+        self.assertEqual(len(connections), 2)
+        self.assertEqual(connections[0], other)
+        connection = connections[1]
+        self.assertEqual(connection["id"], "idea-sandbox")
+        self.assertEqual(connection["url"], "http://sandbox:8020")
+        self.assertEqual(
+            connection["key"],
+            hmac.digest(b"test-token", b"idea:file-explorer:v1", "sha256").hex(),
+        )
+        self.assertTrue(connection["enabled"])
+        self.assertEqual(
+            connection["config"]["access_grants"],
+            [configure_openwebui.PUBLIC_READ_GRANT],
+        )
+
+    def test_configure_terminal_server_requires_configured_authentication(self):
+        client = FakeClient()
+        with self.assertRaisesRegex(RuntimeError, "INTERNAL_SERVICE_TOKEN is required"):
+            configure_openwebui.configure_terminal_server(client, "http://sandbox:8020", "")
+        self.assertEqual(client.posts, [])
 
 
 if __name__ == "__main__":

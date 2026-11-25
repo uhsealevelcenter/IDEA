@@ -11,7 +11,7 @@ import uuid
 
 from lifecycle_recovery import require_native_pid_guard
 from msb_sandbox import MicrosandboxTerminal
-from terminal_registry import _use_microsandbox
+from terminal_registry import isolated_sandboxes_enabled
 
 
 def assert_journals_linked():
@@ -27,7 +27,7 @@ def assert_journals_linked():
 
 
 def main():
-    if not _use_microsandbox():
+    if not isolated_sandboxes_enabled():
         print("Skipping microVM lifecycle smoke check: local shell backend selected")
         return
     require_native_pid_guard()

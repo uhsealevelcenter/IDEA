@@ -1,0 +1,28 @@
+schema_version: 1
+id: cora-aws
+entrypoint: SKILL.md
+references:
+  aws-access:
+    path: references/aws-access.md
+    description: Discover and open CORA products with public S3 access.
+  gec-products:
+    path: references/gec.md
+    description: Gulf, East Coast, and Caribbean water levels, waves, grids, and derived products.
+    requires: [aws-access]
+  pac-products:
+    path: references/pac.md
+    description: Pacific native-grid water levels and waves, maps, and animations.
+    requires: [aws-access]
+  gauge-comparison:
+    path: references/gauge-comparison.md
+    description: Compare modeled CORA water levels with observed tide-gauge series.
+routes:
+  gec:
+    description: Retrieve and analyze public CORA data for the Gulf, East Coast, or Caribbean.
+    components: [gec-products]
+  pac:
+    description: Retrieve and analyze public CORA data for the West Coast, southeast Alaska, or Hawaiʻi.
+    components: [pac-products]
+  gauge-comparison:
+    description: Align CORA and observed tide-gauge series and compare with appropriate vertical references.
+    components: [gauge-comparison]

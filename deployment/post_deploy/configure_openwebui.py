@@ -2,16 +2,17 @@
 """Reconcile IDEA-owned Open WebUI settings after deployment.
 
 This intentionally leaves Open WebUI's persistent configuration enabled.
-Only the LiteLLM task-model connection, hidden task-model metadata, external
-task model, native code-execution settings, context-compaction settings, and
-title-generation prompt are managed here; other Admin Panel changes remain
-database-backed and editable.
+This manages the LiteLLM task-model connection, hidden task-model metadata,
+external task model, native code-execution and context-compaction settings,
+title-generation prompt, and the default for collapsing code and output blocks.
+Other Admin Panel changes remain database-backed and editable.
 """
 
 from __future__ import annotations
 
 import argparse
 import getpass
+import hmac
 import json
 import os
 import sys
@@ -28,6 +29,11 @@ DEFAULT_LITELLM_URL = "http://litellm:8080/v1"
 DEFAULT_TASK_MODEL = "gpt-6-luna"
 DEFAULT_CONTEXT_COMPACTION_TOKEN_THRESHOLD = 136_000
 LEGACY_LITELLM_URLS = {"http://litellm:4000/v1"}
+MFA_ADMIN_CONFIG_FIELDS = {
+    "ENABLE_MFA",
+    "MFA_ALLOW_OAUTH_BYPASS",
+    "MFA_ALLOW_TRUSTED_HEADER_BYPASS",
+}
 TITLE_GENERATION_PROMPT = """### Task:
 Generate a concise 3–5 word title summarizing the chat history.
 
@@ -90,6 +96,15 @@ def env_bool(name: str, default: bool) -> bool:
     raise RuntimeError(
         f"{name} must be one of true/false, yes/no, on/off, or 1/0"
     )
+
+
+def resolve_task_model(explicit_model: str | None) -> str:
+    model = (explicit_model or os.getenv("TASK_MODEL_EXTERNAL") or "").strip()
+    # The deploy shell can inherit the old default from the legacy root .env
+    # even after the migration has upgraded openwebui/.env.
+    if model in {"", "gpt-5.6-luna"}:
+        return DEFAULT_TASK_MODEL
+    return model
 
 
 class OpenWebUIClient:
@@ -443,23 +458,61 @@ def configure_native_code_execution(
         raise RuntimeError("Code Interpreter enabled-state verification failed")
 
 
+def configure_interface_defaults(client: OpenWebUIClient) -> None:
+    """Set the chat block default while preserving other interface defaults."""
+    path = "/api/v1/auths/admin/config"
+    config = client.get(path)
+    defaults = config.get("DEFAULT_INTERFACE_SETTINGS")
+    if defaults is None:
+        defaults = {}
+    if not isinstance(defaults, dict):
+        raise RuntimeError("Open WebUI interface defaults must be an object")
+    if defaults.get("collapseCodeBlocks") is True:
+        return
+
+    # Even unchanged MFA fields require a human session when included in a
+    # write. Omitting them keeps those policies out of the API-key update.
+    payload = {key: value for key, value in config.items() if key not in MFA_ADMIN_CONFIG_FIELDS}
+    payload["DEFAULT_INTERFACE_SETTINGS"] = {**defaults, "collapseCodeBlocks": True}
+    client.post(path, payload)
+
+    verified = client.get(path).get("DEFAULT_INTERFACE_SETTINGS")
+    if not isinstance(verified, dict) or verified.get("collapseCodeBlocks") is not True:
+        raise RuntimeError("Collapsed code and output default verification failed")
+
+
 def configure_terminal_server(
     client: OpenWebUIClient,
     terminal_url: str,
     internal_service_token: str,
 ) -> None:
     """Register the sandbox as a terminal server connection in Open WebUI."""
+    if not internal_service_token:
+        raise RuntimeError("INTERNAL_SERVICE_TOKEN is required for IDEA File Explorer")
+    # Match the sandbox service's scoped credential without giving Open WebUI
+    # the credential that authorizes the internal sandbox API.
+    file_explorer_token = hmac.digest(
+        internal_service_token.encode(), b"idea:file-explorer:v1", "sha256"
+    ).hex()
     connection = {
         "id": "idea-sandbox",
         "name": "IDEA Sandbox",
         "url": terminal_url,
-        "key": internal_service_token,
+        "key": file_explorer_token,
         "auth_type": "bearer",
         "enabled": True,
+        "config": {"access_grants": [dict(PUBLIC_READ_GRANT)]},
     }
+    path = "/api/v1/configs/terminal_servers"
+    current = client.get(path)
+    connections = [
+        existing
+        for existing in current.get("TERMINAL_SERVER_CONNECTIONS") or []
+        if existing.get("id") != connection["id"]
+    ]
     client.post(
-        "/api/v1/configs/terminal_servers",
-        {"TERMINAL_SERVER_CONNECTIONS": [connection]},
+        path,
+        {"TERMINAL_SERVER_CONNECTIONS": [*connections, connection]},
     )
 
 
@@ -507,11 +560,7 @@ def main() -> int:
         or os.getenv("OPENWEBUI_LITELLM_BASE_URL")
         or DEFAULT_LITELLM_URL
     )
-    task_model = (
-        args.task_model
-        or os.getenv("TASK_MODEL_EXTERNAL")
-        or DEFAULT_TASK_MODEL
-    )
+    task_model = resolve_task_model(args.task_model)
     compaction_enabled = env_bool("ENABLE_CONTEXT_COMPACTION", True)
     compaction_threshold = (
         args.compaction_threshold
@@ -548,6 +597,7 @@ def main() -> int:
         compaction_enabled,
         compaction_threshold,
     )
+    configure_interface_defaults(client)
     sandbox_service_url = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox:8020").rstrip("/")
     internal_service_token = os.getenv("INTERNAL_SERVICE_TOKEN", "")
     print(f"Configuring Open WebUI terminal server connection {sandbox_service_url!r}...")
@@ -561,6 +611,7 @@ def main() -> int:
         f"context compaction is {'enabled' if compaction_enabled else 'disabled'} "
         f"at {compaction_threshold} tokens; the title prompt is configured. "
         "Native code execution and Code Interpreter settings are reconciled. "
+        "Code and Output blocks default to collapsed. "
         "Other Admin Panel settings remain persistent and editable."
     )
     return 0

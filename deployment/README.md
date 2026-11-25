@@ -207,7 +207,7 @@ Or run individual setup scripts if preferred:
 2. **Stage 2**: Automatically verifies and initializes PostgreSQL schemas for LiteLLM, LangGraph, and Langfuse.
 3. **Stage 3**: Authenticates with GHCR (if credentials are set) and starts all Docker Compose services with quiet, streamlined logging.
 4. **Stage 4**: Runs service health checks, polls LiteLLM until ready (up to 3 min), and automatically generates & injects `LITELLM_VIRTUAL_KEY`.
-5. **Stage 5**: Automatically generates and syncs `OPENWEBUI_API_KEY`, sets the `INTERNAL_SERVICE_TOKEN` Valve, configures task models, and seeds assistants.
+5. **Stage 5**: Automatically generates and syncs `OPENWEBUI_API_KEY`, sets the `INTERNAL_SERVICE_TOKEN` Valve, configures task models, and reconciles assistants. After setting collapsed blocks as the default, the deployment clears saved Off values for existing accounts once per Open WebUI database. Subsequent deployments honor new personal opt-outs.
 
 To start any environment:
 

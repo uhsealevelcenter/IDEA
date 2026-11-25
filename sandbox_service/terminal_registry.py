@@ -12,7 +12,6 @@ is allowed to live - the langgraph service that calls into this over HTTP
 import json
 import mimetypes
 import os
-import posixpath
 import shlex
 import signal
 import threading
@@ -233,7 +232,7 @@ def _prune_python_run_state_locked(now: float) -> None:
         _python_recovery_started.discard(run_id)
 
 
-def _use_microsandbox() -> bool:
+def isolated_sandboxes_enabled() -> bool:
     if SANDBOX_BACKEND == "local":
         return False
     if SANDBOX_BACKEND == "microsandbox":
@@ -255,8 +254,10 @@ def _get_terminal(sandbox_id: str):
     """Get or create the terminal (sandboxed or local) for a given sandbox_id."""
     with _registry_lock:
         if sandbox_id not in _terminals:
-            if _use_microsandbox():
+            if isolated_sandboxes_enabled():
                 _terminals[sandbox_id] = MicrosandboxTerminal(sandbox_id)
+            elif os.getenv("INTERNAL_SERVICE_TOKEN"):
+                raise RuntimeError("Authenticated sandbox execution requires an isolated backend")
             else:
                 _terminals[sandbox_id] = PersistentTerminal()
         return _terminals[sandbox_id]
@@ -770,7 +771,9 @@ def file_exists(filepath: str, sandbox_id: str) -> bool:
 
 def read_file_info(filepath: str, sandbox_id: str) -> tuple[bytes, str, bool, str]:
     """Read a file and return (raw_bytes, content_type, is_text, text_content)."""
-    raw_bytes = read_file_bytes(filepath, sandbox_id=sandbox_id)
+    terminal = _get_file_explorer_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        raw_bytes = terminal.read_file(filepath)
     content_type, _ = mimetypes.guess_type(filepath)
     if not content_type:
         content_type = "application/octet-stream"
@@ -795,42 +798,23 @@ def read_file_info(filepath: str, sandbox_id: str) -> tuple[bytes, str, bool, st
     return raw_bytes, content_type, is_text, text_content
 
 
-def list_files(directory: str, sandbox_id: str) -> dict:
-    """List directory entries (matching Open Terminal API schema: {entries: [...], writable: True})."""
-    directory = directory.strip() or "/workspace"
+def _get_file_explorer_terminal(sandbox_id: str) -> MicrosandboxTerminal:
     terminal = _get_terminal(sandbox_id)
-    with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
-            try:
-                res = terminal._open_terminal_get("/files/list", {"directory": directory})
-                if isinstance(res, dict) and "entries" in res:
-                    return res
-            except Exception:
-                pass
+    if not isinstance(terminal, MicrosandboxTerminal):
+        raise RuntimeError("File Explorer requires an isolated sandbox")
+    return terminal
 
-        # Direct filesystem access for local PersistentTerminal or fallback
-        entries = []
-        try:
-            os.makedirs(directory, exist_ok=True)
-            for entry in os.scandir(directory):
-                try:
-                    stat = entry.stat(follow_symlinks=False)
-                    is_dir = entry.is_dir(follow_symlinks=False)
-                    entries.append({
-                        "name": entry.name,
-                        "type": "directory" if is_dir else "file",
-                        "size": 0 if is_dir else stat.st_size,
-                        "modified": int(stat.st_mtime),
-                        "writable": os.access(entry.path, os.W_OK),
-                    })
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        return {
-            "entries": sorted(entries, key=lambda x: (x["type"] != "directory", x["name"].lower())),
-            "writable": True,
-        }
+
+def list_files(directory: str, sandbox_id: str) -> dict:
+    """List directory entries in the user's microVM."""
+    terminal = _get_file_explorer_terminal(sandbox_id)
+    with _get_lock(sandbox_id):
+        result = terminal._open_terminal_get(
+            "/files/list", {"directory": directory.strip() or "/workspace"}
+        )
+    if not isinstance(result, dict) or "entries" not in result:
+        raise RuntimeError("The sandbox returned an invalid file listing")
+    return result
 
 
 def search_files(
@@ -841,106 +825,43 @@ def search_files(
     type_: str = "any",
     show_hidden: bool = False,
 ) -> list[dict]:
-    """Search files by name inside the sandbox directory."""
-    directory = directory.strip() or "/workspace"
-    terminal = _get_terminal(sandbox_id)
+    """Search files by name inside the user's microVM."""
+    terminal = _get_file_explorer_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
-            try:
-                res = terminal._open_terminal_get(
-                    "/files/search",
-                    {
-                        "query": query,
-                        "path": directory,
-                        "limit": limit,
-                        "type": type_,
-                        "show_hidden": str(show_hidden).lower(),
-                    },
-                )
-                if isinstance(res, dict) and "results" in res:
-                    return res["results"]
-            except Exception:
-                pass
-
-        results = []
-        q = query.lower()
-        try:
-            if os.path.exists(directory):
-                for root, dirs, files in os.walk(directory):
-                    items = dirs + files
-                    for name in items:
-                        if not show_hidden and name.startswith("."):
-                            continue
-                        if not q or q in name.lower():
-                            full_path = os.path.join(root, name)
-                            is_dir = os.path.isdir(full_path)
-                            if type_ == "file" and is_dir:
-                                continue
-                            if type_ == "directory" and not is_dir:
-                                continue
-                            try:
-                                stat = os.stat(full_path)
-                                results.append({
-                                    "path": full_path,
-                                    "name": name,
-                                    "type": "directory" if is_dir else "file",
-                                    "size": 0 if is_dir else stat.st_size,
-                                    "modified": int(stat.st_mtime),
-                                })
-                            except Exception:
-                                pass
-                            if len(results) >= limit:
-                                return results
-        except Exception:
-            pass
-        return results
+        result = terminal._open_terminal_get(
+            "/files/search",
+            {
+                "query": query,
+                "path": directory.strip() or "/workspace",
+                "limit": limit,
+                "type": type_,
+                "show_hidden": str(show_hidden).lower(),
+            },
+        )
+    if not isinstance(result, dict) or "results" not in result:
+        raise RuntimeError("The sandbox returned an invalid file search result")
+    return result["results"]
 
 
 def create_directory(directory: str, sandbox_id: str) -> bool:
-    """Create directory in the sandbox."""
-    terminal = _get_terminal(sandbox_id)
+    """Create a directory in the user's microVM."""
+    terminal = _get_file_explorer_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
-            cmd = f"mkdir -p {shlex.quote(directory)}"
-            success, _, _ = terminal.run(cmd)
-            return success
-        try:
-            os.makedirs(directory, exist_ok=True)
-            return True
-        except Exception:
-            return False
+        success, _, _ = terminal.run(f"mkdir -p -- {shlex.quote(directory)}")
+        return success
 
 
 def delete_entry(path: str, sandbox_id: str) -> bool:
-    """Delete a file or directory in the sandbox."""
-    terminal = _get_terminal(sandbox_id)
+    """Delete a file or directory in the user's microVM."""
+    terminal = _get_file_explorer_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
-            cmd = f"rm -rf {shlex.quote(path)}"
-            success, _, _ = terminal.run(cmd)
-            return success
-        try:
-            if os.path.isdir(path):
-                import shutil
-                shutil.rmtree(path)
-            elif os.path.exists(path):
-                os.remove(path)
-            return True
-        except Exception:
-            return False
+        success, _, _ = terminal.run(f"rm -rf -- {shlex.quote(path)}")
+        return success
 
 
 def move_entry(source: str, destination: str, sandbox_id: str) -> bool:
-    """Move or rename a file or directory in the sandbox."""
-    terminal = _get_terminal(sandbox_id)
+    """Move or rename a file or directory in the user's microVM."""
+    terminal = _get_file_explorer_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
-            cmd = f"mv {shlex.quote(source)} {shlex.quote(destination)}"
-            success, _, _ = terminal.run(cmd)
-            return success
-        try:
-            import shutil
-            shutil.move(source, destination)
-            return True
-        except Exception:
-            return False
+        success, _, _ = terminal.run(f"mv -- {shlex.quote(source)} {shlex.quote(destination)}")
+        return success
