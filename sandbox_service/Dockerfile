@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y \
 # execution (msb_sandbox.py). Requires /dev/kvm to be passed through to this
 # container (see docker-compose.yml's `sandbox.devices` / KVM_DEVICE_PATH) -
 # falls back to a plain local shell automatically if KVM isn't available at
-# runtime (see terminal_registry.py's _use_microsandbox/microsandbox_available).
+# runtime for standalone local development (see terminal_registry.py).
 #
 # The installer's linux-aarch64 tarball is currently missing
 # libkrunfw.so.5.6.0 upstream (fails with "install: cannot stat
