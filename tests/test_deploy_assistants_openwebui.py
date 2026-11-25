@@ -107,8 +107,8 @@ class DeployAssistantsTests(unittest.TestCase):
                 False,
             ),
             "prompts/sea.md": (
-                6657,
-                "a5e562e4a02ac7b94c891eb5a2b2fdd810251cdef51c0a4e386274859b6804a0",
+                8292,
+                "86d898839572772e3ce296030d91a7b1083a1d0a93ef7826ee87ce1a5e58193e",
                 True,
             ),
             "prompts/mars.md": (
@@ -531,6 +531,39 @@ class DeployAssistantsTests(unittest.TestCase):
 
         self.assertEqual(action, "unchanged")
         self.assertEqual(client.posts, [])
+
+    def test_backfill_only_applies_missing_sandbox_defaults(self):
+        record = {
+            "id": "custom",
+            "name": "Custom",
+            "base_model_id": "idea",
+            "meta": {"skillIds": ["analysis"], "capabilities": {"vision": False}},
+            "params": {"system": "Custom prompt"},
+        }
+        client = FakeClient(responses={
+            "/api/v1/models/all": [
+                record,
+                {**record, "id": "unrelated", "base_model_id": "other"},
+                {**record, "id": "official", "meta": {"official_assistant": True}},
+                {**record, "id": "external", "meta": {"terminalId": "another"}},
+                {**record, "id": "disabled", "meta": {"terminalId": None}},
+                {**record, "id": "no-capability", "meta": {"capabilities": {"terminal": False}}},
+            ],
+        })
+
+        self.assertEqual(deploy.backfill_assistant_sandbox_defaults(client, {"idea"}, True), 1)
+        self.assertEqual(client.posts, [])
+        self.assertEqual(deploy.backfill_assistant_sandbox_defaults(client, {"idea"}, False), 1)
+        path, payload = client.posts[0]
+        self.assertEqual(path, "/api/v1/models/model/update")
+        self.assertEqual(payload["id"], "custom")
+        self.assertEqual(payload["params"], record["params"])
+        self.assertEqual(payload["meta"], {
+            "skillIds": ["analysis"],
+            "capabilities": {"vision": False, "terminal": True},
+            "terminalId": "idea-sandbox",
+        })
+        self.assertNotIn("access_grants", payload)
 
     def test_seed_mode_preserves_an_existing_default(self):
         client = FakeClient(

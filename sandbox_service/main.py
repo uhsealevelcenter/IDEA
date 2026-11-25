@@ -40,17 +40,13 @@ def _stop_all_terminals_on_shutdown() -> None:
     print(f"Shutdown: gracefully stopped {stopped} sandbox terminal(s)")
 
 
-# Shared secret between this service's only caller (langgraph, via
-# langgraph/tools/persistent_terminal.py) and this service itself - not a
-# per-user credential. See langgraph/langgraph_service.py for the
-# identical pattern. Empty/unset fails OPEN (no check), so dev setups that
-# haven't configured it yet keep working - every production .env should
-# set this; see example.env. This service has no other authentication of
-# its own otherwise: a request that names a sandbox_id can exec/read/
-# write/stop/destroy that sandbox, full stop, so this token is the only
-# thing standing between "on the docker network" and "full code exec as
-# any user" if this service's host ports are ever exposed.
+# LangGraph's service token authorizes operations by sandbox ID. Open WebUI
+# receives only the derived File Explorer token, which authorizes its file routes.
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+FILE_EXPLORER_TOKEN = (
+    hmac.digest(INTERNAL_SERVICE_TOKEN.encode(), b"idea:file-explorer:v1", "sha256").hex()
+    if INTERNAL_SERVICE_TOKEN else ""
+)
 INPUT_SYNC_MAX_FILE_BYTES = int(
     os.getenv("INPUT_SYNC_MAX_FILE_BYTES", str(1024 * 1024 * 1024))
 )
@@ -60,13 +56,28 @@ INPUT_SYNC_SPOOL_MEMORY_BYTES = min(
 )
 
 
-def require_internal_token(request: Request) -> None:
-    if not INTERNAL_SERVICE_TOKEN:
-        return
+def has_bearer_token(request: Request, token: str) -> bool:
     auth_header = request.headers.get("authorization", "")
     provided = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
-    if not hmac.compare_digest(provided, INTERNAL_SERVICE_TOKEN):
+    return bool(token) and hmac.compare_digest(provided.encode(), token.encode())
+
+
+def require_isolation() -> None:
+    if not registry.isolated_sandboxes_enabled():
+        raise HTTPException(status_code=503, detail="An isolated sandbox backend is required")
+
+
+def require_internal_token(request: Request) -> None:
+    if not INTERNAL_SERVICE_TOKEN and "authorization" not in request.headers:
+        return  # Allow standalone local development without service authentication.
+    if not has_bearer_token(request, INTERNAL_SERVICE_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid or missing internal service token")
+    require_isolation()
+
+
+def require_file_explorer_token(request: Request) -> None:
+    if not has_bearer_token(request, FILE_EXPLORER_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid or missing File Explorer credential")
 
 
 class ExecRequest(BaseModel):
@@ -392,33 +403,29 @@ async def destroy_sandbox(sandbox_id: str):
 
 
 def get_request_sandbox_id(request: Request) -> str:
-    user_id = request.headers.get("X-User-Id")
-    if user_id:
-        return user_id.strip()
-    session_id = request.headers.get("X-Session-Id")
-    if session_id:
-        return session_id.strip()
-    query_session = request.query_params.get("session_id")
-    if query_session:
-        return query_session.strip()
-    return "default"
+    require_file_explorer_token(request)
+    user_id = request.headers.get("X-User-Id", "").strip()
+    if not user_id:
+        raise HTTPException(status_code=403, detail="File Explorer requires a verified user")
+    require_isolation()
+    return user_id
 
 
-@app.get("/api/config", dependencies=[Depends(require_internal_token)])
-@app.get("/config", dependencies=[Depends(require_internal_token)])
+@app.get("/api/config", dependencies=[Depends(require_file_explorer_token)])
+@app.get("/config", dependencies=[Depends(require_file_explorer_token)])
 async def terminal_config():
     """Verify endpoint for Open WebUI terminal connection."""
     return {"features": {"terminal": False}}
 
 
-@app.get("/ports", dependencies=[Depends(require_internal_token)])
+@app.get("/ports", dependencies=[Depends(get_request_sandbox_id)])
 async def terminal_ports():
     """Return available ports for FileNav port preview."""
     return {"ports": []}
 
 
-@app.get("/files/cwd", dependencies=[Depends(require_internal_token)])
-async def terminal_cwd(request: Request):
+@app.get("/files/cwd", dependencies=[Depends(get_request_sandbox_id)])
+async def terminal_cwd():
     """Return current working directory and root for FileNav."""
     return {
         "cwd": "/workspace",
@@ -430,16 +437,14 @@ async def terminal_cwd(request: Request):
     }
 
 
-@app.get("/files/list", dependencies=[Depends(require_internal_token)])
-async def terminal_list_files(request: Request, directory: str = "/workspace"):
-    sandbox_id = get_request_sandbox_id(request)
+@app.get("/files/list")
+async def terminal_list_files(directory: str = "/workspace", sandbox_id: str = Depends(get_request_sandbox_id)):
     result = await asyncio.to_thread(registry.list_files, directory, sandbox_id)
     return result
 
 
-@app.get("/files/read", dependencies=[Depends(require_internal_token)])
-async def terminal_read_file(request: Request, path: str):
-    sandbox_id = get_request_sandbox_id(request)
+@app.get("/files/read")
+async def terminal_read_file(path: str, sandbox_id: str = Depends(get_request_sandbox_id)):
     try:
         data, content_type, is_text, text_content = await asyncio.to_thread(
             registry.read_file_info, path, sandbox_id
@@ -454,9 +459,8 @@ async def terminal_read_file(request: Request, path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/files/view", dependencies=[Depends(require_internal_token)])
-async def terminal_view_file(request: Request, path: str, preview: bool = False):
-    sandbox_id = get_request_sandbox_id(request)
+@app.get("/files/view")
+async def terminal_view_file(path: str, preview: bool = False, sandbox_id: str = Depends(get_request_sandbox_id)):
     try:
         data, content_type, _, _ = await asyncio.to_thread(
             registry.read_file_info, path, sandbox_id
@@ -468,10 +472,9 @@ async def terminal_view_file(request: Request, path: str, preview: bool = False)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/files/serve/{path:path}", dependencies=[Depends(require_internal_token)])
-async def terminal_serve_file(request: Request, path: str):
+@app.get("/files/serve/{path:path}")
+async def terminal_serve_file(path: str, sandbox_id: str = Depends(get_request_sandbox_id)):
     """Serve files directly with proper content-type for FileNav HTML iframe previews."""
-    sandbox_id = get_request_sandbox_id(request)
     if not path.startswith("/"):
         path = "/" + path
     try:
@@ -485,9 +488,8 @@ async def terminal_serve_file(request: Request, path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/files/download", dependencies=[Depends(require_internal_token)])
-async def terminal_download_file(request: Request, path: str):
-    sandbox_id = get_request_sandbox_id(request)
+@app.get("/files/download")
+async def terminal_download_file(path: str, sandbox_id: str = Depends(get_request_sandbox_id)):
     try:
         data, content_type, _, _ = await asyncio.to_thread(
             registry.read_file_info, path, sandbox_id
@@ -504,16 +506,15 @@ async def terminal_download_file(request: Request, path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/files/search", dependencies=[Depends(require_internal_token)])
+@app.get("/files/search")
 async def terminal_search_files(
-    request: Request,
     query: str = "",
     path: str = "/outputs",
     limit: int = 50,
     type: str = "any",
     show_hidden: bool = False,
+    sandbox_id: str = Depends(get_request_sandbox_id),
 ):
-    sandbox_id = get_request_sandbox_id(request)
     results = await asyncio.to_thread(
         registry.search_files,
         query,
@@ -530,9 +531,8 @@ class MkdirPayload(BaseModel):
     path: str
 
 
-@app.post("/files/mkdir", dependencies=[Depends(require_internal_token)])
-async def terminal_mkdir(request: Request, body: MkdirPayload):
-    sandbox_id = get_request_sandbox_id(request)
+@app.post("/files/mkdir")
+async def terminal_mkdir(body: MkdirPayload, sandbox_id: str = Depends(get_request_sandbox_id)):
     ok = await asyncio.to_thread(registry.create_directory, body.path, sandbox_id)
     return {"ok": ok}
 
@@ -541,9 +541,8 @@ class DeletePayload(BaseModel):
     path: str
 
 
-@app.delete("/files/delete", dependencies=[Depends(require_internal_token)])
-async def terminal_delete(request: Request, body: DeletePayload):
-    sandbox_id = get_request_sandbox_id(request)
+@app.delete("/files/delete")
+async def terminal_delete(body: DeletePayload, sandbox_id: str = Depends(get_request_sandbox_id)):
     ok = await asyncio.to_thread(registry.delete_entry, body.path, sandbox_id)
     return {"ok": ok}
 
@@ -553,9 +552,8 @@ class MovePayload(BaseModel):
     destination: str
 
 
-@app.post("/files/move", dependencies=[Depends(require_internal_token)])
-async def terminal_move(request: Request, body: MovePayload):
-    sandbox_id = get_request_sandbox_id(request)
+@app.post("/files/move")
+async def terminal_move(body: MovePayload, sandbox_id: str = Depends(get_request_sandbox_id)):
     ok = await asyncio.to_thread(registry.move_entry, body.source, body.destination, sandbox_id)
     return {"ok": ok}
 
