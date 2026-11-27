@@ -170,6 +170,7 @@ cython_debug/
 *.csv
 *.png
 !assistants/assets/*.png
+!docs/assets/*.png
 
 /static/
 

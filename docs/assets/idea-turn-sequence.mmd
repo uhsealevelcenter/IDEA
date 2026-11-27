@@ -1,0 +1,68 @@
+sequenceDiagram
+    autonumber
+    actor User as Researcher / User
+    participant Nginx as Nginx Proxy
+    participant OWUI as Open WebUI
+    participant Pipe as idea_pipe.py
+    participant LG as LangGraph Service (:8010)
+    participant Redis as Redis
+    participant Postgres as PostgreSQL (Checkpoints)
+    participant LiteLLM as LiteLLM Proxy (:8080)
+    participant Model as LLM (gpt-6.1-sol)
+    participant SS as Sandbox Service (:8020)
+    participant VM as MicroVM (Kernel / OpenTerm / Codex)
+
+    User->>Nginx: Submit query or uploaded file
+    Nginx->>OWUI: Forward request (session cookie / auth)
+    OWUI->>Pipe: Execute Pipe for selected Assistant
+    Pipe->>LG: POST /chat-runs (Bearer token, normalized history, attachments)
+    LG->>Redis: Enqueue run record (status=queued)
+    LG-->>Pipe: 202 Accepted {run_id: "..."}
+
+    par Pipe Polling via SSE
+        loop Poll events until terminal status
+            Pipe->>LG: GET /chat-runs/{run_id}/events?after={seq}
+            LG-->>Pipe: Stream event chunk (tool_start, token, tool_end, status)
+            Pipe-->>OWUI: Yield SSE formatted chunk
+            OWUI-->>User: Render real-time progress / tool badges
+        end
+    and Worker Thread Execution
+        LG->>Postgres: Fetch checkpoint for parent message ID
+        LG->>LG: Prepare turn state & prune observation bytes
+        
+        loop Turn Loop (Budget: Up to 20 Model Iterations)
+            LG->>LiteLLM: POST /chat/completions (Responses API, user email header)
+            LiteLLM->>Model: Forward prompt with tool schemas
+            Model-->>LiteLLM: Emit reasoning & tool_call (e.g. run_python_tool)
+            LiteLLM-->>LG: Return tool call payload
+            
+            alt Tool Call: run_python_tool
+                LG->>SS: POST /sandboxes/{id}/run-python
+                SS->>VM: client.py invokes IPython kernel daemon (127.0.0.1:8721)
+                VM-->>SS: Stream stdout, stderr, matplotlib plots to /outputs
+                SS-->>LG: Structured tool execution result
+            else Tool Call: delegate_to_codex
+                LG->>SS: POST /sandboxes/{id}/run-codex
+                SS->>VM: Launch codex_runner.py with openai-codex CLI
+                VM-->>SS: Subordinate code edits in /workspace
+                SS-->>LG: Codex output & thread ID
+            else Tool Call: Domain / Literature RAG
+                LG->>LG: Execute get_station_info_tool / PaperQA2 query
+            end
+
+            LG->>LG: Cancellation Gate & Hard Observation Truncation (6KB limit)
+            LG->>Postgres: Checkpoint updated graph state & action ledger
+        end
+
+        Model-->>LiteLLM: Final conversational markdown response
+        LiteLLM-->>LG: Complete text response
+        LG->>SS: Scan /outputs for new or updated files
+        SS-->>LG: File metadata & byte streams
+        LG->>OWUI: Synchronize files to Open WebUI Files API (User Auth)
+        OWUI-->>LG: Persistent File IDs & download URLs
+        LG->>Redis: Set run status = completed
+    end
+
+    Pipe->>Pipe: Rewrite /outputs/* links to /idea-file-preview/* & downloads
+    Pipe-->>OWUI: Final sanitized message with inline plots
+    OWUI-->>User: Display complete, reproducible scientific answer

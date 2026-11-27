@@ -1,0 +1,108 @@
+flowchart TB
+    %% Styling classes
+    classDef clientClass fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#0369A1;
+    classDef edgeClass fill:#F1F5F9,stroke:#475569,stroke-width:2px,color:#334155;
+    classDef uiClass fill:#EDE9FE,stroke:#7C3AED,stroke-width:2px,color:#5B21B6;
+    classDef orchClass fill:#FEF3C7,stroke:#D97706,stroke-width:2px,color:#92400E;
+    classDef sandClass fill:#FEE2E2,stroke:#DC2626,stroke-width:2px,color:#991B1B;
+    classDef guestClass fill:#FFFFFF,stroke:#B91C1C,stroke-width:1.5px,stroke-dasharray: 4 2,color:#7F1D1D;
+    classDef gatewayClass fill:#CCFBF1,stroke:#0D9488,stroke-width:2px,color:#115E59;
+    classDef storageClass fill:#F3F4F6,stroke:#374151,stroke-width:2px,color:#1F2937;
+
+    subgraph Clients["1. Clients & Ingress Triggers"]
+        User["Researcher / Web Browser"]:::clientClass
+        N8N["n8n Automation Engine<br/>(Live Streaming Workflows & Chat Portals)"]:::clientClass
+    end
+
+    subgraph Edge["2. Edge & Routing (Nginx Reverse Proxy)"]
+        Nginx["Nginx Reverse Proxy (:80, :443 TLS)<br/>Let's Encrypt / Certbot Auto-Renewal"]:::edgeClass
+        PreviewFilter["Inline Preview with CSP Sandbox<br/>(/idea-file-preview/*)"]:::edgeClass
+        ExportRoute["Public Export Handler<br/>(/integration-exports/*)"]:::edgeClass
+    end
+
+    subgraph UI["3. Frontend & User Session (Open WebUI)"]
+        OWUI["Open WebUI Core (:8080)<br/>Auth, History, File Uploads, User Workspace"]:::uiClass
+        Assistants["Official Assistants<br/>• Welcome Assistant<br/>• SEA (Station Explorer)<br/>• Mars Assistant (InSight)"]:::uiClass
+        Pipe["IDEA Pipe Function (idea_pipe.py)<br/>• Normalizes chat branch<br/>• SSE event poller<br/>• Artifact URL rewriter"]:::uiClass
+        OWUIDB[("Open WebUI SQLite & Files<br/>idea_openwebui_data")]:::storageClass
+    end
+
+    subgraph Orchestration["4. Agent Orchestration (LangGraph Microservice :8010)"]
+        API["FastAPI Chat-Run Runner<br/>• POST /chat-runs<br/>• GET /chat-runs/{id}/events (SSE)<br/>• POST /chat-runs/{id}/stop"]:::orchClass
+        
+        Graph["LangGraph StateGraph Engine<br/>• prepare_turn (identities & branch)<br/>• call_model (prompt & tools)<br/>• execute_one_tool (delegation)<br/>• cancellation_gate (stop/timeout)<br/>• stopped_summary / finalize"]:::orchClass
+        
+        Budget["Turn Budget Controller<br/>• 20-call limit ceiling<br/>• Warning at 16 calls<br/>• Finish guidance at 18-19<br/>• Reserved summary at 20"]:::orchClass
+        
+        OutputSync["Output Synchronizer<br/>(/outputs to Open WebUI Files API)"]:::orchClass
+        
+        Tools["Agent Tool Surface<br/>• run_terminal / write_file<br/>• run_python (IPython kernel)<br/>• grep_search / glob_search<br/>• delegate_to_codex<br/>• station / climate / datetime<br/>• PaperQA2 Literature RAG<br/>• Builtin & Workspace Skills"]:::orchClass
+    end
+
+    subgraph Sandbox["5. Execution Isolation (Sandbox Service :8020)"]
+        SS["Sandbox Service Host API<br/>• Terminal Registry & Lifecycle Manager<br/>• Supervised Execution & Graceful Stop Escalation<br/>• HMAC File Explorer API (/files/*)"]:::sandClass
+        
+        KVMBarrier{{"KVM Hardware Virtualization Boundary<br/>(/dev/kvm Isolation - 1 MicroVM Per User/Session)"}}:::sandClass
+        
+        subgraph GuestVM["Per-User MicroVM (interpreter_kernel OCI Image)"]
+            OpenTerm["Open Terminal Service<br/>(127.0.0.1:8000)<br/>High-speed ripgrep & glob"]:::guestClass
+            KernelDaemon["IPython Kernel Daemon<br/>(127.0.0.1:8721 - daemon.py)<br/>Stateful variables, imports & plot capture"]:::guestClass
+            CodexApp["Codex Runner & App-Server<br/>(openai-codex 0.144.4 CLI)<br/>Subordinate coding runtime"]:::guestClass
+            VMWorkspace["MicroVM Filesystem Mounts<br/>• /workspace (User persistent files)<br/>• /outputs (Downloadable artifacts)<br/>• /srv/idea_shared_data (Read-Only)"]:::guestClass
+        end
+    end
+
+    subgraph ModelGateway["6. Model Gateway & Observability"]
+        LiteLLM["LiteLLM Proxy (:8080 internal)<br/>• Virtual keys & budget enforcement<br/>• Per-user attribution (email header)<br/>• Route caching & rate limiting"]:::gatewayClass
+        Langfuse["Langfuse Tracing (:3000 internal)<br/>• Distributed LLM traces<br/>• Token usage & latency metrics"]:::gatewayClass
+        FoundationModels["Foundation Models<br/>• Primary: gpt-6.1-sol (Responses API)<br/>• Advanced: gpt-6-sol-priority<br/>• Tool Helper: gpt-6-luna"]:::gatewayClass
+    end
+
+    subgraph Storage["7. Persistence & Shared Datastores"]
+        Postgres[("PostgreSQL 16 + pgvector (idea-db)<br/>• schema idea_langgraph: AES checkpoints<br/>• schema litellm: virtual keys & spend<br/>• schema langfuse: telemetry & traces")]:::storageClass
+        Redis[("Redis In-Memory Datastore (idea-redis)<br/>• Ephemeral chat run events & status<br/>• Message-to-checkpoint branch index<br/>• Integration session quotas")]:::storageClass
+        SharedData[("Shared Scientific Datasets (Read-Only)<br/>• UHSLC Tide Gauge Metadata & Benchmarks<br/>• Satellite Altimetry Grids")]:::storageClass
+        PaperQAData[("PaperQA2 Multi-Tenant Storage<br/>Document indexes & vector embeddings")]:::storageClass
+    end
+
+    %% Ingress connections
+    User -->|"HTTPS (443) / HTTP (80)"| Nginx
+    N8N -->|"Webhooks & REST API"| Nginx
+    N8N -.->|"Pre-routing / Classifier Queries"| LiteLLM
+
+    %% Nginx routing
+    Nginx -->|"Default UI Traffic & WebSockets"| OWUI
+    Nginx -->|"Inline Plots / HTML Sandboxed"| PreviewFilter --> OWUI
+    Nginx -->|"Integration Session Exports"| ExportRoute --> API
+
+    %% Open WebUI connections
+    OWUI --> Assistants
+    Assistants --> Pipe
+    OWUI <--> OWUIDB
+    Pipe -->|"POST /chat-runs (Bearer Token)"| API
+
+    %% LangGraph connections
+    API --> Graph
+    Graph <--> Budget
+    Graph --> Tools
+    Graph -->|"Sync Generated Files"| OutputSync --> OWUI
+    Graph <-->|"AES Encrypted Checkpoints"| Postgres
+    API <-->|"Event Streaming & TTL Cache"| Redis
+
+    %% Tool invocations
+    Tools -->|"HTTP /sandboxes/*"| SS
+    Tools -->|"Responses API Prompts"| LiteLLM
+    Tools -->|"Literature Searches"| PaperQAData
+
+    %% Sandbox Service & MicroVM
+    SS --> KVMBarrier
+    KVMBarrier --> OpenTerm
+    KVMBarrier --> KernelDaemon
+    KVMBarrier --> CodexApp
+    SharedData -.->|"Read-Only Volume Mount"| VMWorkspace
+
+    %% LLM & Observability
+    LiteLLM -->|"Attributed Requests"| FoundationModels
+    LiteLLM --> Langfuse
+    LiteLLM <--> Postgres
+    Langfuse <--> Postgres
